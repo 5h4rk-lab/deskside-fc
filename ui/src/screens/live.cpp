@@ -1,7 +1,5 @@
 #include "screens/live.h"
 
-#include <stdio.h>
-
 #include "fonts.h"
 #include "theme.h"
 
