@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkToken } from "../src/auth";
+import { checkToken } from "../src/auth.js";
 
 describe("checkToken", () => {
   it("accepts a matching token", () => {

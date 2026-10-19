@@ -1,0 +1,28 @@
+{
+  "updated": 1760900000,
+  "matches": [
+    {
+      "id": "401879257",
+      "league": "eng.1",
+      "state": "post",
+      "clock": null,
+      "kickoff": 1792436400,
+      "home": {
+        "id": "367",
+        "abbr": "TOT",
+        "name": "Tottenham Hotspur",
+        "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F367.png&w=48&h=48",
+        "color": "#FFFFFF"
+      },
+      "away": {
+        "id": "388",
+        "abbr": "COV",
+        "name": "Coventry City",
+        "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F388.png&w=48&h=48",
+        "color": "#87CCED"
+      },
+      "homeScore": 3,
+      "awayScore": 1
+    }
+  ]
+}
