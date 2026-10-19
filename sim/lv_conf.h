@@ -8,6 +8,7 @@
  *   - LV_FONT_FMT_TXT_LARGE 0 (the generated ui/fonts/*.c assume the default)
  *   - LV_USE_TABVIEW, LV_USE_SNAPSHOT, LV_USE_LODEPNG, LV_USE_TJPGD enabled
  *   - LV_FONT_MONTSERRAT_14 enabled (default theme font and LV_SYMBOL_* glyphs)
+ *   - LV_USE_DRAW_SW_COMPLEX_GRADIENTS 1 (radial shading on the Live screen)
  *   - LV_USE_FS_* is NOT needed by the UI; the helper serves images as bytes
  * Everything else (SDL, stdlib allocator, log) is simulator-only.
  */
@@ -41,6 +42,10 @@
 
 /* [FW] lv_snapshot_take(): used by tests and the screenshot helper. */
 #define LV_USE_SNAPSHOT 1
+
+/* [FW] Radial gradients: the Live screen's vignette over the team colours.
+ * Without it the UI falls back to a flat shade. */
+#define LV_USE_DRAW_SW_COMPLEX_GRADIENTS 1
 
 /* [FW] Default theme font and the LV_SYMBOL_* icon glyphs. */
 #define LV_FONT_MONTSERRAT_14 1

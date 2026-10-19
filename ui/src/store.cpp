@@ -33,3 +33,21 @@ const MatchSummary* Store::next_for(const std::string& teamId, int64_t now) cons
 bool Store::stale(int64_t now) const {
   return hasData_ && now - lastSuccess_ > kStaleAfterSeconds;
 }
+
+void Store::set_detail(MatchDetail detail) {
+  for (auto it = details_.begin(); it != details_.end(); ++it) {
+    if (it->match.id == detail.match.id) {
+      details_.erase(it);
+      break;
+    }
+  }
+  if (details_.size() >= static_cast<size_t>(kDetailCacheSize)) details_.erase(details_.begin());
+  details_.push_back(std::move(detail));
+}
+
+const MatchDetail* Store::detail_for(const std::string& matchId) const {
+  for (const MatchDetail& d : details_) {
+    if (d.match.id == matchId) return &d;
+  }
+  return nullptr;
+}

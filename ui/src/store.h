@@ -29,9 +29,19 @@ class Store {
   // Earliest Pre match of the team with kickoff >= now, else nullptr.
   const MatchSummary* next_for(const std::string& teamId, int64_t now) const;
 
+  // Time of the last successful set_matches() (0 before the first one).
+  int64_t last_success() const { return lastSuccess_; }
+
   // True when data exists but the last success is more than 90 s old. False
   // when no data has ever arrived.
   bool stale(int64_t now) const;
+
+  // Match details are cached for the last few matches (most recent last).
+  // Setting a detail for an id already cached replaces it. Pointers returned
+  // by detail_for() are invalidated by the next set_detail().
+  static constexpr int kDetailCacheSize = 4;
+  void set_detail(MatchDetail detail);
+  const MatchDetail* detail_for(const std::string& matchId) const;
 
   void set_news(std::vector<NewsItem> news) { news_ = std::move(news); }
   const std::vector<NewsItem>& news() const { return news_; }
@@ -47,6 +57,7 @@ class Store {
 
  private:
   std::vector<MatchSummary> matches_;
+  std::vector<MatchDetail> details_;  // oldest first, at most kDetailCacheSize
   std::vector<NewsItem> news_;
   std::vector<Team> teams_;
   std::string favourite_;

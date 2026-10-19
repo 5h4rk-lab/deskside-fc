@@ -54,15 +54,19 @@ set(UI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ui")
 file(GLOB UI_FONT_SOURCES CONFIGURE_DEPENDS "${UI_DIR}/fonts/*.c")
 add_library(ui STATIC "${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp"
   "${UI_DIR}/src/json_parse.cpp" "${UI_DIR}/src/store.cpp" "${UI_DIR}/src/goal_detector.cpp" "${UI_DIR}/src/image_provider.cpp"
-  ${UI_FONT_SOURCES})
+  "${UI_DIR}/src/screens/live.cpp" ${UI_FONT_SOURCES})
 target_include_directories(ui PUBLIC "${UI_DIR}/src" "${UI_DIR}/fonts")
 target_link_libraries(ui PUBLIC lvgl ArduinoJson)
 set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" "${UI_DIR}/src/json_parse.cpp"
   "${UI_DIR}/src/store.cpp" "${UI_DIR}/src/goal_detector.cpp" "${UI_DIR}/src/image_provider.cpp"
-  PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+  "${UI_DIR}/src/screens/live.cpp" PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # --- Simulator executable ----------------------------------------------------
-add_executable(sim main.cpp mock_source.cpp mock_image_provider.cpp)
+add_executable(sim main.cpp mock_source.cpp mock_image_provider.cpp demo_data.cpp snapshot.cpp)
+# Defaults for the simulator's --assets and --fixtures flags.
+target_compile_definitions(sim PRIVATE
+  SIM_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+  CONTRACT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../contract/fixtures")
 target_link_libraries(sim PRIVATE ui lvgl SDL2::SDL2 CURL::libcurl)
 target_compile_options(sim PRIVATE -Wall -Wextra)
 
@@ -70,7 +74,8 @@ target_compile_options(sim PRIVATE -Wall -Wextra)
 enable_testing()
 add_executable(sim_tests tests/test_main.cpp tests/smoke_test.cpp tests/theme_test.cpp tests/parse_test.cpp
   tests/goal_test.cpp tests/store_test.cpp tests/mock_source_test.cpp mock_source.cpp
-  tests/lru_test.cpp tests/image_provider_test.cpp mock_image_provider.cpp)
+  tests/lru_test.cpp tests/image_provider_test.cpp mock_image_provider.cpp
+  tests/live_test.cpp demo_data.cpp snapshot.cpp)
 target_include_directories(sim_tests PRIVATE tests "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(sim_tests PRIVATE
   CONTRACT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../contract/fixtures")

@@ -119,3 +119,41 @@ TEST_CASE("tz offset, favourite, news and teams round trip") {
   REQUIRE(s.teams().size() == 1);
   CHECK(s.teams()[0].id == "t1");
 }
+
+TEST_CASE("last_success reports the time of the last set_matches") {
+  Store s;
+  CHECK(s.last_success() == 0);
+  s.set_matches({}, 1234);
+  CHECK(s.last_success() == 1234);
+  s.mark_failure();
+  CHECK(s.last_success() == 1234);
+}
+
+TEST_CASE("detail_for returns the detail stored for a match and keeps the last few") {
+  Store s;
+  CHECK(s.detail_for("a") == nullptr);
+  MatchDetail d;
+  d.match.id = "a";
+  d.events.push_back(MatchEvent{"12'", EventType::Goal, Side::Home, "Saka", ""});
+  s.set_detail(d);
+  const MatchDetail* got = s.detail_for("a");
+  REQUIRE(got != nullptr);
+  REQUIRE(got->events.size() == 1);
+  CHECK(got->events[0].player == "Saka");
+
+  // Replacing the same id updates in place.
+  d.events.push_back(MatchEvent{"58'", EventType::Goal, Side::Home, "Havertz", ""});
+  s.set_detail(d);
+  REQUIRE(s.detail_for("a") != nullptr);
+  CHECK(s.detail_for("a")->events.size() == 2);
+
+  // The cache is small: the oldest entry is dropped once it is full.
+  for (int i = 0; i < Store::kDetailCacheSize; ++i) {
+    MatchDetail other;
+    other.match.id = "m" + std::to_string(i);
+    s.set_detail(other);
+  }
+  CHECK(s.detail_for("a") == nullptr);
+  CHECK(s.detail_for("m0") != nullptr);
+  CHECK(s.detail_for("m" + std::to_string(Store::kDetailCacheSize - 1)) != nullptr);
+}

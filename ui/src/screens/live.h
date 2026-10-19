@@ -1,0 +1,65 @@
+// Live screen (home tab): the favourite team's live match over a diagonal
+// split in both team colours, or a card for its next match. Mockup: screen 1
+// of docs/superpowers/specs/assets/ui-mockup-v2.html.
+//
+// Shared with the ESP32 firmware: no clock reads, no SDL, no stdio. Every
+// time-dependent text uses the `now` passed to live_refresh() and the Store's
+// timezone offset.
+#pragma once
+
+#include <lvgl.h>
+#include <stdint.h>
+
+#include <functional>
+#include <string>
+#include <utility>
+
+#include "image_provider.h"
+#include "store.h"
+
+// Colours for the home (left) and away (right) halves of the split. When the
+// two are too close to tell apart (RGB distance below kSplitMinDistance), the
+// away half becomes theme().opponent; if that is also too close to home, a
+// darkened home colour (or, for very dark home colours, a lightened one).
+constexpr int kSplitMinDistance = 80;  // on the 0..441 RGB distance scale
+std::pair<lv_color_t, lv_color_t> split_colors(lv_color_t home, lv_color_t away);
+
+// Builds the screen as a child of `parent`, filling it. `onOpen` is called
+// with the match id when the score area is tapped. The screen shows
+// "Connecting..." until the first live_refresh().
+lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
+                      std::function<void(std::string matchId)> onOpen);
+
+// Updates the screen from the Store. Widgets are reused: only data that
+// changed since the last call is touched.
+void live_refresh(lv_obj_t* screen, int64_t now);
+
+// Widgets of a live screen, for tests and screenshots.
+struct LiveParts {
+  lv_obj_t* background;   // split in team colours (custom drawn)
+  lv_obj_t* statusLeague; // status row, left
+  lv_obj_t* statusClock;  // status row, right: local HH:MM
+  lv_obj_t* staleDot;     // amber dot, shown only when the data is stale
+  lv_obj_t* staleLabel;   // "Updated N min ago", shown only when stale
+  lv_obj_t* message;      // "Connecting...", "No matches soon" or "Next: ..."
+  lv_obj_t* countdown;    // under the next-match message: "Kick-off in ..."
+  lv_obj_t* scoreArea;    // tap target holding crests, pill, score and names
+  lv_obj_t* homeCrest;
+  lv_obj_t* awayCrest;
+  lv_obj_t* pill;         // amber minute pill
+  lv_obj_t* pillDot;      // pulsing red dot
+  lv_obj_t* pillLabel;    // match clock
+  lv_obj_t* score;        // row of scoreHome, scoreSep, scoreAway
+  lv_obj_t* scoreHome;
+  lv_obj_t* scoreSep;
+  lv_obj_t* scoreAway;
+  lv_obj_t* homeName;
+  lv_obj_t* awayName;
+  lv_obj_t* eventStrip;   // glass strip with the latest event
+  lv_obj_t* eventCutout;
+  lv_obj_t* eventCaption; // "58'  Goal"
+  lv_obj_t* eventPlayer;
+};
+
+// Parts of a screen made by live_create(), or nullptr for any other object.
+const LiveParts* live_parts(lv_obj_t* screen);

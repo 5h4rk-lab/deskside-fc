@@ -1,6 +1,7 @@
 #include "app.h"
 
 #include "fonts.h"
+#include "screens/live.h"
 #include "theme.h"
 
 namespace {
@@ -97,7 +98,7 @@ void build_tab(lv_obj_t* tab, const TabSpec& spec) {
 
 }  // namespace
 
-void app_create(lv_obj_t* root) {
+lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   lv_obj_set_style_bg_color(root, theme().turf, 0);
   lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
 
@@ -120,10 +121,23 @@ void app_create(lv_obj_t* root) {
   lv_obj_set_style_border_side(bar, LV_BORDER_SIDE_TOP, 0);
   lv_obj_set_style_pad_all(bar, 0, 0);
 
+  lv_obj_t* live = nullptr;
   for (const TabSpec& spec : kTabs) {
     lv_obj_t* tab = lv_tabview_add_tab(tabview, spec.label);
-    build_tab(tab, spec);
+    if (&spec == &kTabs[0]) {
+      lv_obj_set_style_bg_opa(tab, LV_OPA_TRANSP, 0);
+      lv_obj_set_style_pad_all(tab, 0, 0);
+      lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+      lv_obj_remove_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+      auto onOpen = deps.onOpenMatch;
+      live = live_create(tab, deps.store, deps.images, [onOpen](std::string id) {
+        if (onOpen) onOpen(id);
+      });
+    } else {
+      build_tab(tab, spec);
+    }
   }
+  lv_obj_set_user_data(tabview, live);
 
   const uint32_t n = lv_obj_get_child_count(bar);
   for (uint32_t i = 0; i < n; ++i) {
@@ -135,4 +149,11 @@ void app_create(lv_obj_t* root) {
 
   lv_tabview_set_active(tabview, 0, LV_ANIM_OFF);
   refresh_icons(tabview);
+  return tabview;
+}
+
+void app_refresh(lv_obj_t* appRoot, int64_t now) {
+  if (appRoot == nullptr) return;
+  auto* live = static_cast<lv_obj_t*>(lv_obj_get_user_data(appRoot));
+  if (live != nullptr) live_refresh(live, now);
 }
