@@ -17,9 +17,6 @@ const TabSpec kTabs[] = {
     {"News", LV_SYMBOL_FILE, "no news yet"},
 };
 
-// Accent follows the favourite team's colour; later tasks make this settable.
-lv_color_t accent_color() { return lv_color_hex(theme::kDefaultAccent); }
-
 // Child 0 of a tab button is the text label (created by the tabview), child 1
 // is the icon label added below.
 lv_obj_t* tab_icon(lv_obj_t* button) { return lv_obj_get_child(button, 1); }
@@ -33,7 +30,7 @@ void refresh_icons(lv_obj_t* tabview) {
     lv_obj_t* button = lv_obj_get_child(bar, static_cast<int32_t>(i));
     const bool active = lv_obj_has_state(button, LV_STATE_CHECKED);
     lv_obj_set_style_text_color(
-        tab_icon(button), active ? accent_color() : lv_color_hex(theme::kDim), 0);
+        tab_icon(button), active ? theme().accent : theme().dim, 0);
   }
 }
 
@@ -65,8 +62,8 @@ void style_tab_button(lv_obj_t* button, lv_obj_t* tabview) {
   lv_obj_set_style_radius(button, 0, LV_PART_MAIN);
   lv_obj_set_style_pad_all(button, 0, LV_PART_MAIN);
   lv_obj_set_style_text_font(button, &hanken_10, 0);
-  lv_obj_set_style_text_color(button, lv_color_hex(theme::kDim), 0);
-  lv_obj_set_style_text_color(button, lv_color_hex(theme::kChalk), LV_STATE_CHECKED);
+  lv_obj_set_style_text_color(button, theme().dim, 0);
+  lv_obj_set_style_text_color(button, theme().chalk, LV_STATE_CHECKED);
 
   lv_obj_t* label = lv_obj_get_child(button, 0);
   lv_obj_align(label, LV_ALIGN_BOTTOM_MID, 0, -5);
@@ -88,27 +85,27 @@ void build_tab(lv_obj_t* tab, const TabSpec& spec) {
   lv_obj_t* title = lv_label_create(tab);
   lv_label_set_text(title, spec.label);
   lv_obj_set_style_text_font(title, &bigshoulders_40, 0);
-  lv_obj_set_style_text_color(title, lv_color_hex(theme::kChalk), 0);
+  lv_obj_set_style_text_color(title, theme().chalk, 0);
   lv_obj_align(title, LV_ALIGN_CENTER, 0, -14);
 
   lv_obj_t* hint = lv_label_create(tab);
   lv_label_set_text(hint, spec.hint);
   lv_obj_set_style_text_font(hint, &hanken_12, 0);
-  lv_obj_set_style_text_color(hint, lv_color_hex(theme::kDim), 0);
+  lv_obj_set_style_text_color(hint, theme().dim, 0);
   lv_obj_align(hint, LV_ALIGN_CENTER, 0, 18);
 }
 
 }  // namespace
 
 void app_create(lv_obj_t* root) {
-  lv_obj_set_style_bg_color(root, lv_color_hex(theme::kTurf), 0);
+  lv_obj_set_style_bg_color(root, theme().turf, 0);
   lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
 
   lv_obj_t* tabview = lv_tabview_create(root);
   lv_tabview_set_tab_bar_position(tabview, LV_DIR_BOTTOM);
-  lv_tabview_set_tab_bar_size(tabview, theme::kTabBarHeight);
+  lv_tabview_set_tab_bar_size(tabview, layout::kTabBarHeight);
   lv_obj_set_size(tabview, LV_PCT(100), LV_PCT(100));
-  lv_obj_set_style_bg_color(tabview, lv_color_hex(theme::kTurf), 0);
+  lv_obj_set_style_bg_color(tabview, theme().turf, 0);
   lv_obj_set_style_bg_opa(tabview, LV_OPA_COVER, 0);
   lv_obj_set_style_pad_all(tabview, 0, 0);
 
@@ -116,9 +113,9 @@ void app_create(lv_obj_t* root) {
   lv_obj_set_style_bg_opa(content, LV_OPA_TRANSP, 0);
 
   lv_obj_t* bar = lv_tabview_get_tab_bar(tabview);
-  lv_obj_set_style_bg_color(bar, lv_color_hex(theme::kTabBar), 0);
+  lv_obj_set_style_bg_color(bar, theme().tabBar, 0);
   lv_obj_set_style_bg_opa(bar, LV_OPA_COVER, 0);
-  lv_obj_set_style_border_color(bar, lv_color_hex(theme::kLine), 0);
+  lv_obj_set_style_border_color(bar, theme().line, 0);
   lv_obj_set_style_border_width(bar, 1, 0);
   lv_obj_set_style_border_side(bar, LV_BORDER_SIDE_TOP, 0);
   lv_obj_set_style_pad_all(bar, 0, 0);
