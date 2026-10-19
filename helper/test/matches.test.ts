@@ -99,7 +99,9 @@ describe("normalizeScoreboard", () => {
 
   it("uses the fallback colour when ESPN has none", () => {
     const raw = load("scoreboard-post.json");
-    delete raw.events[0].competitions[0].competitors[0].team.color;
+    const team = raw.events[0].competitions[0].competitors[0].team;
+    team.abbreviation = "ZZZ"; // not in the curated table
+    delete team.color;
     const [m] = normalizeScoreboard(raw, "eng.1");
     expect(m.home.color).toBe("#7C8F84");
   });

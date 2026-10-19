@@ -5,13 +5,14 @@ import type {
   MatchEvent,
   MatchState,
   MatchSummary,
+  NewsItem,
   StatRow,
   Team,
 } from "./contract.js";
+import { teamColor } from "./colors.js";
 import { layoutFormation, parseFormation } from "./formation.js";
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
-const FALLBACK_COLOR = "#7C8F84";
 
 type Json = Record<string, any>;
 
@@ -20,18 +21,15 @@ export function crestPath(logoUrl: string | undefined, size = 48): string {
   return `/api/img?u=${encodeURIComponent(logoUrl)}&w=${size}&h=${size}`;
 }
 
-function teamColor(raw: unknown): string {
-  return typeof raw === "string" && /^[0-9a-fA-F]{6}$/.test(raw) ? `#${raw.toUpperCase()}` : FALLBACK_COLOR;
-}
-
-function toTeam(competitor: Json): Team {
+function toTeam(competitor: Json, league: string): Team {
   const t: Json = competitor?.team ?? {};
+  const abbr = String(t.abbreviation ?? "");
   return {
     id: String(t.id ?? competitor?.id ?? ""),
-    abbr: String(t.abbreviation ?? ""),
+    abbr,
     name: String(t.displayName ?? t.name ?? ""),
     crest: crestPath(t.logo ?? t.logos?.[0]?.href),
-    color: teamColor(t.color),
+    color: teamColor(abbr, typeof t.color === "string" ? t.color : undefined, league),
   };
 }
 
@@ -72,8 +70,8 @@ function toMatchSummary(ev: Json, league: string): MatchSummary | null {
     state,
     clock: state === "live" ? String(status?.displayClock ?? "") || null : null,
     kickoff: Number.isFinite(kickoffMs) ? Math.floor(kickoffMs / 1000) : 0,
-    home: toTeam(home),
-    away: toTeam(away),
+    home: toTeam(home, league),
+    away: toTeam(away, league),
     homeScore: hasScore ? toScore(home.score) : null,
     awayScore: hasScore ? toScore(away.score) : null,
   };
@@ -300,4 +298,52 @@ export async function fetchSummary(
   const resp = await fetchImpl(`${ESPN_BASE}/${league}/summary?event=${id}`);
   if (!resp.ok) throw new Error(`ESPN ${league} summary ${id}: HTTP ${resp.status}`);
   return normalizeSummary(await resp.json(), league);
+}
+
+function toNewsItem(a: Json): NewsItem {
+  const imageUrl = (Array.isArray(a.images) ? a.images : []).map((i: Json) => i?.url).find((u: unknown) => typeof u === "string" && u);
+  const publishedMs = Date.parse(String(a.published ?? ""));
+  return {
+    id: String(a.id ?? ""),
+    headline: String(a.headline ?? ""),
+    published: Number.isFinite(publishedMs) ? Math.floor(publishedMs / 1000) : 0,
+    image: imageUrl ? `/api/img?u=${encodeURIComponent(imageUrl)}&fit=cover&w=240&h=135` : null,
+  };
+}
+
+export function normalizeNews(raw: unknown): NewsItem[] {
+  const articles = (raw as Json | null)?.articles;
+  if (!Array.isArray(articles)) return [];
+  return articles.filter((a: unknown) => a && typeof a === "object").map((a: Json) => toNewsItem(a));
+}
+
+export async function fetchNews(league: string, fetchImpl: typeof fetch = fetch): Promise<NewsItem[]> {
+  const resp = await fetchImpl(`${ESPN_BASE}/${league}/news`);
+  if (!resp.ok) throw new Error(`ESPN ${league} news: HTTP ${resp.status}`);
+  return normalizeNews(await resp.json());
+}
+
+export function normalizeTeams(raw: unknown, league: string): (Team & { league: string })[] {
+  const teams = (raw as Json | null)?.sports?.[0]?.leagues?.[0]?.teams;
+  if (!Array.isArray(teams)) return [];
+  return teams
+    .map((entry: Json) => entry?.team)
+    .filter((t: unknown): t is Json => !!t && typeof t === "object")
+    .map((t: Json) => ({ ...toTeam({ team: t }, league), league }));
+}
+
+export const TEAM_LEAGUES = ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1"];
+
+export async function fetchTeams(
+  leagues: string[] = TEAM_LEAGUES,
+  fetchImpl: typeof fetch = fetch,
+): Promise<(Team & { league: string })[]> {
+  const perLeague = await Promise.all(
+    leagues.map(async (league) => {
+      const resp = await fetchImpl(`${ESPN_BASE}/${league}/teams`);
+      if (!resp.ok) throw new Error(`ESPN ${league} teams: HTTP ${resp.status}`);
+      return normalizeTeams(await resp.json(), league);
+    }),
+  );
+  return perLeague.flat();
 }
