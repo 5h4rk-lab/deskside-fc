@@ -1,0 +1,344 @@
+{
+  "match": {
+    "id": "401879257",
+    "league": "eng.1",
+    "state": "post",
+    "clock": null,
+    "kickoff": 1792436400,
+    "home": {
+      "id": "367",
+      "abbr": "TOT",
+      "name": "Tottenham Hotspur",
+      "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F367.png&w=48&h=48",
+      "color": "#FFFFFF"
+    },
+    "away": {
+      "id": "388",
+      "abbr": "COV",
+      "name": "Coventry City",
+      "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F388.png&w=48&h=48",
+      "color": "#87CCED"
+    },
+    "homeScore": 3,
+    "awayScore": 1
+  },
+  "events": [
+    {
+      "minute": "14'",
+      "type": "goal",
+      "team": "home",
+      "player": "James Maddison",
+      "detail": "Assist: Mohammed Kudus"
+    },
+    {
+      "minute": "20'",
+      "type": "yellow",
+      "team": "away",
+      "player": "Caleb Yirenkyi",
+      "detail": null
+    },
+    {
+      "minute": "22'",
+      "type": "yellow",
+      "team": "home",
+      "player": "Dominic Solanke",
+      "detail": null
+    },
+    {
+      "minute": "45'",
+      "type": "yellow",
+      "team": "away",
+      "player": "Jay Da Silva",
+      "detail": null
+    },
+    {
+      "minute": "49'",
+      "type": "goal",
+      "team": "away",
+      "player": "Jack Rudoni",
+      "detail": "Assist: Brandon Thomas-Asante"
+    },
+    {
+      "minute": "58'",
+      "type": "goal",
+      "team": "home",
+      "player": "Omar Marmoush",
+      "detail": "Assist: Andy Robertson"
+    },
+    {
+      "minute": "60'",
+      "type": "sub",
+      "team": "away",
+      "player": "Taiwo Awoniyi",
+      "detail": "For: Sidiki Cherif"
+    },
+    {
+      "minute": "60'",
+      "type": "sub",
+      "team": "away",
+      "player": "Frank Onyeka",
+      "detail": "For: Caleb Yirenkyi"
+    },
+    {
+      "minute": "64'",
+      "type": "yellow",
+      "team": "away",
+      "player": "Jack Rudoni",
+      "detail": null
+    },
+    {
+      "minute": "69'",
+      "type": "sub",
+      "team": "home",
+      "player": "Ben Davies",
+      "detail": "For: Andy Robertson"
+    },
+    {
+      "minute": "69'",
+      "type": "sub",
+      "team": "home",
+      "player": "Conor Gallagher",
+      "detail": "For: James Maddison"
+    },
+    {
+      "minute": "71'",
+      "type": "sub",
+      "team": "home",
+      "player": "Mateus Fernandes",
+      "detail": "For: Tosin Adarabioyo"
+    },
+    {
+      "minute": "78'",
+      "type": "sub",
+      "team": "away",
+      "player": "Ephron Mason-Clark",
+      "detail": "For: Brandon Thomas-Asante"
+    },
+    {
+      "minute": "78'",
+      "type": "sub",
+      "team": "away",
+      "player": "Gustavo Hamer",
+      "detail": "For: Tatsuhiro Sakamoto"
+    },
+    {
+      "minute": "87'",
+      "type": "sub",
+      "team": "home",
+      "player": "Mathys Tel",
+      "detail": "For: Omar Marmoush"
+    },
+    {
+      "minute": "87'",
+      "type": "sub",
+      "team": "home",
+      "player": "Dejan Kulusevski",
+      "detail": "For: Mohammed Kudus"
+    },
+    {
+      "minute": "87'",
+      "type": "sub",
+      "team": "away",
+      "player": "Kaine Kesler Hayden",
+      "detail": "For: Jack Rudoni"
+    },
+    {
+      "minute": "90'+6'",
+      "type": "goal",
+      "team": "home",
+      "player": "Ben Davies",
+      "detail": "Assist: Dominic Solanke"
+    }
+  ],
+  "home": {
+    "formation": "3-1-4-2",
+    "players": [
+      {
+        "name": "Antonín Kinsky",
+        "number": 31,
+        "x": 0.5,
+        "y": 0.08,
+        "photo": "/api/cutout?name=Anton%C3%ADn%20Kinsky&w=40&h=40"
+      },
+      {
+        "name": "Micky van de Ven",
+        "number": 37,
+        "x": 0.25,
+        "y": 0.29,
+        "photo": "/api/cutout?name=Micky%20van%20de%20Ven&w=40&h=40"
+      },
+      {
+        "name": "Tosin Adarabioyo",
+        "number": 4,
+        "x": 0.5,
+        "y": 0.29,
+        "photo": "/api/cutout?name=Tosin%20Adarabioyo&w=40&h=40"
+      },
+      {
+        "name": "Jan Paul van Hecke",
+        "number": 6,
+        "x": 0.75,
+        "y": 0.29,
+        "photo": "/api/cutout?name=Jan%20Paul%20van%20Hecke&w=40&h=40"
+      },
+      {
+        "name": "Sandro Tonali",
+        "number": 16,
+        "x": 0.5,
+        "y": 0.5,
+        "photo": "/api/cutout?name=Sandro%20Tonali&w=40&h=40"
+      },
+      {
+        "name": "Andy Robertson",
+        "number": 3,
+        "x": 0.2,
+        "y": 0.71,
+        "photo": "/api/cutout?name=Andy%20Robertson&w=40&h=40"
+      },
+      {
+        "name": "James Maddison",
+        "number": 10,
+        "x": 0.4,
+        "y": 0.71,
+        "photo": "/api/cutout?name=James%20Maddison&w=40&h=40"
+      },
+      {
+        "name": "Archie Gray",
+        "number": 14,
+        "x": 0.6,
+        "y": 0.71,
+        "photo": "/api/cutout?name=Archie%20Gray&w=40&h=40"
+      },
+      {
+        "name": "Mohammed Kudus",
+        "number": 20,
+        "x": 0.8,
+        "y": 0.71,
+        "photo": "/api/cutout?name=Mohammed%20Kudus&w=40&h=40"
+      },
+      {
+        "name": "Omar Marmoush",
+        "number": 22,
+        "x": 0.333,
+        "y": 0.92,
+        "photo": "/api/cutout?name=Omar%20Marmoush&w=40&h=40"
+      },
+      {
+        "name": "Dominic Solanke",
+        "number": 19,
+        "x": 0.667,
+        "y": 0.92,
+        "photo": "/api/cutout?name=Dominic%20Solanke&w=40&h=40"
+      }
+    ]
+  },
+  "away": {
+    "formation": "4-2-3-1",
+    "players": [
+      {
+        "name": "Carl Rushworth",
+        "number": 19,
+        "x": 0.5,
+        "y": 0.08,
+        "photo": "/api/cutout?name=Carl%20Rushworth&w=40&h=40"
+      },
+      {
+        "name": "Jay Da Silva",
+        "number": 3,
+        "x": 0.2,
+        "y": 0.29,
+        "photo": "/api/cutout?name=Jay%20Da%20Silva&w=40&h=40"
+      },
+      {
+        "name": "Ethan Pinnock",
+        "number": 2,
+        "x": 0.4,
+        "y": 0.29,
+        "photo": "/api/cutout?name=Ethan%20Pinnock&w=40&h=40"
+      },
+      {
+        "name": "Bobby Thomas",
+        "number": 4,
+        "x": 0.6,
+        "y": 0.29,
+        "photo": "/api/cutout?name=Bobby%20Thomas&w=40&h=40"
+      },
+      {
+        "name": "Milan van Ewijk",
+        "number": 27,
+        "x": 0.8,
+        "y": 0.29,
+        "photo": "/api/cutout?name=Milan%20van%20Ewijk&w=40&h=40"
+      },
+      {
+        "name": "Matt Grimes",
+        "number": 6,
+        "x": 0.333,
+        "y": 0.5,
+        "photo": "/api/cutout?name=Matt%20Grimes&w=40&h=40"
+      },
+      {
+        "name": "Caleb Yirenkyi",
+        "number": 8,
+        "x": 0.667,
+        "y": 0.5,
+        "photo": "/api/cutout?name=Caleb%20Yirenkyi&w=40&h=40"
+      },
+      {
+        "name": "Brandon Thomas-Asante",
+        "number": 23,
+        "x": 0.25,
+        "y": 0.71,
+        "photo": "/api/cutout?name=Brandon%20Thomas-Asante&w=40&h=40"
+      },
+      {
+        "name": "Jack Rudoni",
+        "number": 5,
+        "x": 0.5,
+        "y": 0.71,
+        "photo": "/api/cutout?name=Jack%20Rudoni&w=40&h=40"
+      },
+      {
+        "name": "Tatsuhiro Sakamoto",
+        "number": 7,
+        "x": 0.75,
+        "y": 0.71,
+        "photo": "/api/cutout?name=Tatsuhiro%20Sakamoto&w=40&h=40"
+      },
+      {
+        "name": "Sidiki Cherif",
+        "number": 49,
+        "x": 0.5,
+        "y": 0.92,
+        "photo": "/api/cutout?name=Sidiki%20Cherif&w=40&h=40"
+      }
+    ]
+  },
+  "stats": [
+    {
+      "label": "Possession",
+      "home": "65%",
+      "away": "35%"
+    },
+    {
+      "label": "Shots",
+      "home": "16",
+      "away": "12"
+    },
+    {
+      "label": "Shots on target",
+      "home": "5",
+      "away": "1"
+    },
+    {
+      "label": "Corners",
+      "home": "4",
+      "away": "4"
+    },
+    {
+      "label": "Fouls",
+      "home": "15",
+      "away": "14"
+    }
+  ]
+}

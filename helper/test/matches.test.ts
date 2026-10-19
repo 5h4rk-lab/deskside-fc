@@ -1,8 +1,9 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler from "../api/matches.js";
+import { buildMatchesFixture } from "../scripts/build-fixtures.js";
 import { fetchMatches, normalizeScoreboard } from "../src/espn.js";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "contract", "fixtures");
@@ -103,13 +104,11 @@ describe("normalizeScoreboard", () => {
     expect(m.home.color).toBe("#7C8F84");
   });
 
-  it("writes the normalised fixture for the C++ parser tests", () => {
-    const matches = normalizeScoreboard(load("scoreboard-post.json"), "eng.1");
-    writeFileSync(
-      join(fixtureDir, "matches-normalised.json"),
-      JSON.stringify({ updated: 1760900000, matches }, null, 2) + "\n",
-    );
-    expect(matches).toHaveLength(1);
+  it("matches-normalised.json matches the normaliser output (run `npm run gen:fixtures` to refresh)", () => {
+    expect(
+      load("matches-normalised.json"),
+      "matches-normalised.json is stale: run `npm run gen:fixtures` in helper/",
+    ).toEqual(buildMatchesFixture());
   });
 });
 
