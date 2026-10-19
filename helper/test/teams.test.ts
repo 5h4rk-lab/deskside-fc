@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler from "../api/teams.js";
 import { normalizeScoreboard, normalizeTeams } from "../src/espn.js";
+import { buildTeamsFixture } from "../scripts/build-fixtures.js";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "contract", "fixtures");
 const load = (name: string): any => JSON.parse(readFileSync(join(fixtureDir, name), "utf8"));
@@ -29,6 +30,13 @@ describe("normalizeTeams", () => {
     expect(teams[0].crest.startsWith("/api/img?u=")).toBe(true);
     expect(teams[0].crest).toContain(encodeURIComponent(logo));
     expect(teams[0].crest.endsWith("&w=48&h=48")).toBe(true);
+  });
+
+  it("teams-normalised.json matches the normaliser output (run `npm run gen:fixtures` to refresh)", () => {
+    expect(
+      load("teams-normalised.json"),
+      "teams-normalised.json is stale: run `npm run gen:fixtures` in helper/",
+    ).toEqual(buildTeamsFixture());
   });
 
   it("returns [] for garbage", () => {

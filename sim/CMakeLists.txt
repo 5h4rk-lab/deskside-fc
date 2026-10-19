@@ -52,10 +52,11 @@ endif()
 # --- UI library: shared with the ESP32 firmware, no SDL/desktop dependencies --
 set(UI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../ui")
 file(GLOB UI_FONT_SOURCES CONFIGURE_DEPENDS "${UI_DIR}/fonts/*.c")
-add_library(ui STATIC "${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" ${UI_FONT_SOURCES})
+add_library(ui STATIC "${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp"
+  "${UI_DIR}/src/json_parse.cpp" ${UI_FONT_SOURCES})
 target_include_directories(ui PUBLIC "${UI_DIR}/src" "${UI_DIR}/fonts")
 target_link_libraries(ui PUBLIC lvgl ArduinoJson)
-set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp"
+set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" "${UI_DIR}/src/json_parse.cpp"
   PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # --- Simulator executable ----------------------------------------------------
@@ -65,8 +66,10 @@ target_compile_options(sim PRIVATE -Wall -Wextra)
 
 # --- Tests (headless: never opens an SDL window) -----------------------------
 enable_testing()
-add_executable(sim_tests tests/test_main.cpp tests/smoke_test.cpp tests/theme_test.cpp)
+add_executable(sim_tests tests/test_main.cpp tests/smoke_test.cpp tests/theme_test.cpp tests/parse_test.cpp)
 target_include_directories(sim_tests PRIVATE tests)
+target_compile_definitions(sim_tests PRIVATE
+  CONTRACT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../contract/fixtures")
 target_link_libraries(sim_tests PRIVATE ui doctest::doctest)
 target_compile_options(sim_tests PRIVATE -Wall -Wextra)
 add_test(NAME sim_tests COMMAND sim_tests)

@@ -1,6 +1,6 @@
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildDetailFixture, buildMatchesFixture, buildNewsFixture, fixtureDir } from "./build-fixtures.js";
+import { buildDetailFixture, buildMatchesFixture, buildNewsFixture, buildTeamsFixture, fixtureDir } from "./build-fixtures.js";
 
 const write = (name: string, value: unknown): void => {
   writeFileSync(join(fixtureDir, name), JSON.stringify(value, null, 2) + "\n");
@@ -10,3 +10,4 @@ const write = (name: string, value: unknown): void => {
 write("matches-normalised.json", buildMatchesFixture());
 write("detail-normalised.json", buildDetailFixture());
 write("news-normalised.json", buildNewsFixture());
+write("teams-normalised.json", buildTeamsFixture());

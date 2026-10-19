@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { normalizeNews, normalizeScoreboard, normalizeSummary } from "../src/espn.js";
+import { normalizeNews, normalizeScoreboard, normalizeSummary, normalizeTeams } from "../src/espn.js";
 
 export const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "contract", "fixtures");
 
@@ -20,4 +20,8 @@ export function buildDetailFixture(): unknown {
 
 export function buildNewsFixture(): unknown {
   return { updated: FIXTURE_UPDATED, articles: normalizeNews(load("news.json")) };
+}
+
+export function buildTeamsFixture(): unknown {
+  return { teams: normalizeTeams(load("teams-eng1.json"), "eng.1") };
 }
