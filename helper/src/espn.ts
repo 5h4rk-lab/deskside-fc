@@ -8,7 +8,7 @@ import type {
   StatRow,
   Team,
 } from "./contract.js";
-import { layoutFormation } from "./formation.js";
+import { layoutFormation, parseFormation } from "./formation.js";
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
 const FALLBACK_COLOR = "#7C8F84";
@@ -111,18 +111,20 @@ export function cutoutPath(name: string, size = 40): string {
   return `/api/cutout?name=${encodeURIComponent(name)}&w=${size}&h=${size}`;
 }
 
-// ESPN position abbreviation -> [row rank (back to front), lateral rank (left to right)].
+// ESPN position abbreviation -> row rank (back to front); -1 when unrecognised.
 // formationPlace is a shirt-number-style slot, not a row index (in a 3-1-4-2 the wide
-// midfielders are places 2 and 3), so rows are built from the position instead.
+// midfielders are places 2 and 3), so rows are normally built from the position.
+// That is only trusted when the per-rank counts agree with the formation (see toLineup).
+const UNKNOWN_RANK = -1;
 function roleRank(abbr: unknown): number {
-  const a = String(abbr ?? "").toUpperCase();
-  const base = a.split("-")[0];
+  const base = String(abbr ?? "").toUpperCase().split("-")[0];
   if (base === "G" || base === "GK") return 0;
   if (["CD", "CB", "LB", "RB", "LWB", "RWB", "D"].includes(base)) return 1;
   if (["DM", "SW", "CDM"].includes(base)) return 2;
+  if (["CM", "LM", "RM", "M", "MF"].includes(base)) return 3;
   if (["AM", "CAM"].includes(base)) return 4;
   if (["F", "CF", "ST", "LF", "RF", "LW", "RW", "S"].includes(base)) return 5;
-  return 3; // CM, LM, RM, M and anything unknown
+  return UNKNOWN_RANK;
 }
 
 function lateralRank(abbr: unknown): number {
@@ -135,22 +137,55 @@ function lateralRank(abbr: unknown): number {
   return 0;
 }
 
+// Order starters keeper first, then outfield rows back to front, each row left to right.
+// Rule 1 (role rank): group by position rank, trusted only if there is exactly one keeper,
+// every abbreviation is recognised, and the non-empty rank groups, back to front, have
+// exactly the formation's row sizes. Rule 2 (fallback): outfield players in formationPlace
+// order sliced by the formation digits, each row then ordered left to right by position
+// suffix. Without usable digits there is nothing to check against, so the role-rank order
+// is used and layoutFormation spreads the players evenly.
+function orderStarters(starters: Json[], rows: number[] | null): Json[] {
+  const place = (p: Json) => Number(p.formationPlace) || 99;
+  const abbr = (p: Json) => p.position?.abbreviation;
+  const rank = (p: Json) => roleRank(abbr(p));
+  const byPlace = [...starters].sort((a, b) => place(a) - place(b));
+  const keeper = byPlace.find((p) => place(p) === 1) ?? byPlace.find((p) => rank(p) === 0) ?? byPlace[0];
+  if (!keeper) return [];
+  const outfield = byPlace.filter((p) => p !== keeper);
+  const lateral = (a: Json, b: Json) => lateralRank(abbr(a)) - lateralRank(abbr(b)) || place(a) - place(b);
+
+  const groups = new Map<number, Json[]>();
+  for (const p of outfield) groups.set(rank(p), [...(groups.get(rank(p)) ?? []), p]);
+  const sizes = [1, 2, 3, 4, 5].filter((r) => groups.has(r)).map((r) => groups.get(r)!.length);
+  const trusted =
+    rank(keeper) === 0 &&
+    !groups.has(0) &&
+    !groups.has(UNKNOWN_RANK) &&
+    rows !== null &&
+    sizes.length === rows.length &&
+    sizes.every((n, i) => n === rows[i]);
+
+  if (rows === null || rows.reduce((a, b) => a + b, 0) !== outfield.length) {
+    // no usable formation: layoutFormation will spread evenly; keep a stable role order
+    return [keeper, ...[...outfield].sort((a, b) => (rank(a) - rank(b) || lateral(a, b)))];
+  }
+  if (trusted) {
+    return [keeper, ...[1, 2, 3, 4, 5].flatMap((r) => (groups.get(r) ?? []).sort(lateral))];
+  }
+  const out = [keeper];
+  let at = 0;
+  for (const n of rows) {
+    out.push(...outfield.slice(at, at + n).sort(lateral));
+    at += n;
+  }
+  return out;
+}
+
 function toLineup(roster: Json | undefined): Lineup {
   if (!roster) return { formation: "", players: [] };
   const formation = typeof roster.formation === "string" ? roster.formation : "";
-  const starters: Json[] = (Array.isArray(roster.roster) ? roster.roster : []).filter((p: Json) => p?.starter === true);
-  const place = (p: Json) => Number(p.formationPlace) || 99;
-  const abbr = (p: Json) => p.position?.abbreviation;
-  starters.sort((a, b) => {
-    const keeperA = place(a) === 1 || roleRank(abbr(a)) === 0 ? 0 : 1;
-    const keeperB = place(b) === 1 || roleRank(abbr(b)) === 0 ? 0 : 1;
-    if (keeperA !== keeperB) return keeperA - keeperB;
-    return (
-      roleRank(abbr(a)) - roleRank(abbr(b)) ||
-      lateralRank(abbr(a)) - lateralRank(abbr(b)) ||
-      place(a) - place(b)
-    );
-  });
+  const raw: Json[] = (Array.isArray(roster.roster) ? roster.roster : []).filter((p: Json) => p?.starter === true);
+  const starters = orderStarters(raw, parseFormation(formation));
   const layout = layoutFormation(formation, starters.length);
   // layoutFormation lists each row left to right, so within a row (same y) lay the
   // players out left to right too, in the order the sort above already gave them.

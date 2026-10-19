@@ -25,7 +25,7 @@ function stack(rowSizes: number[]): Point[] {
   return pts;
 }
 
-function parse(formation: string): number[] | null {
+export function parseFormation(formation: string): number[] | null {
   if (!/^\d(-\d)+$/.test(formation)) return null;
   const rows = formation.split("-").map(Number);
   return rows.every((n) => n > 0) ? rows : null;
@@ -36,7 +36,7 @@ function parse(formation: string): number[] | null {
 // formation, falls back to even rows of at most four.
 export function layoutFormation(formation: string, count: number): Point[] {
   if (!Number.isFinite(count) || count <= 0) return [];
-  const rows = parse(formation);
+  const rows = parseFormation(formation);
   if (rows && rows.reduce((a, b) => a + b, 0) === count - 1) return stack(rows);
 
   const outfield = count - 1;

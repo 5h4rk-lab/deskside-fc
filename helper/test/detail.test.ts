@@ -145,6 +145,52 @@ describe("normalizeSummary (full lineups)", () => {
   });
 });
 
+describe("normalizeSummary row assignment guard", () => {
+  // Rewrite the home starters: arr[i] gives the position abbreviation of formationPlace i+1.
+  function withHomeRoles(formation: string, abbrs: string[]) {
+    const raw = load("summary-post.json");
+    const home = raw.rosters.find((r: any) => r.homeAway === "home");
+    home.formation = formation;
+    const starters = home.roster
+      .filter((p: any) => p.starter)
+      .sort((a: any, b: any) => a.formationPlace - b.formationPlace);
+    const abbrOf = new Map<string, string>();
+    starters.forEach((p: any, i: number) => {
+      p.formationPlace = i + 1;
+      p.position = { abbreviation: abbrs[i] };
+      abbrOf.set(p.athlete.displayName, abbrs[i]);
+    });
+    const lineup = normalizeSummary(raw, "eng.1").home;
+    const byY = new Map<number, string[]>();
+    for (const p of lineup.players) byY.set(p.y, [...(byY.get(p.y) ?? []), abbrOf.get(p.name)!]); // players are in x order per row
+    return [...byY.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
+  }
+
+  it("role-rank rule: 4-3-3 with LW/CF/RW matches the formation, so rows follow positions", () => {
+    // formationPlace order deliberately differs from the pitch order
+    const rows = withHomeRoles("4-3-3", ["G", "CM", "RW", "CD-R", "LB", "CM-R", "CF", "RB", "CD-L", "LW", "CM-L"]);
+    expect(rows).toEqual([["G"], ["LB", "CD-L", "CD-R", "RB"], ["CM-L", "CM", "CM-R"], ["LW", "CF", "RW"]]);
+  });
+
+  it("fallback rule: 4-2-3-1 written as AM/LW/CF/RW does not match the formation, so rows follow formationPlace", () => {
+    // role ranks give row sizes 4,2,1,3 against 4-2-3-1, so the position table is not trusted
+    const rows = withHomeRoles("4-2-3-1", ["G", "RB", "LB", "CD-R", "CD-L", "CM-L", "CM-R", "LW", "AM", "RW", "CF"]);
+    expect(rows).toEqual([["G"], ["LB", "CD-L", "CD-R", "RB"], ["CM-L", "CM-R"], ["LW", "AM", "RW"], ["CF"]]);
+  });
+
+  it("fallback rule: an unknown abbreviation is not silently ranked as midfield", () => {
+    // with role rank an unknown would join the midfield; the fallback slices by formationPlace instead
+    const rows = withHomeRoles("4-3-3", ["G", "RB", "LB", "CD-R", "CD-L", "CM-L", "RW", "CM-R", "LW", "CF", "XX"]);
+    expect(rows).toEqual([["G"], ["LB", "CD-L", "CD-R", "RB"], ["CM-L", "CM-R", "RW"], ["LW", "CF", "XX"]]);
+  });
+
+  it("fallback rule: two keepers or a missing keeper never crashes and keeps all 11", () => {
+    const rows = withHomeRoles("4-3-3", ["G", "G", "LB", "CD-R", "CD-L", "CM-L", "CM", "CM-R", "LW", "CF", "RW"]);
+    expect(rows.flat()).toHaveLength(11);
+    expect(rows[0]).toEqual(["G"]);
+  });
+});
+
 describe("normalizeSummary (no lineups yet)", () => {
   const d = normalizeSummary(load("summary-prelineup.json"), "eng.1");
 
