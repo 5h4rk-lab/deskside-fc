@@ -50,6 +50,24 @@ describe("normalizeScoreboard", () => {
     expect(m.clock).toBeNull();
   });
 
+  it("nulls scores for a pre match even when ESPN sends score \"0\"", () => {
+    const raw = load("scoreboard-pre.json");
+    for (const c of raw.events[0].competitions[0].competitors) c.score = "0";
+    const [m] = normalizeScoreboard(raw, "eng.1");
+    expect(m.state).toBe("pre");
+    expect(m.homeScore).toBeNull();
+    expect(m.awayScore).toBeNull();
+  });
+
+  it("nulls scores for a postponed match even when ESPN sends score \"0\"", () => {
+    const raw = load("scoreboard-postponed.json");
+    for (const c of raw.events[0].competitions[0].competitors) c.score = "0";
+    const [m] = normalizeScoreboard(raw, "eng.1");
+    expect(m.state).toBe("postponed");
+    expect(m.homeScore).toBeNull();
+    expect(m.awayScore).toBeNull();
+  });
+
   it("normalises a postponed match", () => {
     const [m] = normalizeScoreboard(load("scoreboard-postponed.json"), "eng.1");
     expect(m.state).toBe("postponed");

@@ -56,6 +56,7 @@ export function normalizeScoreboard(raw: unknown, league: string): MatchSummary[
     if (!home || !away) continue;
     const status: Json | undefined = ev.status ?? comp?.status;
     const state = toState(status);
+    const hasScore = state === "live" || state === "post";
     const kickoffMs = Date.parse(ev.date ?? comp?.date ?? "");
     out.push({
       id: String(ev.id),
@@ -65,8 +66,8 @@ export function normalizeScoreboard(raw: unknown, league: string): MatchSummary[
       kickoff: Number.isFinite(kickoffMs) ? Math.floor(kickoffMs / 1000) : 0,
       home: toTeam(home),
       away: toTeam(away),
-      homeScore: toScore(home.score),
-      awayScore: toScore(away.score),
+      homeScore: hasScore ? toScore(home.score) : null,
+      awayScore: hasScore ? toScore(away.score) : null,
     });
   }
   return out;
