@@ -27,8 +27,10 @@ struct GoalEvent {
 class GoalDetector {
  public:
   // Feed each poll's full match list. Returns an event for the favourite's
-  // matches only; the first sighting of a match never produces one. Baselines
-  // persist for the detector's lifetime.
+  // matches only; the first sighting of a match never produces one. A match's
+  // baseline is dropped when it is absent from a poll, and all baselines are
+  // dropped when favTeamId changes, so a match that reappears (or becomes
+  // tracked after a favourite switch) is "first seen" again and stays silent.
   std::optional<GoalEvent> update(const std::vector<MatchSummary>& next,
                                   const std::string& favTeamId);
 
@@ -40,4 +42,5 @@ class GoalDetector {
     bool fullTimePending = false;  // saw Live -> Post, not yet reported or dismissed
   };
   std::map<std::string, Baseline> baselines_;
+  std::string lastFav_;
 };

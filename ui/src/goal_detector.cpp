@@ -1,5 +1,7 @@
 #include "goal_detector.h"
 
+#include <iterator>
+
 namespace {
 
 GoalEvent make_event(const MatchSummary& m, int home, int away, Side side, bool favourite,
@@ -21,6 +23,22 @@ GoalEvent make_event(const MatchSummary& m, int home, int away, Side side, bool 
 
 std::optional<GoalEvent> GoalDetector::update(const std::vector<MatchSummary>& next,
                                               const std::string& favTeamId) {
+  // Drop stale state so changes that happened while untracked never celebrate.
+  if (favTeamId != lastFav_) {
+    baselines_.clear();
+    lastFav_ = favTeamId;
+  }
+  for (auto it = baselines_.begin(); it != baselines_.end();) {
+    bool present = false;
+    for (const MatchSummary& m : next) {
+      if (m.id == it->first) {
+        present = true;
+        break;
+      }
+    }
+    it = present ? std::next(it) : baselines_.erase(it);
+  }
+
   // Lower rank wins: favourite goal, opponent goal, full time. Ties keep the
   // earlier match. Baselines of every match are updated before returning.
   std::optional<GoalEvent> best;
