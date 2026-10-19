@@ -279,3 +279,78 @@ TEST_CASE("parse_teams rejects bad input and leaves the output untouched") {
     CHECK(teams[0].id == "keep");
   }
 }
+
+TEST_CASE("absent nullable keys are rejected, explicit null is accepted") {
+  SUBCASE("matches: clock, homeScore, awayScore") {
+    for (const char* key : {"clock", "homeScore", "awayScore"}) {
+      JsonDocument doc = load_doc("matches-normalised.json");
+      doc["matches"][0].remove(key);
+      MatchSummary sentinel;
+      sentinel.id = "keep";
+      std::vector<MatchSummary> matches{sentinel};
+      int64_t updated = 77;
+      CHECK_MESSAGE(!parse_matches(dump(doc), matches, updated), key);
+      REQUIRE(matches.size() == 1);
+      CHECK(matches[0].id == "keep");
+      CHECK(updated == 77);
+    }
+    JsonDocument doc = load_doc("matches-normalised.json");
+    doc["matches"][0]["clock"] = nullptr;
+    doc["matches"][0]["homeScore"] = nullptr;
+    doc["matches"][0]["awayScore"] = nullptr;
+    std::vector<MatchSummary> matches;
+    int64_t updated = 0;
+    REQUIRE(parse_matches(dump(doc), matches, updated));
+    CHECK(matches[0].clock.empty());
+    CHECK_FALSE(matches[0].homeScore.has_value());
+    CHECK_FALSE(matches[0].awayScore.has_value());
+  }
+  SUBCASE("detail: event detail, lineup photo, nested match nullables") {
+    JsonDocument noDetail = load_doc("detail-normalised.json");
+    noDetail["events"][0].remove("detail");
+    JsonDocument noPhoto = load_doc("detail-normalised.json");
+    noPhoto["home"]["players"][0].remove("photo");
+    JsonDocument noClock = load_doc("detail-normalised.json");
+    noClock["match"].remove("clock");
+    JsonDocument noScore = load_doc("detail-normalised.json");
+    noScore["match"].remove("homeScore");
+    for (const JsonDocument* d : {&noDetail, &noPhoto, &noClock, &noScore}) {
+      MatchDetail out;
+      out.match.id = "keep";
+      CHECK_FALSE(parse_detail(dump(*d), out));
+      CHECK(out.match.id == "keep");
+      CHECK(out.events.empty());
+      CHECK(out.home.players.empty());
+    }
+    JsonDocument doc = load_doc("detail-normalised.json");
+    doc["events"][0]["detail"] = nullptr;
+    doc["home"]["players"][0]["photo"] = nullptr;
+    MatchDetail out;
+    REQUIRE(parse_detail(dump(doc), out));
+    CHECK(out.events[0].detail.empty());
+    CHECK(out.home.players[0].photo.empty());
+  }
+  SUBCASE("news: image") {
+    JsonDocument doc = load_doc("news-normalised.json");
+    doc["articles"][0].remove("image");
+    NewsItem sentinel;
+    sentinel.id = "keep";
+    std::vector<NewsItem> items{sentinel};
+    int64_t updated = 77;
+    CHECK_FALSE(parse_news(dump(doc), items, updated));
+    REQUIRE(items.size() == 1);
+    CHECK(items[0].id == "keep");
+    CHECK(updated == 77);
+  }
+}
+
+TEST_CASE("wrong types in nullable fields are rejected") {
+  JsonDocument doc = load_doc("matches-normalised.json");
+  doc["matches"][0]["homeScore"] = "3";
+  std::vector<MatchSummary> matches;
+  int64_t updated = 0;
+  CHECK_FALSE(parse_matches(dump(doc), matches, updated));
+  doc = load_doc("matches-normalised.json");
+  doc["matches"][0]["clock"] = 5;
+  CHECK_FALSE(parse_matches(dump(doc), matches, updated));
+}

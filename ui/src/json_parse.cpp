@@ -2,6 +2,8 @@
 
 #include <ArduinoJson.h>
 
+#include <string.h>
+
 #include <utility>
 
 #include "theme.h"
@@ -9,6 +11,15 @@
 namespace {
 
 using Obj = JsonObjectConst;
+
+// True when `key` is present, even with a null value. (isNull() cannot tell
+// an absent key from an explicit null, and containsKey() is deprecated.)
+bool has_key(Obj o, const char* key) {
+  for (JsonPairConst kv : o) {
+    if (strcmp(kv.key().c_str(), key) == 0) return true;
+  }
+  return false;
+}
 
 // Required string field. A missing key or a non-string value fails.
 bool get_str(Obj o, const char* key, std::string& out) {
@@ -18,9 +29,10 @@ bool get_str(Obj o, const char* key, std::string& out) {
   return true;
 }
 
-// Nullable string field: null (or absent) gives "", a string is copied,
-// any other type fails.
+// Nullable string field: the key must be present. null gives "", a string is
+// copied, any other type (or an absent key) fails.
 bool get_opt_str(Obj o, const char* key, std::string& out) {
+  if (!has_key(o, key)) return false;
   JsonVariantConst v = o[key];
   if (v.isNull()) {
     out.clear();
@@ -52,8 +64,9 @@ bool get_float(Obj o, const char* key, float& out) {
   return true;
 }
 
-// Nullable integer: null (or absent) gives nullopt.
+// Nullable integer: the key must be present. null gives nullopt.
 bool get_opt_int(Obj o, const char* key, std::optional<int>& out) {
+  if (!has_key(o, key)) return false;
   JsonVariantConst v = o[key];
   if (v.isNull()) {
     out.reset();
