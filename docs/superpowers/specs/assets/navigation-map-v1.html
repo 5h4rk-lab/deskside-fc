@@ -1,0 +1,77 @@
+<h2>How he moves around (my read of what you said)</h2>
+<p class="subtitle">Three tabs along the bottom. Tapping any match opens the same detail view. Correct me where it's wrong.</p>
+
+<style>
+  .flow{display:flex;gap:28px;align-items:flex-start;flex-wrap:wrap;justify-content:center}
+  .col{display:flex;flex-direction:column;gap:10px;align-items:center}
+  .scr{width:200px;height:266px;background:#0b1220;color:#e8eefc;border-radius:6px;font-family:system-ui,sans-serif;font-size:11px;position:relative;overflow:hidden}
+  .scr .top{padding:6px 8px;background:#121b30;font-size:10px;color:#8ea0c4;text-align:center}
+  .scr .body{padding:10px;line-height:1.5}
+  .scr .tabs{position:absolute;bottom:0;left:0;right:0;display:flex;background:#121b30;font-size:10px}
+  .scr .tabs span{flex:1;text-align:center;padding:8px 0;color:#6f82ab}
+  .scr .tabs span.on{color:#fff;border-top:2px solid #4a90ff}
+  .scr .sub{display:flex;background:#121b30;font-size:10px}
+  .scr .sub span{flex:1;text-align:center;padding:6px 0;color:#6f82ab}
+  .scr .sub span.on{color:#fff;border-bottom:2px solid #4a90ff}
+  .cap{font-weight:700;text-align:center}
+  .arrow{align-self:center;font-size:26px;color:#8ea0c4;padding-top:110px}
+  .note{max-width:200px;text-align:center;color:#8ea0c4;font-size:12px}
+</style>
+
+<div class="flow">
+
+  <div class="col">
+    <div class="cap">1 · Live (home)</div>
+    <div class="scr">
+      <div class="top">● LIVE · Premier League</div>
+      <div class="body" style="text-align:center"><div style="font-size:30px;font-weight:800;margin-top:20px">ARS 2-1 CHE</div><div style="color:#ff4d4d">67'</div><div style="margin-top:14px;color:#8ea0c4">⚽ Saka 12'<br>⚽ Palmer 34'<br>⚽ Havertz 58'</div></div>
+      <div class="tabs"><span class="on">Live</span><span>Matches</span><span>News</span></div>
+    </div>
+    <div class="note">His team's live match. No live game → next game countdown.</div>
+  </div>
+
+  <div class="arrow">→<div style="font-size:11px;margin-top:-6px">tap</div></div>
+
+  <div class="col">
+    <div class="cap">2 · Match detail</div>
+    <div class="scr">
+      <div class="top">ARS 2-1 CHE · 67'</div>
+      <div class="sub"><span class="on">Summary</span><span>Pitch</span><span>Stats</span></div>
+      <div class="body" style="color:#8ea0c4">Goals, cards, subs timeline<br><br>Pitch tab = both lineups drawn on field<br><br>Stats tab = shots, possession (my guess, if API gives it)</div>
+      <div class="tabs"><span>Live</span><span>Matches</span><span>News</span></div>
+    </div>
+    <div class="note">Swipe left/right between Summary / Pitch / Stats. Back = swipe down or button.</div>
+  </div>
+
+  <div class="arrow" style="transform:scaleX(-1)">→</div>
+
+  <div class="col">
+    <div class="cap">3 · Matches list</div>
+    <div class="scr">
+      <div class="top">Today &amp; next</div>
+      <div class="body">● ARS 2-1 CHE <span style="color:#ff4d4d">67'</span><br>RMA – BAR &nbsp;19:00<br>MCI – LIV &nbsp;Tomorrow<br>BAY – BVB &nbsp;Sat 17:30<br><br><span style="color:#6f82ab">Past results below (FT)</span></div>
+      <div class="tabs"><span>Live</span><span class="on">Matches</span><span>News</span></div>
+    </div>
+    <div class="note">Tap any row → same Match detail. Upcoming game shows kickoff + lineups once released.</div>
+  </div>
+
+  <div class="col">
+    <div class="cap">4 · News</div>
+    <div class="scr">
+      <div class="top">Results &amp; headlines</div>
+      <div class="body">FT ARS 3-1 CHE<br>FT RMA 2-2 BAR<br><br><b>Mbappé out 2 weeks</b><br><span style="color:#6f82ab">2h ago</span><br><b>Liverpool new signing</b><br><span style="color:#6f82ab">5h ago</span></div>
+      <div class="tabs"><span>Live</span><span>Matches</span><span class="on">News</span></div>
+    </div>
+    <div class="note">Last tab. Morning glance: who won, what happened.</div>
+  </div>
+
+  <div class="col">
+    <div class="cap">⚙ Settings (my guess)</div>
+    <div class="scr">
+      <div class="top">Settings</div>
+      <div class="body">📶 WiFi: scan + pick network, type password<br><br>⭐ Favourite team<br><br>🌍 Timezone<br><br>🔆 Brightness / night dim</div>
+    </div>
+    <div class="note">Gear icon top corner, or hold the Live tab.</div>
+  </div>
+
+</div>

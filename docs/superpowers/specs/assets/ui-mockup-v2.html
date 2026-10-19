@@ -1,0 +1,200 @@
+<h2>Look and feel: "floodlit turf"</h2>
+<p class="subtitle">Real size 240×320. Real crests and player cutouts. The accent colour is his favourite team's (Arsenal red here), so the whole device changes when he picks another team.</p>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Hanken+Grotesk:wght@400;500;700&display=swap');
+  :root{--turf:#0A1410;--line:#1B3B2C;--chalk:#F1EFE4;--dim:#7C8F84;--flood:#FFC857;--team:#EF0107;--away:#034694}
+  .row2{display:flex;flex-wrap:wrap;gap:26px;justify-content:center}
+  .col{display:flex;flex-direction:column;align-items:center;gap:10px;width:240px}
+  .cap{font:500 13px 'Hanken Grotesk',system-ui;color:#8ea0c4;text-align:center;max-width:240px;line-height:1.4}
+  .cap b{color:#e8eefc}
+  .d{width:240px;height:320px;background:var(--turf);color:var(--chalk);font-family:'Hanken Grotesk',system-ui,sans-serif;position:relative;overflow:hidden;border-radius:10px;box-shadow:0 0 0 6px #050907,0 12px 30px rgba(0,0,0,.45)}
+  .disp{font-family:'Big Shoulders Display',Impact,sans-serif}
+  .status{position:absolute;top:6px;left:10px;right:10px;display:flex;justify-content:space-between;font-size:9px;color:var(--dim);z-index:5;letter-spacing:.02em}
+  .tabbar{position:absolute;left:0;right:0;bottom:0;height:44px;background:linear-gradient(transparent,rgba(5,9,7,.95) 40%);display:flex;z-index:6}
+  .tabbar div{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6px;font-size:9px;color:var(--dim);gap:2px}
+  .tabbar div.on{color:var(--chalk)}
+  .tabbar div.on svg{stroke:var(--team)}
+  .tabbar svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+  /* LIVE */
+  .live-bg{position:absolute;inset:0;background:
+    linear-gradient(105deg,var(--team) 0 49.5%,transparent 50%),
+    linear-gradient(105deg,transparent 0 50%,var(--away) 50.5%);opacity:.9}
+  .live-shade{position:absolute;inset:0;background:radial-gradient(120% 70% at 50% 38%,rgba(10,20,16,.0),rgba(10,20,16,.78) 70%),linear-gradient(transparent 55%,var(--turf) 92%)}
+  .crest{position:absolute;width:84px;height:84px;object-fit:contain;filter:drop-shadow(0 6px 10px rgba(0,0,0,.5))}
+  .score{position:absolute;top:100px;left:0;right:0;text-align:center;font-weight:900;font-size:96px;line-height:.8;letter-spacing:-.02em;text-shadow:0 4px 18px rgba(0,0,0,.55)}
+  .score i{font-style:normal;opacity:.55;font-weight:600;margin:0 2px}
+  .min{position:absolute;top:84px;left:50%;transform:translateX(-50%);background:var(--flood);color:#241a00;border-radius:99px;padding:1px 9px 0;font-weight:900;font-size:15px;display:flex;gap:5px;align-items:center;z-index:3}
+  .min:before{content:"";width:6px;height:6px;border-radius:50%;background:#b00;animation:p 1.2s infinite}
+  @keyframes p{50%{opacity:.2}}
+  .names{position:absolute;top:184px;left:0;right:0;display:flex;justify-content:space-between;padding:0 14px;font-weight:800;font-size:15px;letter-spacing:.02em}
+  .event{position:absolute;left:10px;right:10px;bottom:52px;background:rgba(241,239,228,.08);border:1px solid rgba(241,239,228,.12);border-radius:14px;display:flex;align-items:center;gap:10px;padding:6px 10px 6px 6px;backdrop-filter:blur(6px)}
+  .event img{width:40px;height:40px;object-fit:cover;object-position:top;border-radius:10px;background:var(--team)}
+  .event .t{font-size:10px;color:var(--dim)} .event .n{font-weight:700;font-size:14px}
+
+  /* PITCH */
+  .pitch{position:absolute;left:8px;right:8px;top:62px;bottom:52px;border-radius:10px;overflow:hidden;background:repeating-linear-gradient(180deg,#1f5a38 0 24px,#1b5233 24px 48px);border:1.5px solid rgba(241,239,228,.7)}
+  .pitch:before{content:"";position:absolute;left:0;right:0;top:50%;border-top:1.5px solid rgba(241,239,228,.7)}
+  .pitch:after{content:"";position:absolute;left:50%;top:50%;width:54px;height:54px;margin:-27px;border:1.5px solid rgba(241,239,228,.7);border-radius:50%}
+  .box{position:absolute;left:25%;right:25%;height:34px;border:1.5px solid rgba(241,239,228,.7)}
+  .box.t{top:0;border-top:0}.box.b{bottom:0;border-bottom:0}
+  .p{position:absolute;width:24px;height:24px;margin:-12px;border-radius:50%;background:var(--team);border:1.5px solid var(--chalk);display:grid;place-items:center;font:800 12px 'Big Shoulders Display';overflow:hidden;box-shadow:0 2px 5px rgba(0,0,0,.4)}
+  .p.a{background:var(--away)}
+  .p img{width:100%;height:100%;object-fit:cover;object-position:top;position:absolute;inset:0;background:inherit}
+  .ph{position:absolute;top:24px;left:10px;right:10px;display:flex;justify-content:space-between;align-items:center}
+  .ph .tt{font-weight:900;font-size:22px;line-height:1}
+  .chip{font-size:10px;color:var(--dim)}
+  .sub{position:absolute;top:44px;left:10px;right:10px;display:flex;gap:14px;font-size:11px;color:var(--dim);font-weight:500}
+  .sub .on{color:var(--chalk);box-shadow:0 2px 0 var(--team);padding-bottom:2px}
+
+  /* LIST */
+  .list{position:absolute;top:26px;left:0;right:0;bottom:44px;overflow:hidden}
+  .day{font-weight:800;font-size:13px;padding:8px 12px 3px;color:var(--dim);letter-spacing:.04em}
+  .m{display:grid;grid-template-columns:1fr 54px 1fr;align-items:center;margin:0 8px 5px;padding:7px 8px;background:#0F1D17;border-radius:10px;position:relative;font-weight:700;font-size:12px}
+  .m img{width:24px;height:24px;object-fit:contain}
+  .m .h,.m .a{display:flex;align-items:center;gap:6px}.m .a{justify-content:flex-end}
+  .m .c{text-align:center;font-family:'Big Shoulders Display';font-weight:800;font-size:17px;line-height:1}
+  .m .c small{display:block;font:500 9px 'Hanken Grotesk';color:var(--dim)}
+  .m.lv{background:#1a2410;box-shadow:inset 3px 0 0 var(--flood)}
+  .m.lv .c{color:var(--flood)} .m.lv .c small{color:var(--flood)}
+  .m.fav:after{content:"";position:absolute;right:5px;top:5px;width:5px;height:5px;border-radius:50%;background:var(--team)}
+
+  /* NEWS */
+  .lead{position:absolute;top:0;left:0;right:0;height:158px;background:linear-gradient(120deg,#6a0408,var(--team) 60%,#ff5a4a);overflow:hidden}
+  .lead img.pl{position:absolute;right:-6px;bottom:0;height:150px}
+  .lead:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,20,16,.75),transparent 60%),linear-gradient(transparent 50%,var(--turf))}
+  .lead .h{position:absolute;left:12px;bottom:10px;width:150px;z-index:2;font-weight:900;font-size:25px;line-height:.95}
+  .n2{position:absolute;left:10px;right:10px;display:flex;gap:10px;align-items:center;padding:8px;background:#0F1D17;border-radius:12px;font-weight:700;font-size:12px;line-height:1.15}
+  .n2 img{width:40px;height:40px;border-radius:9px;object-fit:cover;object-position:top;background:var(--away);flex:none}
+  .n2 small{display:block;color:var(--dim);font-weight:500;font-size:9px;margin-top:2px}
+  .ft{position:absolute;left:10px;right:10px;top:166px;display:flex;gap:8px}
+  .ft div{flex:1;background:#0F1D17;border-radius:10px;padding:5px 8px;font-size:10px;color:var(--dim)} .ft b{display:block;color:var(--chalk);font:800 15px 'Big Shoulders Display'}
+
+  /* GOAL */
+  .goal{background:var(--team)}
+  .goal .conf{position:absolute;inset:0;background:
+    radial-gradient(circle at 18% 22%,#fff 0 3px,transparent 4px),radial-gradient(circle at 80% 14%,var(--flood) 0 4px,transparent 5px),
+    radial-gradient(circle at 66% 34%,#fff 0 2px,transparent 3px),radial-gradient(circle at 10% 60%,var(--flood) 0 3px,transparent 4px),
+    radial-gradient(circle at 90% 55%,#fff 0 3px,transparent 4px),radial-gradient(circle at 30% 8%,var(--flood) 0 2px,transparent 3px)}
+  .goal .rays{position:absolute;inset:-40%;background:repeating-conic-gradient(from 0deg at 50% 62%,rgba(255,255,255,.12) 0 8deg,transparent 8deg 16deg)}
+  .goal .big{position:absolute;top:26px;left:0;right:0;text-align:center;font-weight:900;font-size:78px;line-height:.85;letter-spacing:-.01em;transform:rotate(-4deg);text-shadow:0 5px 0 rgba(0,0,0,.25)}
+  .goal .pl{position:absolute;bottom:0;left:50%;transform:translateX(-50%);height:190px;filter:drop-shadow(0 8px 14px rgba(0,0,0,.45))}
+  .goal .who{position:absolute;left:0;right:0;bottom:12px;text-align:center;background:linear-gradient(transparent,rgba(0,0,0,.65));padding-top:34px;font-weight:900;font-size:26px;line-height:1}
+  .goal .who small{display:block;font:500 11px 'Hanken Grotesk';opacity:.85}
+</style>
+
+<div class="row2">
+
+  <!-- 1 LIVE -->
+  <div class="col">
+    <div class="d">
+      <div class="live-bg"></div><div class="live-shade"></div>
+      <div class="status"><span>Premier League</span><span>09:42 ●</span></div>
+      <img class="crest" style="left:8px;top:26px" src="https://crests.football-data.org/57.png">
+      <img class="crest" style="right:8px;top:26px" src="https://crests.football-data.org/61.png">
+      <div class="min disp">67'</div>
+      <div class="score disp">2<i>:</i>1</div>
+      <div class="names disp"><span>ARSENAL</span><span>CHELSEA</span></div>
+      <div class="event">
+        <img src="https://r2.thesportsdb.com/images/media/player/cutout/irkeiw1788606984.png">
+        <div><div class="t">58'  Goal</div><div class="n">Kai Havertz</div></div>
+      </div>
+      <div class="tabbar">
+        <div class="on"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7l4 3-1.5 5h-5L8 10z"/></svg>Live</div>
+        <div><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Matches</div>
+        <div><svg viewBox="0 0 24 24"><path d="M5 5h11v14H7a2 2 0 01-2-2zM16 9h3v8a2 2 0 01-2 2M8 9h5M8 13h5"/></svg>News</div>
+      </div>
+    </div>
+    <div class="cap"><b>Home · Live.</b> Split in both teams' colours, crests big, score bigger. Latest event sits in a glass strip with the scorer's face. Tap → match detail.</div>
+  </div>
+
+  <!-- 2 PITCH -->
+  <div class="col">
+    <div class="d">
+      <div class="status"><span>‹ Back</span><span>67'  ●</span></div>
+      <div class="ph"><span class="tt disp" style="color:var(--chalk)">ARS 2:1 CHE</span><span class="chip">4-3-3</span></div>
+      <div class="sub"><span>Summary</span><span class="on">Pitch</span><span>Stats</span></div>
+      <div class="pitch">
+        <div class="box t"></div><div class="box b"></div>
+        <!-- home (bottom half) -->
+        <div class="p" style="left:50%;top:92%">1</div>
+        <div class="p" style="left:14%;top:76%">12</div><div class="p" style="left:38%;top:79%">2</div><div class="p" style="left:62%;top:79%">6</div><div class="p" style="left:86%;top:76%">3</div>
+        <div class="p" style="left:28%;top:62%">41</div>
+        <div class="p" style="left:50%;top:66%"><img src="https://r2.thesportsdb.com/images/media/player/cutout/v1ijg61788607059.png"></div>
+        <div class="p" style="left:72%;top:62%">8</div>
+        <div class="p" style="left:18%;top:54%"><img src="https://r2.thesportsdb.com/images/media/player/cutout/7np7651788606735.png"></div>
+        <div class="p" style="left:50%;top:56%"><img src="https://r2.thesportsdb.com/images/media/player/cutout/irkeiw1788606984.png"></div>
+        <div class="p" style="left:82%;top:54%">11</div>
+        <!-- away (top half) -->
+        <div class="p a" style="left:50%;top:8%">1</div>
+        <div class="p a" style="left:14%;top:22%">24</div><div class="p a" style="left:38%;top:20%">6</div><div class="p a" style="left:62%;top:20%">5</div><div class="p a" style="left:86%;top:22%">27</div>
+        <div class="p a" style="left:34%;top:34%">25</div><div class="p a" style="left:66%;top:34%">8</div>
+        <div class="p a" style="left:50%;top:42%"><img src="https://r2.thesportsdb.com/images/media/player/cutout/q6nnho1787689956.png"></div>
+        <div class="p a" style="left:22%;top:41%">7</div><div class="p a" style="left:78%;top:41%">11</div>
+      </div>
+      <div class="tabbar">
+        <div class="on"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7l4 3-1.5 5h-5L8 10z"/></svg>Live</div>
+        <div><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Matches</div>
+        <div><svg viewBox="0 0 24 24"><path d="M5 5h11v14H7a2 2 0 01-2-2zM16 9h3v8a2 2 0 01-2 2M8 9h5M8 13h5"/></svg>News</div>
+      </div>
+    </div>
+    <div class="cap"><b>Match detail · Pitch.</b> Mowed-stripe pitch, red = his side, blue = opponent. Stars get a face, others a shirt number. Tap a player → name card.</div>
+  </div>
+
+  <!-- 3 LIST -->
+  <div class="col">
+    <div class="d">
+      <div class="status"><span>Matches</span><span>09:42 ●</span></div>
+      <div class="list">
+        <div class="day disp">LIVE NOW</div>
+        <div class="m lv fav"><div class="h"><img src="https://crests.football-data.org/57.png">ARS</div><div class="c">2:1<small>67'</small></div><div class="a">CHE<img src="https://crests.football-data.org/61.png"></div></div>
+        <div class="day disp">TODAY</div>
+        <div class="m"><div class="h"><img src="https://crests.football-data.org/86.png">RMA</div><div class="c">19:00<small>La Liga</small></div><div class="a">BAR<img src="https://crests.football-data.org/81.png"></div></div>
+        <div class="day disp">TOMORROW</div>
+        <div class="m"><div class="h"><img src="https://crests.football-data.org/65.png">MCI</div><div class="c">17:30<small>PL</small></div><div class="a">LIV<img src="https://crests.football-data.org/64.png"></div></div>
+        <div class="m"><div class="h"><img src="https://crests.football-data.org/5.png">BAY</div><div class="c">20:00<small>Bundesliga</small></div><div class="a">BVB<img src="https://crests.football-data.org/4.png"></div></div>
+        <div class="day disp">YESTERDAY</div>
+        <div class="m"><div class="h"><img src="https://crests.football-data.org/524.png">PSG</div><div class="c">3:1<small>FT</small></div><div class="a">OM<img src="https://crests.football-data.org/516.png"></div></div>
+      </div>
+      <div class="tabbar">
+        <div><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7l4 3-1.5 5h-5L8 10z"/></svg>Live</div>
+        <div class="on"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Matches</div>
+        <div><svg viewBox="0 0 24 24"><path d="M5 5h11v14H7a2 2 0 01-2-2zM16 9h3v8a2 2 0 01-2 2M8 9h5M8 13h5"/></svg>News</div>
+      </div>
+    </div>
+    <div class="cap"><b>Matches.</b> Live pinned on top with an amber edge, then by day. Dot = his team. Every row opens the detail view.</div>
+  </div>
+
+  <!-- 4 NEWS -->
+  <div class="col">
+    <div class="d">
+      <div class="lead">
+        <img class="pl" src="https://r2.thesportsdb.com/images/media/player/cutout/7np7651788606735.png">
+        <div class="status"><span>Last night</span><span>09:42 ●</span></div>
+        <div class="h disp">SAKA BRACE SINKS CHELSEA</div>
+      </div>
+      <div class="ft"><div>Arsenal<b>3 : 1</b></div><div>Next up<b>Sat 17:30</b></div></div>
+      <div class="n2" style="top:218px"><img src="https://r2.thesportsdb.com/images/media/player/cutout/q6nnho1787689956.png"><div>Palmer doubtful for the weekend<small>2h ago</small></div></div>
+      <div class="n2" style="top:268px;bottom:auto;display:none"></div>
+      <div class="tabbar">
+        <div><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7l4 3-1.5 5h-5L8 10z"/></svg>Live</div>
+        <div><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M4 10h16M9 3v4M15 3v4"/></svg>Matches</div>
+        <div class="on"><svg viewBox="0 0 24 24"><path d="M5 5h11v14H7a2 2 0 01-2-2zM16 9h3v8a2 2 0 01-2 2M8 9h5M8 13h5"/></svg>News</div>
+      </div>
+    </div>
+    <div class="cap"><b>News · morning glance.</b> Lead story with the player cut out in team colour, his team's result and next game in two tiles, then headlines.</div>
+  </div>
+
+  <!-- 5 GOAL -->
+  <div class="col">
+    <div class="d goal">
+      <div class="rays"></div><div class="conf"></div>
+      <div class="big disp">GOAL!</div>
+      <img class="pl" src="https://r2.thesportsdb.com/images/media/player/cutout/irkeiw1788606984.png">
+      <div class="who disp">HAVERTZ<small>58'  ·  Arsenal 2 : 1</small></div>
+    </div>
+    <div class="cap"><b>Fav team scores.</b> Screen floods with his colour, rays spin, "GOAL" stamps in with a bounce, scorer pops up. ~4 seconds, then back to Live. A win gets a longer one.</div>
+  </div>
+
+</div>
