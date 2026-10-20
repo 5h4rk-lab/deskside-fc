@@ -17,7 +17,7 @@
 - Screen 240x320 portrait, touch only.
 - Palette: turf `#0A1410`, panel `#0F1D17`, line `#1B3B2C`, chalk `#F1EFE4`, dim `#7C8F84`, amber `#FFC857`; accent = favourite team's primary colour, default Arsenal `#EF0107`, opponent default `#034694`.
 - Fonts: Big Shoulders Display (scores, names, headings), Hanken Grotesk (small text), as LVGL bitmap fonts.
-- Free tiers only, no paid key. Data: ESPN public API (primary), TheSportsDB (player cutouts), football-data.org crests (only hosts allowed by the image proxy: `a.espncdn.com`, `r2.thesportsdb.com`, `crests.football-data.org`).
+- Free tiers only, no paid key. Data: ESPN public API (primary), TheSportsDB (player cutouts), football-data.org crests (only hosts allowed by the image proxy: `a.espncdn.com`, `r2.thesportsdb.com`, `crests.football-data.org`, `espnmedia-cdn.akamaized.net`).
 - Live refresh every 20 to 30 s (use 25 s), otherwise every 180 s. Times in the user's chosen timezone.
 - Team picker covers Premier League (`eng.1`), La Liga (`esp.1`), Serie A (`ita.1`), Bundesliga (`ger.1`), Ligue 1 (`fra.1`) only.
 - Wi-Fi: WPA2-Personal and open networks only; at least 8 saved networks.
@@ -104,12 +104,12 @@ sim/
 
 **Files:** Create `helper/src/contract.ts` (types exactly as the contract above), `helper/src/espn.ts`, `helper/api/matches.ts`, `helper/test/matches.test.ts`, `contract/fixtures/scoreboard-post.json`, `scoreboard-live.json`, `scoreboard-pre.json`, `scoreboard-postponed.json`, `scoreboard-empty.json`, `matches-normalised.json`.
 
-**Interfaces:** Produces `normalizeScoreboard(raw: unknown, league: string): MatchSummary[]` and `fetchMatches(leagues: string[], from: string, to: string, fetchImpl?: typeof fetch): Promise<MatchSummary[]>` (merges leagues, sorted by `kickoff`, one ESPN call per league using `?dates=from-to`).
+**Interfaces:** Produces `normalizeScoreboard(raw: unknown, league: string): MatchSummary[]` and `fetchMatches(leagues: string[], from: string, to: string, fetchImpl?: typeof fetch): Promise<MatchSummary[]>` (merges leagues, sorted by `kickoff`). ESPN rejects date ranges (`?dates=from-to` answers 400), so the helper requests one date at a time: one call per league per day with `?dates=YYYYMMDD`, at most 8 in flight.
 
 - [ ] **Step 1:** Record a real response: `curl https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard > contract/fixtures/scoreboard-post.json`. Make `-live`, `-pre`, `-postponed` copies by editing `status.type.state` (`in`/`pre`/`post`) and `status.type.name` (`STATUS_POSTPONED`), `status.displayClock`; `-empty` is `{"events":[]}`.
 - [ ] **Step 2: Write failing tests:** post fixture gives `state:"post"`, scores `3`/`1` (numbers, not strings), home abbr from the competitor with `homeAway:"home"`; live gives `state:"live"` and `clock` equal to the fixture's `displayClock`; pre gives `state:"pre"`, null scores; postponed gives `state:"postponed"`; empty gives `[]`; a competitor without `score` gives null; `crest` starts with `/api/img?u=` and contains the encoded ESPN logo URL with `w=48&h=48`.
 - [ ] **Step 3:** Run, expect FAIL. Implement. Team `color` comes from ESPN `team.color` prefixed with `#` (fallback `#7C8F84`); Task 4 replaces it with the curated table.
-- [ ] **Step 4:** `api/matches.ts` parses query (`leagues` default `eng.1`; `from`/`to` default today-1 to today+3 in UTC), calls `fetchMatches`, sets `Cache-Control: s-maxage=20, stale-while-revalidate=60`. Test the handler with a mocked `fetch` returning the live fixture.
+- [ ] **Step 4:** `api/matches.ts` parses query (`leagues` default `eng.1`; `from`/`to` default today-1 to today+7 in UTC), calls `fetchMatches`, sets `Cache-Control: s-maxage=20, stale-while-revalidate=60`. Test the handler with a mocked `fetch` returning the live fixture.
 - [ ] **Step 5:** Run vitest, expect PASS. Commit `feat(helper): matches endpoint`.
 
 ### Task 3: Match detail and formation layout

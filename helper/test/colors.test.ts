@@ -46,3 +46,15 @@ describe("TEAM_COLORS table", () => {
     }
   });
 });
+
+describe("teamColor with hostile abbreviations", () => {
+  it("never reads inherited Object.prototype properties", () => {
+    for (const abbr of ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf"]) {
+      expect(teamColor(abbr), abbr).toBe("#7C8F84");
+      expect(teamColor(abbr, "12ab9f"), abbr).toBe("#12AB9F");
+      expect(teamColor(abbr, undefined, "eng.1"), abbr).toBe("#7C8F84");
+    }
+    // a league-qualified key that only exists on the prototype chain is not found either
+    expect(teamColor("x", undefined, "__proto__")).toBe("#7C8F84");
+  });
+});

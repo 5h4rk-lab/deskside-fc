@@ -5,12 +5,18 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler from "../api/matches.js";
 import { buildMatchesFixture } from "../scripts/build-fixtures.js";
 import {
+  clearScoreboardCache,
   DateRangeError,
   expandDates,
   fetchMatches,
   fetchMatchesDetailed,
   normalizeScoreboard,
+  SCOREBOARD_CACHE_MAX,
 } from "../src/espn.js";
+import { fastTimeouts, hangingFetch } from "./helpers.js";
+
+// The scoreboard cache is module state: every test starts with it empty.
+beforeEach(() => clearScoreboardCache());
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "contract", "fixtures");
 const load = (name: string): any => JSON.parse(readFileSync(join(fixtureDir, name), "utf8"));
@@ -279,6 +285,7 @@ describe("GET /api/matches", () => {
     );
     expect(res.statusCode).toBe(200);
     expect(res.headers["Cache-Control"]).toBe("s-maxage=20, stale-while-revalidate=60");
+    expect(res.headers["Vary"]).toBe("x-token");
     expect(res.headers["x-helper-partial"]).toBeUndefined();
     expect(typeof res.body.updated).toBe("number");
     // the same live event is returned for all 5 dates and de-duplicated by id
@@ -292,7 +299,7 @@ describe("GET /api/matches", () => {
     );
   });
 
-  it("defaults leagues to eng.1 and dates to today-1..today+3 UTC (5 single-date requests)", async () => {
+  it("defaults leagues to eng.1 and dates to today-1..today+7 UTC (9 single-date requests)", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-10-19T12:00:00Z"));
     try {
@@ -303,7 +310,17 @@ describe("GET /api/matches", () => {
       expect(res.statusCode).toBe(200);
       expect(res.body.matches).toEqual([]);
       const dates = (fetchMock.mock.calls as any).map((c: any[]) => datesOf(String(c[0]))).sort();
-      expect(dates).toEqual(["20261018", "20261019", "20261020", "20261021", "20261022"]);
+      expect(dates).toEqual([
+        "20261018",
+        "20261019",
+        "20261020",
+        "20261021",
+        "20261022",
+        "20261023",
+        "20261024",
+        "20261025",
+        "20261026",
+      ]);
       for (const c of fetchMock.mock.calls as any) expect(String(c[0])).toContain("/eng.1/scoreboard?dates=");
     } finally {
       vi.useRealTimers();
@@ -326,7 +343,8 @@ describe("GET /api/matches", () => {
       );
       expect(res.statusCode).toBe(200);
       expect(res.headers["x-helper-partial"]).toBe("1");
-      expect(res.headers["Cache-Control"]).toBe("s-maxage=20, stale-while-revalidate=60");
+      expect(res.headers["Cache-Control"]).toBe("s-maxage=5, stale-while-revalidate=60");
+      expect(res.headers["Vary"]).toBe("x-token");
       expect(res.body.matches).toHaveLength(1);
     } finally {
       errors.mockRestore();
@@ -344,6 +362,9 @@ describe("GET /api/matches", () => {
       { from: "20261332" },
       { from: "20261022", to: "20261019" }, // from > to
       { from: "20261001", to: "20261015" }, // 15-day span
+      { leagues: "a.1,b.1,c.1,d.1,e.1,f.1,g.1,h.1,i.1" }, // 9 distinct leagues
+      { leagues: "eng.1,bad name" },
+      { leagues: "," },
     ];
     for (const query of bad) {
       const res = stubRes();
@@ -355,6 +376,92 @@ describe("GET /api/matches", () => {
     await handler(q({ from: "20261001", to: "20261014" }), ok14);
     expect(ok14.statusCode).toBe(200);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("error responses carry Cache-Control: no-store (401, 400, 502)", async () => {
+    const r401 = stubRes();
+    await handler({ headers: {}, query: {} } as any, r401);
+    expect(r401.headers["Cache-Control"]).toBe("no-store");
+    const r400 = stubRes();
+    await handler({ headers: { "x-token": "secret" }, query: { from: "bad" } } as any, r400);
+    expect(r400.statusCode).toBe(400);
+    expect(r400.headers["Cache-Control"]).toBe("no-store");
+    expect(r400.headers["Vary"]).toBeUndefined();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response("x", { status: 500 })));
+      const r502 = stubRes();
+      await handler({ headers: { "x-token": "secret" }, query: {} } as any, r502);
+      expect(r502.statusCode).toBe(502);
+      expect(r502.headers["Cache-Control"]).toBe("no-store");
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("de-duplicates leagues keeping order: eng.1,eng.1,esp.1 is two leagues", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(load("scoreboard-empty.json")), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = stubRes();
+    await handler(
+      { headers: { "x-token": "secret" }, query: { leagues: "eng.1, eng.1,esp.1,eng.1", from: "20261019", to: "20261020" } } as any,
+      res,
+    );
+    expect(res.statusCode).toBe(200);
+    const urls = (fetchMock.mock.calls as any).map((c: any[]) => String(c[0]));
+    expect(urls).toHaveLength(4);
+    expect(urls.filter((u: string) => u.includes("/eng.1/"))).toHaveLength(2);
+    expect(urls.filter((u: string) => u.includes("/esp.1/"))).toHaveLength(2);
+  });
+
+  it("accepts exactly 8 distinct leagues, rejects 9 with 'too many leagues', and counts distinct ones only", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(load("scoreboard-empty.json")), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const eight = ["a.1", "b.1", "c.1", "d.1", "e.1", "f.1", "g.1", "h.1"];
+    const call = async (leagues: string) => {
+      const res = stubRes();
+      await handler({ headers: { "x-token": "secret" }, query: { leagues, from: "20261019", to: "20261019" } } as any, res);
+      return res;
+    };
+    expect((await call(eight.join(","))).statusCode).toBe(200);
+    expect((await call([...eight, ...eight].join(","))).statusCode).toBe(200); // 16 entries, 8 distinct
+    fetchMock.mockClear();
+    const nine = await call([...eight, "i.1"].join(","));
+    expect(nine.statusCode).toBe(400);
+    expect(nine.body).toEqual({ error: "too many leagues" });
+    expect(nine.headers["Cache-Control"]).toBe("no-store");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a hanging upstream counts as a failure and the handler still answers (partial, then 502)", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const t = fastTimeouts();
+    try {
+      const fetchMock = vi.fn((url: any, init: any) =>
+        datesOf(String(url)) === "20261019"
+          ? (hangingFetch() as any)(url, init)
+          : Promise.resolve(new Response(JSON.stringify(load("scoreboard-live.json")), { status: 200 })),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const res = stubRes();
+      await handler(
+        { headers: { "x-token": "secret" }, query: { leagues: "eng.1", from: "20261018", to: "20261020" } } as any,
+        res,
+      );
+      expect(res.statusCode).toBe(200);
+      expect(res.headers["x-helper-partial"]).toBe("1");
+      expect(res.headers["Cache-Control"]).toBe("s-maxage=5, stale-while-revalidate=60");
+      expect(t.requested).toEqual([5000, 5000, 5000]);
+
+      clearScoreboardCache();
+      vi.stubGlobal("fetch", hangingFetch());
+      const all = stubRes();
+      await handler({ headers: { "x-token": "secret" }, query: { from: "20261018", to: "20261019" } } as any, all);
+      expect(all.statusCode).toBe(502);
+    } finally {
+      t.restore();
+      errors.mockRestore();
+    }
   });
 
   it("returns 502 when every ESPN request fails", async () => {
@@ -373,5 +480,170 @@ describe("GET /api/matches", () => {
     const res = stubRes();
     await handler({ headers: {}, query: { from: "bad" } } as any, res);
     expect(res.statusCode).toBe(401);
+  });
+});
+
+describe("upstream hygiene", () => {
+  it("logs a FIXED string for invalid JSON, never the exception message or the body", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const fetchImpl = (async () => new Response("<html>LEAKY-BODY-SNIPPET</html>", { status: 200 })) as unknown as typeof fetch;
+      const res = await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", fetchImpl);
+      expect(res.failed).toBe(1);
+      const logged = errors.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(logged).toContain("upstream returned invalid JSON");
+      expect(logged).not.toContain("LEAKY-BODY-SNIPPET");
+      expect(logged).not.toMatch(/Unexpected token|is not valid JSON/);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("every scoreboard request carries a 5 s timeout signal", async () => {
+    const t = fastTimeouts();
+    try {
+      const fetchImpl = vi.fn(async () => ok(load("scoreboard-empty.json")));
+      await fetchMatchesDetailed(["eng.1"], "20261019", "20261021", fetchImpl as any);
+      expect(t.requested).toEqual([5000, 5000, 5000]);
+      for (const c of fetchImpl.mock.calls as any[]) expect(c[1].signal).toBeInstanceOf(AbortSignal);
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("a hanging request is a counted failure, not a hang", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const t = fastTimeouts();
+    try {
+      const res = await fetchMatchesDetailed(["eng.1"], "20261019", "20261020", hangingFetch());
+      expect(res.failed).toBe(2);
+      expect(res.total).toBe(2);
+    } finally {
+      t.restore();
+      errors.mockRestore();
+    }
+  });
+});
+
+describe("scoreboard cache", () => {
+  const NOW = Date.parse("2026-10-19T12:00:00Z");
+  const counting = () =>
+    vi.fn(async () => new Response(JSON.stringify(scoreboardWith([{ id: "1", date: "2026-10-19T19:00Z" }])), { status: 200 }));
+
+  it("serves a second call within the TTL from cache (one upstream request)", async () => {
+    let t = NOW;
+    const f = counting();
+    const opts = { now: () => t };
+    const a = await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any, opts);
+    t += 19_000;
+    const b = await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(b.matches).toEqual(a.matches);
+    expect(b.failed).toBe(0);
+    expect(b.total).toBe(1);
+  });
+
+  it("expires today's date after 20 s", async () => {
+    let t = NOW;
+    const f = counting();
+    const opts = { now: () => t };
+    await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any, opts);
+    t += 20_000;
+    await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps other dates for 10 minutes", async () => {
+    let t = NOW;
+    const f = counting();
+    const opts = { now: () => t };
+    await fetchMatchesDetailed(["eng.1"], "20261021", "20261021", f as any, opts); // a future day
+    await fetchMatchesDetailed(["eng.1"], "20261018", "20261018", f as any, opts); // a past day
+    t += 599_000;
+    await fetchMatchesDetailed(["eng.1"], "20261021", "20261021", f as any, opts);
+    await fetchMatchesDetailed(["eng.1"], "20261018", "20261018", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(2);
+    t += 1_000;
+    await fetchMatchesDetailed(["eng.1"], "20261021", "20261021", f as any, opts);
+    await fetchMatchesDetailed(["eng.1"], "20261018", "20261018", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(4);
+  });
+
+  it("decides 'today' with the injected clock in UTC, so the same date changes TTL at midnight", async () => {
+    let t = Date.parse("2026-10-19T23:59:50Z");
+    const f = counting();
+    const opts = { now: () => t };
+    await fetchMatchesDetailed(["eng.1"], "20261020", "20261020", f as any, opts); // tomorrow: 600 s
+    t = Date.parse("2026-10-20T00:00:30Z"); // now it is "today" but the entry was stored with the long TTL
+    await fetchMatchesDetailed(["eng.1"], "20261020", "20261020", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("keys by league and date", async () => {
+    const f = counting();
+    const opts = { now: () => NOW };
+    await fetchMatchesDetailed(["eng.1", "esp.1"], "20261019", "20261020", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(4);
+    await fetchMatchesDetailed(["esp.1", "eng.1"], "20261020", "20261020", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(4);
+  });
+
+  it("does not cache failures (HTTP error, network error, bad JSON)", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const opts = { now: () => NOW };
+      const bad: (() => Response | never)[] = [
+        () => new Response("no", { status: 500 }),
+        () => {
+          throw new Error("socket hang up");
+        },
+        () => new Response("<html>", { status: 200 }),
+      ];
+      for (const mk of bad) {
+        clearScoreboardCache();
+        const f = vi.fn(async () => mk());
+        const first = await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any, opts);
+        expect(first.failed).toBe(1);
+        const second = await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any, opts);
+        expect(second.failed).toBe(1);
+        expect(f).toHaveBeenCalledTimes(2);
+      }
+      // and a failure after a success path recovers once the upstream is back
+      clearScoreboardCache();
+      let healthy = false;
+      const flaky = vi.fn(async () =>
+        healthy ? ok(scoreboardWith([{ id: "1", date: "2026-10-19T19:00Z" }])) : new Response("no", { status: 500 }),
+      );
+      await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", flaky as any, opts);
+      healthy = true;
+      const r = await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", flaky as any, opts);
+      expect(r.failed).toBe(0);
+      expect(r.matches).toHaveLength(1);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("is bounded: at most SCOREBOARD_CACHE_MAX entries, oldest evicted first", async () => {
+    expect(SCOREBOARD_CACHE_MAX).toBe(256);
+    const f = vi.fn(async () => ok(load("scoreboard-empty.json")));
+    const opts = { now: () => NOW };
+    // 257 distinct leagues for one date; the first one inserted must be evicted
+    const leagues = Array.from({ length: SCOREBOARD_CACHE_MAX + 1 }, (_, i) => `l${i}.1`);
+    await fetchMatchesDetailed(leagues, "20261019", "20261019", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(257);
+    f.mockClear();
+    await fetchMatchesDetailed([leagues[1]], "20261019", "20261019", f as any, opts); // still cached
+    await fetchMatchesDetailed([leagues[256]], "20261019", "20261019", f as any, opts); // newest, cached
+    expect(f).toHaveBeenCalledTimes(0);
+    await fetchMatchesDetailed([leagues[0]], "20261019", "20261019", f as any, opts); // evicted
+    expect(f).toHaveBeenCalledTimes(1);
+  });
+
+  it("the public signature stays backward compatible (default clock, no options)", async () => {
+    const f = counting();
+    await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any);
+    await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any);
+    expect(f).toHaveBeenCalledTimes(1);
   });
 });

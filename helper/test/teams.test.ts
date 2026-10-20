@@ -3,7 +3,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler from "../api/teams.js";
-import { normalizeScoreboard, normalizeTeams } from "../src/espn.js";
+import { fetchTeams, normalizeScoreboard, normalizeTeams } from "../src/espn.js";
+import { fastTimeouts, hangingFetch } from "./helpers.js";
 import { buildTeamsFixture } from "../scripts/build-fixtures.js";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "contract", "fixtures");
@@ -75,6 +76,7 @@ describe("GET /api/teams", () => {
     const res = stubRes();
     await handler({ headers: {}, query: {} } as any, res);
     expect(res.statusCode).toBe(401);
+    expect(res.headers["Cache-Control"]).toBe("no-store");
   });
 
   it("fetches the five leagues and merges them with a day-long cache", async () => {
@@ -84,6 +86,7 @@ describe("GET /api/teams", () => {
     await handler({ headers: { "x-token": "secret" }, query: {} } as any, res);
     expect(res.statusCode).toBe(200);
     expect(res.headers["Cache-Control"]).toBe("s-maxage=86400");
+    expect(res.headers["Vary"]).toBe("x-token");
     const urls = (fetchMock.mock.calls as any).map((c: any) => String(c[0]));
     for (const l of ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1"]) {
       expect(urls).toContain(`https://site.api.espn.com/apis/site/v2/sports/soccer/${l}/teams`);
@@ -98,5 +101,76 @@ describe("GET /api/teams", () => {
     const res = stubRes();
     await handler({ headers: { "x-token": "secret" }, query: {} } as any, res);
     expect(res.statusCode).toBe(502);
+    expect(res.headers["Cache-Control"]).toBe("no-store");
+  });
+
+  it("still answers when one league fails (the picker is not emptied)", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async (url: any) =>
+          String(url).includes("/ita.1/") ? new Response("x", { status: 500 }) : new Response(JSON.stringify(load("teams-eng1.json")), { status: 200 }),
+        ),
+      );
+      const res = stubRes();
+      await handler({ headers: { "x-token": "secret" }, query: {} } as any, res);
+      expect(res.statusCode).toBe(200);
+      expect(res.body.teams).toHaveLength(80);
+      expect(res.body.teams.some((t: any) => t.league === "ita.1")).toBe(false);
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("a hanging league is a failure like any other", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    const t = fastTimeouts();
+    try {
+      vi.stubGlobal("fetch", hangingFetch());
+      const res = stubRes();
+      await handler({ headers: { "x-token": "secret" }, query: {} } as any, res);
+      expect(res.statusCode).toBe(502);
+      expect(t.requested).toEqual([5000, 5000, 5000, 5000, 5000]);
+    } finally {
+      t.restore();
+      errors.mockRestore();
+    }
+  });
+});
+
+describe("fetchTeams", () => {
+  it("returns the leagues that worked and throws only when every league fails", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const body = JSON.stringify(load("teams-eng1.json"));
+      const some = (async (url: any) =>
+        String(url).includes("/esp.1/") ? new Response("x", { status: 503 }) : new Response(body, { status: 200 })) as unknown as typeof fetch;
+      const teams = await fetchTeams(["eng.1", "esp.1"], some);
+      expect(teams).toHaveLength(20);
+      expect(new Set(teams.map((t) => t.league))).toEqual(new Set(["eng.1"]));
+
+      const none = (async () => new Response("x", { status: 500 })) as unknown as typeof fetch;
+      await expect(fetchTeams(["eng.1", "esp.1"], none)).rejects.toThrow();
+      const throws = (async () => {
+        throw new Error("boom");
+      }) as unknown as typeof fetch;
+      await expect(fetchTeams(["eng.1"], throws)).rejects.toThrow();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it("logs failed leagues with a fixed message for invalid JSON", async () => {
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const f = (async () => new Response("<html>LEAKY</html>", { status: 200 })) as unknown as typeof fetch;
+      await expect(fetchTeams(["eng.1"], f)).rejects.toThrow();
+      const logged = errors.mock.calls.map((c) => c.join(" ")).join("\n");
+      expect(logged).toContain("upstream returned invalid JSON");
+      expect(logged).not.toContain("LEAKY");
+    } finally {
+      errors.mockRestore();
+    }
   });
 });

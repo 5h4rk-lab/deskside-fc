@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Smoke test for a deployed helper.
-# Usage: scripts/smoke.sh <base-url> <token>     (or HELPER_TOKEN in the environment)
+# Usage: HELPER_TOKEN=... scripts/smoke.sh <base-url>     (preferred: keeps the token out of the process list)
+#        scripts/smoke.sh <base-url> <token>              (still accepted)
 # Prints OK/FAIL per check and exits non-zero if any check fails. The token is never printed.
 set -u
 
 base="${1:-}"
 token="${2:-${HELPER_TOKEN:-}}"
 if [ -z "$base" ] || [ -z "$token" ]; then
-  echo "usage: $0 <base-url> <token>" >&2
+  echo "usage: HELPER_TOKEN=... $0 <base-url>   (or: $0 <base-url> <token>)" >&2
   exit 2
 fi
 base="${base%/}"
@@ -31,6 +32,11 @@ code="${body##*$'\n'}"
 json="${body%$'\n'*}"
 check "matches with token is 200" 200 "$code"
 case "$json" in *'"matches"'*) echo "OK   matches body has a matches array" ;; *) echo "FAIL matches body has no matches array"; fail=1 ;; esac
+
+# 3b. Same URL as check 3 without a token must still be 401. A CDN that ignores the
+# x-token header (no "Vary: x-token") would answer 200 from the cache entry created above.
+code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$base/api/matches?leagues=eng.1")
+check "unauthenticated request to the cached matches URL is 401" 401 "$code"
 
 # 4. Image proxy returns a PNG
 tmp=$(mktemp)

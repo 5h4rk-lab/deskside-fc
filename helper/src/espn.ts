@@ -11,14 +11,25 @@ import type {
 } from "./contract.js";
 import { teamColor } from "./colors.js";
 import { layoutFormation, parseFormation } from "./formation.js";
+import { fetchJson } from "./http.js";
+import { isAllowedImageUrl, type Fit } from "./images.js";
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
 
 type Json = Record<string, any>;
 
+/**
+ * Helper-relative /api/img path for an upstream image, or null when the URL is not on the
+ * proxy's allow-list (the proxy would answer 400 for it, so never hand it to the device).
+ */
+export function safeImagePath(url: string, w: number, h: number, fit?: Fit): string | null {
+  if (!isAllowedImageUrl(url)) return null;
+  return `/api/img?u=${encodeURIComponent(url)}${fit ? `&fit=${fit}` : ""}&w=${w}&h=${h}`;
+}
+
 export function crestPath(logoUrl: string | undefined, size = 48): string {
   if (!logoUrl) return "";
-  return `/api/img?u=${encodeURIComponent(logoUrl)}&w=${size}&h=${size}`;
+  return safeImagePath(logoUrl, size, size) ?? "";
 }
 
 function toTeam(competitor: Json, league: string): Team {
@@ -133,27 +144,77 @@ async function runLimited<T>(tasks: (() => Promise<T>)[], limit: number): Promis
 
 export interface MatchesResult {
   matches: MatchSummary[];
-  /** requests that failed (non-2xx, network error or invalid JSON) */
+  /** requests that failed (non-2xx, network error, timeout or invalid JSON) */
   failed: number;
-  /** requests issued: leagues x dates */
+  /** requests issued (or answered from the cache): leagues x dates */
   total: number;
 }
 
+export interface FetchMatchesOptions {
+  /** Clock for the scoreboard cache (epoch ms); tests inject one. Defaults to Date.now. */
+  now?: () => number;
+}
+
+// In-process cache for single-date scoreboard results, keyed "<league>|<YYYYMMDD>".
+// Only successes are stored. A day that is "today" (UTC, by the injected clock) changes
+// quickly, so it lives 20 s; every other day lives 10 min. Bounded: when full, the
+// oldest-inserted entry is evicted first (Map iteration order is insertion order).
+export const SCOREBOARD_CACHE_MAX = 256;
+const TODAY_TTL_MS = 20_000;
+const OTHER_DAY_TTL_MS = 600_000;
+const scoreboardCache = new Map<string, { expires: number; matches: MatchSummary[] }>();
+
+/** Empties the scoreboard cache (tests, and a clean slate for a long-lived instance). */
+export function clearScoreboardCache(): void {
+  scoreboardCache.clear();
+}
+
+function utcYmd(ms: number): string {
+  return new Date(ms).toISOString().slice(0, 10).replace(/-/g, "");
+}
+
+function cacheGet(key: string, now: number): MatchSummary[] | null {
+  const hit = scoreboardCache.get(key);
+  if (!hit) return null;
+  if (hit.expires <= now) {
+    scoreboardCache.delete(key);
+    return null;
+  }
+  return hit.matches;
+}
+
+function cacheSet(key: string, date: string, matches: MatchSummary[], now: number): void {
+  const ttl = date === utcYmd(now) ? TODAY_TTL_MS : OTHER_DAY_TTL_MS;
+  scoreboardCache.delete(key); // re-inserting moves the key to the newest position
+  while (scoreboardCache.size >= SCOREBOARD_CACHE_MAX) {
+    const oldest = scoreboardCache.keys().next();
+    if (oldest.done) break;
+    scoreboardCache.delete(oldest.value);
+  }
+  scoreboardCache.set(key, { expires: now + ttl, matches });
+}
+
 // One request per league per date: the real ESPN soccer scoreboard answers 400 to any
-// dates=YYYYMMDD-YYYYMMDD range. Failures are tolerated here and counted; the caller decides.
+// dates=YYYYMMDD-YYYYMMDD range. Failures (including timeouts) are tolerated here and
+// counted; the caller decides what a failure ratio means.
 export async function fetchMatchesDetailed(
   leagues: string[],
   from: string,
   to: string,
   fetchImpl: typeof fetch = fetch,
+  options: FetchMatchesOptions = {},
 ): Promise<MatchesResult> {
+  const clock = options.now ?? Date.now;
   const dates = expandDates(from, to);
   const jobs = leagues.flatMap((league) =>
     dates.map((date) => async (): Promise<MatchSummary[] | null> => {
+      const key = `${league}|${date}`;
+      const cached = cacheGet(key, clock());
+      if (cached) return cached;
       try {
-        const resp = await fetchImpl(`${ESPN_BASE}/${league}/scoreboard?dates=${date}`);
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        return normalizeScoreboard(await resp.json(), league);
+        const matches = normalizeScoreboard(await fetchJson(`${ESPN_BASE}/${league}/scoreboard?dates=${date}`, fetchImpl), league);
+        cacheSet(key, date, matches, clock());
+        return matches;
       } catch (err) {
         console.error(`ESPN ${league} scoreboard ${date} failed: ${err instanceof Error ? err.message : "error"}`);
         return null;
@@ -368,9 +429,7 @@ export async function fetchSummary(
   id: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<MatchDetail> {
-  const resp = await fetchImpl(`${ESPN_BASE}/${league}/summary?event=${id}`);
-  if (!resp.ok) throw new Error(`ESPN ${league} summary ${id}: HTTP ${resp.status}`);
-  return normalizeSummary(await resp.json(), league);
+  return normalizeSummary(await fetchJson(`${ESPN_BASE}/${league}/summary?event=${id}`, fetchImpl), league);
 }
 
 function toNewsItem(a: Json): NewsItem {
@@ -380,7 +439,7 @@ function toNewsItem(a: Json): NewsItem {
     id: String(a.id ?? ""),
     headline: String(a.headline ?? ""),
     published: Number.isFinite(publishedMs) ? Math.floor(publishedMs / 1000) : 0,
-    image: imageUrl ? `/api/img?u=${encodeURIComponent(imageUrl)}&fit=cover&w=240&h=135` : null,
+    image: imageUrl ? safeImagePath(imageUrl, 240, 135, "cover") : null,
   };
 }
 
@@ -391,9 +450,7 @@ export function normalizeNews(raw: unknown): NewsItem[] {
 }
 
 export async function fetchNews(league: string, fetchImpl: typeof fetch = fetch): Promise<NewsItem[]> {
-  const resp = await fetchImpl(`${ESPN_BASE}/${league}/news`);
-  if (!resp.ok) throw new Error(`ESPN ${league} news: HTTP ${resp.status}`);
-  return normalizeNews(await resp.json());
+  return normalizeNews(await fetchJson(`${ESPN_BASE}/${league}/news`, fetchImpl));
 }
 
 export function normalizeTeams(raw: unknown, league: string): (Team & { league: string })[] {
@@ -407,16 +464,24 @@ export function normalizeTeams(raw: unknown, league: string): (Team & { league: 
 
 export const TEAM_LEAGUES = ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1"];
 
+// One bad league must not empty the team picker: only throw when every league failed.
 export async function fetchTeams(
   leagues: string[] = TEAM_LEAGUES,
   fetchImpl: typeof fetch = fetch,
 ): Promise<(Team & { league: string })[]> {
-  const perLeague = await Promise.all(
-    leagues.map(async (league) => {
-      const resp = await fetchImpl(`${ESPN_BASE}/${league}/teams`);
-      if (!resp.ok) throw new Error(`ESPN ${league} teams: HTTP ${resp.status}`);
-      return normalizeTeams(await resp.json(), league);
-    }),
+  const settled = await Promise.allSettled(
+    leagues.map(async (league) => normalizeTeams(await fetchJson(`${ESPN_BASE}/${league}/teams`, fetchImpl), league)),
   );
-  return perLeague.flat();
+  const teams: (Team & { league: string })[] = [];
+  let failed = 0;
+  settled.forEach((r, i) => {
+    if (r.status === "fulfilled") {
+      teams.push(...r.value);
+      return;
+    }
+    failed++;
+    console.error(`ESPN ${leagues[i]} teams failed: ${r.reason instanceof Error ? r.reason.message : "error"}`);
+  });
+  if (leagues.length > 0 && failed === leagues.length) throw new Error("ESPN teams: every league failed");
+  return teams;
 }

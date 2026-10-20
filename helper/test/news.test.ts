@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler from "../api/news.js";
 import { buildNewsFixture } from "../scripts/build-fixtures.js";
-import { normalizeNews } from "../src/espn.js";
+import { fastTimeouts, hangingFetch } from "./helpers.js";
+import { crestPath, normalizeNews, safeImagePath } from "../src/espn.js";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "contract", "fixtures");
 const load = (name: string): any => JSON.parse(readFileSync(join(fixtureDir, name), "utf8"));
@@ -25,6 +26,19 @@ describe("normalizeNews", () => {
     expect(items[0].image!.startsWith("/api/img?u=")).toBe(true);
     expect(items[0].image).toContain(encodeURIComponent(url));
     expect(items[0].image!.endsWith("&fit=cover&w=240&h=135")).toBe(true);
+  });
+
+  it("keeps the ESPN media CDN thumbnails (the fixture has some) and drops disallowed hosts", () => {
+    const hosts = items.map((i) => (i.image ? new URL(decodeURIComponent(new URL(i.image, "https://h").searchParams.get("u")!)).hostname : null));
+    expect(hosts).toContain("espnmedia-cdn.akamaized.net");
+    for (const h of hosts) expect(h).not.toBeNull();
+    const r = load("news.json");
+    r.articles[0].images = [{ url: "https://evil.example.com/x.jpg" }];
+    r.articles[1].images = [{ url: "http://a.espncdn.com/x.jpg" }];
+    const out = normalizeNews(r);
+    expect(out[0].image).toBeNull();
+    expect(out[1].image).toBeNull();
+    expect(out[2].image).not.toBeNull();
   });
 
   it("gives published as epoch seconds", () => {
@@ -79,6 +93,7 @@ describe("GET /api/news", () => {
     const res = stubRes();
     await handler({ headers: {}, query: {} } as any, res);
     expect(res.statusCode).toBe(401);
+    expect(res.headers["Cache-Control"]).toBe("no-store");
   });
 
   it("returns articles with cache header, defaulting to eng.1", async () => {
@@ -88,6 +103,7 @@ describe("GET /api/news", () => {
     await handler({ headers: { "x-token": "secret" }, query: {} } as any, res);
     expect(res.statusCode).toBe(200);
     expect(res.headers["Cache-Control"]).toBe("s-maxage=300");
+    expect(res.headers["Vary"]).toBe("x-token");
     expect(typeof res.body.updated).toBe("number");
     expect(res.body.articles).toHaveLength(6);
     expect(String((fetchMock.mock.calls as any)[0][0])).toBe(
@@ -99,6 +115,7 @@ describe("GET /api/news", () => {
     const res = stubRes();
     await handler({ headers: { "x-token": "secret" }, query: { league: "../evil" } } as any, res);
     expect(res.statusCode).toBe(400);
+    expect(res.headers["Cache-Control"]).toBe("no-store");
   });
 
   it("returns 502 when ESPN fails", async () => {
@@ -106,5 +123,41 @@ describe("GET /api/news", () => {
     const res = stubRes();
     await handler({ headers: { "x-token": "secret" }, query: {} } as any, res);
     expect(res.statusCode).toBe(502);
+    expect(res.headers["Cache-Control"]).toBe("no-store");
+  });
+
+  it("a hanging ESPN answers 502 within the 5 s deadline", async () => {
+    const t = fastTimeouts();
+    try {
+      vi.stubGlobal("fetch", hangingFetch());
+      const res = stubRes();
+      await handler({ headers: { "x-token": "secret" }, query: {} } as any, res);
+      expect(res.statusCode).toBe(502);
+      expect(t.requested).toEqual([5000]);
+    } finally {
+      t.restore();
+    }
+  });
+});
+
+describe("safeImagePath / crestPath", () => {
+  it("returns the helper path only for allow-listed https URLs", () => {
+    const u = "https://espnmedia-cdn.akamaized.net/a/b.jpg";
+    expect(safeImagePath(u, 240, 135, "cover")).toBe(`/api/img?u=${encodeURIComponent(u)}&fit=cover&w=240&h=135`);
+    expect(safeImagePath("https://a.espncdn.com/x.png", 48, 48)).toBe(
+      `/api/img?u=${encodeURIComponent("https://a.espncdn.com/x.png")}&w=48&h=48`,
+    );
+    for (const bad of ["https://evil.com/a.png", "http://a.espncdn.com/a.png", "https://a.espncdn.com.evil.com/a.png", "", "not a url"]) {
+      expect(safeImagePath(bad, 48, 48), bad).toBeNull();
+    }
+  });
+
+  it("crestPath keeps '' for an empty or disallowed logo", () => {
+    expect(crestPath(undefined)).toBe("");
+    expect(crestPath("")).toBe("");
+    expect(crestPath("https://evil.com/logo.png")).toBe("");
+    expect(crestPath("https://a.espncdn.com/i/teamlogos/soccer/500/360.png")).toBe(
+      `/api/img?u=${encodeURIComponent("https://a.espncdn.com/i/teamlogos/soccer/500/360.png")}&w=48&h=48`,
+    );
   });
 });

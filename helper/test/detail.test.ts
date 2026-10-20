@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import handler from "../api/match/[id].js";
 import { normalizeSummary } from "../src/espn.js";
 import { buildDetailFixture } from "../scripts/build-fixtures.js";
+import { fastTimeouts, hangingFetch } from "./helpers.js";
 
 const fixtureDir = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "contract", "fixtures");
 const load = (name: string): any => JSON.parse(readFileSync(join(fixtureDir, name), "utf8"));
@@ -239,6 +240,7 @@ describe("GET /api/match/:id", () => {
     const res = stubRes();
     await handler({ headers: {}, query: { id: "401879257", league: "eng.1" } } as any, res);
     expect(res.statusCode).toBe(401);
+    expect(res.headers["Cache-Control"]).toBe("no-store");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -249,6 +251,7 @@ describe("GET /api/match/:id", () => {
     await handler({ ...ok, query: { id: "401879257", league: "eng.1" } } as any, res);
     expect(res.statusCode).toBe(200);
     expect(res.headers["Cache-Control"]).toBe("s-maxage=15");
+    expect(res.headers["Vary"]).toBe("x-token");
     expect(res.body.match.id).toBe("401879257");
     expect(res.body.home.players).toHaveLength(11);
     expect(String((fetchMock.mock.calls as any)[0][0])).toBe(
@@ -269,6 +272,7 @@ describe("GET /api/match/:id", () => {
       const res = stubRes();
       await handler({ ...ok, query } as any, res);
       expect(res.statusCode).toBe(400);
+      expect(res.headers["Cache-Control"]).toBe("no-store");
     }
     expect(fetchMock).not.toHaveBeenCalled();
   });
@@ -278,10 +282,25 @@ describe("GET /api/match/:id", () => {
     const res = stubRes();
     await handler({ ...ok, query: { id: "401879257", league: "eng.1" } } as any, res);
     expect(res.statusCode).toBe(502);
+    expect(res.headers["Cache-Control"]).toBe("no-store");
 
     vi.stubGlobal("fetch", vi.fn(async () => new Response("{}", { status: 200 })));
     const res2 = stubRes();
     await handler({ ...ok, query: { id: "401879257", league: "eng.1" } } as any, res2);
     expect(res2.statusCode).toBe(502);
+  });
+
+  it("a hanging ESPN answers 502 within the 5 s deadline", async () => {
+    const t = fastTimeouts();
+    try {
+      vi.stubGlobal("fetch", hangingFetch());
+      const res = stubRes();
+      await handler({ ...ok, query: { id: "401879257", league: "eng.1" } } as any, res);
+      expect(res.statusCode).toBe(502);
+      expect(res.headers["Cache-Control"]).toBe("no-store");
+      expect(t.requested).toEqual([5000]);
+    } finally {
+      t.restore();
+    }
   });
 });

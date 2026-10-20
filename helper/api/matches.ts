@@ -1,5 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { requireToken } from "../src/auth.js";
+import { sendError } from "../src/http.js";
 import { DateRangeError, expandDates, fetchMatchesDetailed } from "../src/espn.js";
 
 function first(v: string | string[] | undefined): string | undefined {
@@ -16,25 +17,32 @@ function offsetDay(days: number): string {
   return ymd(d);
 }
 
+export const MAX_LEAGUES = 8;
+
 export default async function handler(req: VercelRequest, res: VercelResponse): Promise<void> {
   if (!requireToken(req, res)) return;
 
-  const leagues = (first(req.query.leagues) ?? "eng.1")
+  const requested = (first(req.query.leagues) ?? "eng.1")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
   const from = first(req.query.from) ?? offsetDay(-1);
-  const to = first(req.query.to) ?? offsetDay(3);
+  const to = first(req.query.to) ?? offsetDay(7);
 
-  if (leagues.length === 0 || !leagues.every((l) => /^[a-z0-9.\-_]+$/i.test(l) && !l.includes(".."))) {
-    res.status(400).json({ error: "invalid leagues" });
+  if (requested.length === 0 || !requested.every((l) => /^[a-z0-9.\-_]+$/i.test(l) && !l.includes(".."))) {
+    sendError(res, 400, "invalid leagues");
+    return;
+  }
+  const leagues = [...new Set(requested)]; // de-duplicated, first occurrence wins the order
+  if (leagues.length > MAX_LEAGUES) {
+    sendError(res, 400, "too many leagues");
     return;
   }
   try {
     expandDates(from, to);
   } catch (err) {
     if (err instanceof DateRangeError) {
-      res.status(400).json({ error: err.message });
+      sendError(res, 400, err.message);
       return;
     }
     throw err;
@@ -43,13 +51,15 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
   try {
     const { matches, failed, total } = await fetchMatchesDetailed(leagues, from, to);
     if (total > 0 && failed === total) {
-      res.status(502).json({ error: "upstream error" });
+      sendError(res, 502, "upstream error");
       return;
     }
-    res.setHeader("Cache-Control", "s-maxage=20, stale-while-revalidate=60");
+    // A partial answer is cached only briefly so a recovered upstream shows up quickly.
+    res.setHeader("Cache-Control", `s-maxage=${failed > 0 ? 5 : 20}, stale-while-revalidate=60`);
+    res.setHeader("Vary", "x-token");
     if (failed > 0) res.setHeader("x-helper-partial", "1");
     res.status(200).json({ updated: Math.floor(Date.now() / 1000), matches });
   } catch {
-    res.status(502).json({ error: "upstream error" });
+    sendError(res, 502, "upstream error");
   }
 }

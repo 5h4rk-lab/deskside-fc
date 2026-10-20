@@ -4,12 +4,15 @@ export const ALLOWED_IMAGE_HOSTS = [
   "a.espncdn.com",
   "r2.thesportsdb.com",
   "crests.football-data.org",
+  "espnmedia-cdn.akamaized.net",
 ] as const;
 
 export const MAX_DIMENSION = 480;
 export const MAX_SOURCE_BYTES = 5 * 1024 * 1024;
 export const FETCH_TIMEOUT_MS = 8000;
 export const MAX_REDIRECTS = 3;
+/** Decoded-pixel ceiling (4096 x 4096): a small PNG can claim a huge canvas. */
+export const MAX_INPUT_PIXELS = 4096 * 4096;
 
 export type Fit = "contain" | "cover";
 export type ResizedImage = { data: Buffer; type: "image/png" | "image/jpeg" };
@@ -64,8 +67,11 @@ async function readCapped(resp: Response): Promise<Buffer> {
  * Fetches an allow-listed image. Redirects are followed manually (max MAX_REDIRECTS)
  * and every hop is re-validated. Enforces a timeout and a source size cap.
  */
-export async function fetchImageBuffer(url: string, fetchImpl: typeof fetch = fetch): Promise<Buffer> {
-  const signal = AbortSignal.timeout(FETCH_TIMEOUT_MS);
+export async function fetchImageBuffer(
+  url: string,
+  fetchImpl: typeof fetch = fetch,
+  signal: AbortSignal = AbortSignal.timeout(FETCH_TIMEOUT_MS),
+): Promise<Buffer> {
   let current = url;
   for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
     if (!isAllowedImageUrl(current)) throw new ImageError("host not allowed");
@@ -97,11 +103,11 @@ const RASTER_FORMATS = new Set(["png", "jpeg", "webp", "gif"]);
  * cover: fills the box; JPEG when the source is JPEG, otherwise PNG.
  */
 export async function resizeImage(buf: Buffer, w: number, h: number, fit: Fit): Promise<ResizedImage> {
-  const meta = await sharp(buf).metadata();
+  const meta = await sharp(buf, { limitInputPixels: MAX_INPUT_PIXELS }).metadata();
   if (!meta.format || !RASTER_FORMATS.has(meta.format)) {
     throw new ImageError(`unsupported image format: ${meta.format ?? "unknown"}`);
   }
-  const pipeline = sharp(buf).rotate().resize(w, h, {
+  const pipeline = sharp(buf, { limitInputPixels: MAX_INPUT_PIXELS }).rotate().resize(w, h, {
     fit,
     position: "centre",
     background: { r: 0, g: 0, b: 0, alpha: 0 },

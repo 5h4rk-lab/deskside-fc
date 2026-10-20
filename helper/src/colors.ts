@@ -125,9 +125,14 @@ function normalizeHex(raw: string | undefined): string | null {
   return /^[0-9a-fA-F]{6}$/.test(h) ? `#${h.toUpperCase()}` : null;
 }
 
+// Own properties only: an abbreviation like "constructor" must not hit Object.prototype.
+function curatedColor(key: string): string | undefined {
+  return Object.hasOwn(TEAM_COLORS, key) ? TEAM_COLORS[key] : undefined;
+}
+
 // Curated table first ("<league>:<abbr>", then the bare abbreviation), then the ESPN
 // hex as #RRGGBB, then a neutral green-grey.
 export function teamColor(abbr: string, espnHex?: string, league?: string): string {
-  const curated = (league ? TEAM_COLORS[`${league}:${abbr}`] : undefined) ?? TEAM_COLORS[abbr];
+  const curated = (league ? curatedColor(`${league}:${abbr}`) : undefined) ?? curatedColor(abbr);
   return curated ?? normalizeHex(espnHex) ?? FALLBACK;
 }

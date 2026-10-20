@@ -14,6 +14,7 @@ The gift-giver (the user) is not a football person. The device must be self-expl
 **Target board (decided 2026-10-19):** Waveshare ESP32-S3-Touch-LCD-2.8 (touch version, bought on Amazon, arriving 2026-10-20). 2.8" ST7789 SPI display, 240x320 portrait, 5-point I2C capacitive touch, ESP32-S3R8 (16 MB flash, 8 MB octal PSRAM), Wi-Fi + BLE, USB-C, IMU, RTC, microSD, speaker, LiPo charger. All verified facts, pin table, and open questions are in `docs/superpowers/specs/hardware-waveshare-esp32-s3-touch-lcd-2.8.md`.
 
 - **Two hardware revisions exist:** V1 uses a CST328 touch chip (I2C 0x1A), V2 (shipping since 2026-06-05) uses a CST3530 (I2C 0x58). The firmware must detect the touch chip at start-up and support both. CST3530 has no public datasheet, only vendor demo code.
+- Display controller ST7789 (4-wire SPI, 240x320, inversion on); touch controller CST328 on V1 or CST3530 on V2; 8 MB octal PSRAM (80 MHz) and 16 MB flash. Pin assignments are identical between the revisions.
 - Vendor demos use LVGL 8.3 and Arduino-ESP32 3.x; there is no vendor LVGL 9 code, so the display/touch/LVGL port is written by us behind one thin layer.
 - **Spare board:** the earlier Alibaba board (Dongheng Tech, "SC05 Plus" listing, ESP32-S3R8, display module ZX2D80CE-C0F, RS485) stays a spare; its chips and pins were never confirmed.
 - All UI work happens on a PC simulator first; the board arrives after most of the simulator is built.
@@ -65,7 +66,7 @@ Approved mockup: `docs/superpowers/specs/assets/ui-mockup-v2.html` (open in a br
 ## Behaviour
 
 ### Data (no API key)
-- Primary: ESPN's public site API (unofficial, can change): scoreboard for fixtures and scores, `summary?event=` for lineups with formation, key events and news, `news` for headlines with photos. Verified on 2026-10-19: scoreboard, lineups with formation, key events and news with photos all return data without a key. Player headshots are not included.
+- Primary: ESPN's public site API (unofficial, can change): scoreboard for fixtures and scores (one request per league per calendar day, because ESPN answers 400 to date ranges; the helper's default window is yesterday to 7 days ahead, UTC, and it keeps a short in-process cache per league and day), `summary?event=` for lineups with formation, key events and news, `news` for headlines with photos. Verified on 2026-10-19: scoreboard, lineups with formation, key events and news with photos all return data without a key. Player headshots are not included.
 - Player photos: TheSportsDB (free) cutouts looked up by player name and cached. Fallback is a shirt number.
 - Team crests: ESPN team logos or football-data.org crests (both free, PNG).
 - Backup if ESPN breaks: football-data.org (free key, registered by the builder).
@@ -91,7 +92,7 @@ Times shown in his local timezone, set once in Settings (or inferred from the ne
 ## Constraints
 
 - Screen 240x320 portrait, touch-only input (no keyboard or buttons assumed).
-- Flash 16 MB (per listing title). PSRAM 8 MB (ESP32-S3R8, per the board photo). Still confirm on the real board before fixing the memory budget.
+- Flash 16 MB, PSRAM 8 MB octal (ESP32-S3R8; verified from the Waveshare page and vendor `sdkconfig`, see the hardware notes). Still confirm on the real board before fixing the memory budget.
 - Free tiers only.
 - Must run all day on USB power, unattended.
 
@@ -115,7 +116,7 @@ Hardware risk rule: the first hardware milestone must not depend on PSRAM. If th
 
 ## Open items
 
-- Board identity (partly known, see Hardware). Still needed: display controller, touch controller, pin map, PSRAM size. The builder should get these from the supplier's specification page and demo code before writing driver code.
+- Board identity is settled (see Hardware): ST7789 over SPI, CST328 (V1) or CST3530 (V2) touch, 8 MB octal PSRAM. Still to confirm on the real board: which revision it is (label on the back), plus the open questions in `docs/superpowers/specs/hardware-waveshare-esp32-s3-touch-lcd-2.8.md` (USB enumeration, safe SPI clock, button pins).
 
 ## Decisions made so far
 

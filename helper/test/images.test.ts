@@ -4,6 +4,7 @@ import cutoutHandler from "../api/cutout.js";
 import imgHandler from "../api/img.js";
 import { ALLOWED_IMAGE_HOSTS, isAllowedImageUrl, resizeImage } from "../src/images.js";
 import { findCutoutUrl } from "../src/sportsdb.js";
+import { bigPng, fastTimeouts, hangingFetch } from "./helpers.js";
 
 async function makePng(w: number, h: number): Promise<Buffer> {
   return sharp({
@@ -36,8 +37,13 @@ function stubRes() {
 }
 
 describe("isAllowedImageUrl", () => {
-  it("allows the three hosts over https", () => {
-    expect(ALLOWED_IMAGE_HOSTS).toEqual(["a.espncdn.com", "r2.thesportsdb.com", "crests.football-data.org"]);
+  it("allows the four hosts over https", () => {
+    expect(ALLOWED_IMAGE_HOSTS).toEqual([
+      "a.espncdn.com",
+      "r2.thesportsdb.com",
+      "crests.football-data.org",
+      "espnmedia-cdn.akamaized.net",
+    ]);
     for (const h of ALLOWED_IMAGE_HOSTS) {
       expect(isAllowedImageUrl(`https://${h}/x/y.png`)).toBe(true);
     }
@@ -53,6 +59,11 @@ describe("isAllowedImageUrl", () => {
       "https://user:pw@a.espncdn.com/x.png",
       "https://a.espncdn.com:8443/x.png",
       "https://a.espncdn.com./x.png",
+      "https://espnmedia-cdn.akamaized.net.evil.com/a.jpg",
+      "https://evil.akamaized.net/a.jpg",
+      "https://akamaized.net/a.jpg",
+      "https://espnmedia-cdn.akamaized.net@evil.com/a.jpg",
+      "http://espnmedia-cdn.akamaized.net/a.jpg",
       "file:///etc/passwd",
       "ftp://a.espncdn.com/x",
       "https://127.0.0.1/x.png",
@@ -101,6 +112,26 @@ describe("resizeImage", () => {
     expect([meta.width, meta.height]).toEqual([48, 48]);
   });
 
+  it("refuses a decompression bomb (IHDR 20000x20000) instead of decoding it", async () => {
+    const bomb = await bigPng(20000, 20000, true);
+    expect(bomb.length).toBeLessThan(5 * 1024 * 1024); // passes the download size cap
+    await expect(resizeImage(bomb, 48, 48, "contain")).rejects.toThrow(/pixel|limit|exceed/i);
+  });
+
+  it("refuses 10000x10000 (100 MP): under sharp's default limit but over ours", async () => {
+    await expect(resizeImage(await bigPng(10000, 10000, true), 48, 48, "contain")).rejects.toThrow(/pixel|limit|exceed/i);
+  });
+
+  it("refuses an oversized header even when the pixel data is missing", async () => {
+    const header = await bigPng(20000, 20000, false);
+    await expect(resizeImage(header, 48, 48, "contain")).rejects.toThrow();
+  });
+
+  it("still accepts an image just under the pixel limit", async () => {
+    const out = await resizeImage(await bigPng(4000, 4000, true), 48, 48, "contain");
+    expect(out.type).toBe("image/png");
+  });
+
   it("rejects SVG and garbage", async () => {
     const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>');
     await expect(resizeImage(svg, 48, 48, "contain")).rejects.toThrow();
@@ -137,6 +168,25 @@ describe("findCutoutUrl", () => {
     expect(await findCutoutUrl("Nobody", mk({ player: [{ strCutout: "" }] }) as any)).toBeNull();
   });
 
+  it("passes a 5 s deadline signal by default and honours an injected one", async () => {
+    const t = fastTimeouts();
+    try {
+      const fetchMock = vi.fn(async () => new Response(JSON.stringify({ player: null }), { status: 200 }));
+      await findCutoutUrl("Kai Havertz", fetchMock as any);
+      expect(t.requested).toEqual([5000]);
+      const injected = new AbortController().signal;
+      await findCutoutUrl("Kai Havertz", fetchMock as any, injected);
+      expect((fetchMock.mock.calls as any)[1][1].signal).toBe(injected);
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("logs/throws a fixed message for invalid JSON, never the body", async () => {
+    const fetchMock = vi.fn(async () => new Response("<html>secret-body-snippet</html>", { status: 200 }));
+    await expect(findCutoutUrl("Kai Havertz", fetchMock as any)).rejects.toThrow("upstream returned invalid JSON");
+  });
+
   it("returns null for a blank name without fetching", async () => {
     const fetchMock = vi.fn();
     expect(await findCutoutUrl("  ", fetchMock as any)).toBeNull();
@@ -161,8 +211,55 @@ describe("GET /api/img", () => {
     return p.then(() => res);
   };
 
-  it("401 without token", async () => {
-    expect((await call({ u: good, w: "48", h: "48" }, false)).statusCode).toBe(401);
+  it("401 without token, with no-store", async () => {
+    const res = await call({ u: good, w: "48", h: "48" }, false);
+    expect(res.statusCode).toBe(401);
+    expect(res.headers["Cache-Control"]).toBe("no-store");
+  });
+
+  it("error responses are no-store (400 and 502)", async () => {
+    const r400 = await call({ u: "https://evil.com/a.png", w: "48", h: "48" });
+    expect(r400.statusCode).toBe(400);
+    expect(r400.headers["Cache-Control"]).toBe("no-store");
+    expect(r400.headers["Vary"]).toBeUndefined();
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("x", { status: 500 })));
+    const r502 = await call({ u: good, w: "48", h: "48" });
+    expect(r502.statusCode).toBe(502);
+    expect(r502.headers["Cache-Control"]).toBe("no-store");
+  });
+
+  it("502 (not a crash) for crafted PNGs claiming 20000x20000 and 10000x10000", async () => {
+    for (const side of [20000, 10000]) {
+      const bomb = await bigPng(side, side, true);
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(bomb), { status: 200 })));
+      const res = await call({ u: good, w: "48", h: "48" });
+      expect(res.statusCode, String(side)).toBe(502);
+      expect(res.headers["Cache-Control"]).toBe("no-store");
+    }
+  });
+
+  it("200 for an ESPN media thumbnail host", async () => {
+    const src = await makeJpeg(400, 225);
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(src), { status: 200 })));
+    const res = await call({
+      u: "https://espnmedia-cdn.akamaized.net/espn/media/common/2026/1019/x/x.jpg",
+      w: "240",
+      h: "135",
+      fit: "cover",
+    });
+    expect(res.statusCode).toBe(200);
+  });
+
+  it("a hanging upstream aborts at the image deadline and answers 502", async () => {
+    const t = fastTimeouts();
+    try {
+      vi.stubGlobal("fetch", hangingFetch());
+      const res = await call({ u: good, w: "48", h: "48" });
+      expect(res.statusCode).toBe(502);
+      expect(t.requested).toEqual([8000]);
+    } finally {
+      t.restore();
+    }
   });
 
   it("400 for a disallowed host and never fetches", async () => {
@@ -200,7 +297,8 @@ describe("GET /api/img", () => {
     const res = await call({ u: good, w: "48", h: "48" });
     expect(res.statusCode).toBe(200);
     expect(res.headers["Content-Type"]).toBe("image/png");
-    expect(res.headers["Cache-Control"]).toBe("public, max-age=86400, immutable");
+    expect(res.headers["Cache-Control"]).toBe("public, max-age=86400, s-maxage=86400, immutable");
+    expect(res.headers["Vary"]).toBe("x-token");
     const meta = await sharp(res.body).metadata();
     expect([meta.format, meta.width, meta.height]).toEqual(["png", 48, 48]);
     expect(await alphaAt(res.body, 0, 0)).toBe(0);
@@ -280,8 +378,79 @@ describe("GET /api/cutout", () => {
     return p.then(() => res);
   };
 
-  it("401 without token", async () => {
-    expect((await call({ name: "Kai Havertz", w: "40", h: "40" }, false)).statusCode).toBe(401);
+  it("401 without token, with no-store", async () => {
+    const res = await call({ name: "Kai Havertz", w: "40", h: "40" }, false);
+    expect(res.statusCode).toBe(401);
+    expect(res.headers["Cache-Control"]).toBe("no-store");
+  });
+
+  it("400, 404 and 502 responses are no-store", async () => {
+    const r400 = await call({ w: "40", h: "40" });
+    expect(r400.statusCode).toBe(400);
+    expect(r400.headers["Cache-Control"]).toBe("no-store");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({ player: null }), { status: 200 })));
+    const r404 = await call({ name: "Nobody", w: "40", h: "40" });
+    expect(r404.statusCode).toBe(404);
+    expect(r404.headers["Cache-Control"]).toBe("no-store");
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("x", { status: 500 })));
+    const r502 = await call({ name: "Kai Havertz", w: "40", h: "40" });
+    expect(r502.statusCode).toBe(502);
+    expect(r502.headers["Cache-Control"]).toBe("no-store");
+  });
+
+  it("uses ONE 7 s deadline signal for the lookup and the download", async () => {
+    const t = fastTimeouts();
+    try {
+      const png = await makePng(100, 200);
+      const fetchMock = vi.fn(async (url: any) =>
+        String(url).includes("searchplayers.php")
+          ? new Response(JSON.stringify({ player: [{ strCutout: "https://r2.thesportsdb.com/c/a.png" }] }), { status: 200 })
+          : new Response(new Uint8Array(png), { status: 200 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      const res = await call({ name: "Kai Havertz", w: "40", h: "40" });
+      expect(res.statusCode).toBe(200);
+      expect(t.requested).toEqual([7000]);
+      const calls = fetchMock.mock.calls as any[];
+      expect(calls).toHaveLength(2);
+      expect(calls[0][1].signal).toBe(calls[1][1].signal);
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("a hanging lookup becomes a 502 within the deadline", async () => {
+    const t = fastTimeouts();
+    try {
+      vi.stubGlobal("fetch", hangingFetch());
+      const res = await call({ name: "Kai Havertz", w: "40", h: "40" });
+      expect(res.statusCode).toBe(502);
+      expect(res.headers["Cache-Control"]).toBe("no-store");
+    } finally {
+      t.restore();
+    }
+  });
+
+  it("a hanging image download becomes a 502 within the same deadline", async () => {
+    const t = fastTimeouts();
+    try {
+      const hang = hangingFetch();
+      vi.stubGlobal(
+        "fetch",
+        vi.fn((url: any, init: any) =>
+          String(url).includes("searchplayers.php")
+            ? Promise.resolve(
+                new Response(JSON.stringify({ player: [{ strCutout: "https://r2.thesportsdb.com/c/a.png" }] }), { status: 200 }),
+              )
+            : (hang as any)(url, init),
+        ),
+      );
+      const res = await call({ name: "Kai Havertz", w: "40", h: "40" });
+      expect(res.statusCode).toBe(502);
+      expect(t.requested).toEqual([7000]);
+    } finally {
+      t.restore();
+    }
   });
 
   it("400 for missing name or bad sizes", async () => {
@@ -325,7 +494,8 @@ describe("GET /api/cutout", () => {
     const res = await call({ name: "Kai Havertz", w: "40", h: "40" });
     expect(res.statusCode).toBe(200);
     expect(res.headers["Content-Type"]).toBe("image/png");
-    expect(res.headers["Cache-Control"]).toBe("public, max-age=86400");
+    expect(res.headers["Cache-Control"]).toBe("public, max-age=86400, s-maxage=86400");
+    expect(res.headers["Vary"]).toBe("x-token");
     const meta = await sharp(res.body).metadata();
     expect([meta.format, meta.width, meta.height]).toEqual(["png", 40, 40]);
     expect(await alphaAt(res.body, 0, 20)).toBe(0);
