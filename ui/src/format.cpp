@@ -28,6 +28,20 @@ int local_hour(int64_t utc, int offsetSeconds) {
   return static_cast<int>(secs / 3600);
 }
 
+std::string utc_offset_text(int offsetSeconds) {
+  const bool negative = offsetSeconds < 0;
+  const int minutes = (negative ? -offsetSeconds : offsetSeconds) / 60;
+  std::string s = negative ? "UTC-" : "UTC+";
+  s += std::to_string(minutes / 60);
+  if (minutes % 60 != 0) {
+    const int m = minutes % 60;
+    s += ':';
+    s += static_cast<char>('0' + m / 10);
+    s += static_cast<char>('0' + m % 10);
+  }
+  return s;
+}
+
 std::string hh_mm(int64_t local) {
   const int64_t secs = local - floor_div(local, 86400) * 86400;
   return two_digits(static_cast<int>(secs / 3600)) + ":" +

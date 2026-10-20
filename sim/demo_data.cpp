@@ -1,5 +1,7 @@
 #include "demo_data.h"
 
+#include <utility>
+
 #include "format.h"
 #include "mock_source.h"
 
@@ -115,6 +117,45 @@ std::vector<NewsItem> demo_news(int64_t now) {
     items[i].published = now - ages[i];
   }
   return items;
+}
+
+namespace {
+
+Team league_team(const char* id, const char* abbr, const char* name, std::string crest,
+                 uint32_t color, const char* league) {
+  return {id, abbr, name, std::move(crest), color, league};
+}
+
+}  // namespace
+
+std::vector<Team> demo_teams() {
+  std::vector<Team> teams;
+  MockSource source(CONTRACT_FIXTURES_DIR);
+  source.fetch_teams([&](bool ok, std::vector<Team> t) {
+    if (ok) teams = std::move(t);
+  });
+  const Team more[] = {
+      league_team("86", "RMA", "Real Madrid", fd_crest("86"), 0xFFFFFF, "esp.1"),
+      league_team("83", "BAR", "Barcelona", fd_crest("81"), 0xEDBB00, "esp.1"),
+      league_team("1068", "ATM", "Atl\xC3\xA9tico Madrid", fd_crest("78"), 0xCB3524, "esp.1"),
+      league_team("243", "SEV", "Sevilla", fd_crest("559"), 0xD81022, "esp.1"),
+      league_team("93", "ATH", "Athletic Club", espn_crest("93"), 0xEE2523, "esp.1"),
+      league_team("89", "RSO", "Real Sociedad", espn_crest("89"), 0x0067B1, "esp.1"),
+      league_team("110", "INT", "Internazionale", fd_crest("108"), 0x0068A8, "ita.1"),
+      league_team("103", "MIL", "AC Milan", fd_crest("98"), 0xFB090B, "ita.1"),
+      league_team("111", "JUV", "Juventus", espn_crest("111"), 0xFFFFFF, "ita.1"),
+      league_team("114", "NAP", "Napoli", espn_crest("114"), 0x12A0D7, "ita.1"),
+      league_team("132", "MUN", "Bayern Munich", fd_crest("5"), 0xDC052D, "ger.1"),
+      league_team("124", "DOR", "Borussia Dortmund", fd_crest("4"), 0xFDE100, "ger.1"),
+      league_team("131", "B04", "Bayer Leverkusen", espn_crest("131"), 0xE32221, "ger.1"),
+      league_team("11420", "RBL", "RB Leipzig", espn_crest("11420"), 0xDD0741, "ger.1"),
+      league_team("160", "PSG", "Paris Saint-Germain", fd_crest("524"), 0xDA291C, "fra.1"),
+      league_team("176", "OLM", "Marseille", fd_crest("516"), 0x2FAEE0, "fra.1"),
+      league_team("167", "LYON", "Lyon", espn_crest("167"), 0xD8232A, "fra.1"),
+      league_team("174", "MON", "AS Monaco", espn_crest("174"), 0xE51B22, "fra.1"),
+  };
+  for (const Team& t : more) teams.push_back(t);
+  return teams;
 }
 
 namespace {

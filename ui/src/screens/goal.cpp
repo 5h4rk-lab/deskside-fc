@@ -56,20 +56,6 @@ std::string goal_waiting_line(const GoalEvent& event) {
   return (event.side == Side::Home ? event.homeAbbr : event.awayAbbr) + " scored";
 }
 
-namespace {
-
-float linear_channel(uint8_t c) {
-  const float v = static_cast<float>(c) / 255.0f;
-  return v <= 0.04045f ? v / 12.92f : powf((v + 0.055f) / 1.055f, 2.4f);
-}
-
-float relative_luminance(lv_color_t c) {
-  return 0.2126f * linear_channel(c.red) + 0.7152f * linear_channel(c.green) +
-         0.0722f * linear_channel(c.blue);
-}
-
-}  // namespace
-
 lv_color_t goal_background(lv_color_t accent) {
   return relative_luminance(accent) > kLightAccent ? darken(accent, kLightDarken) : accent;
 }

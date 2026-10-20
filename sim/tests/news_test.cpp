@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "app.h"
+#include "prefs.h"
 #include "data_source.h"
 #include "fonts.h"
 #include "format.h"
@@ -662,7 +663,8 @@ struct AppHost {
   Store store;
   FakeImages images;
   IdleSource source;
-  AppDeps deps{store, images, source, nullptr};
+  MemoryPrefs prefs;
+  AppDeps deps{store, images, source, nullptr, prefs};
   lv_obj_t* app = nullptr;
 
   AppHost() {

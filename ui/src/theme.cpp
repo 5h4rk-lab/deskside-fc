@@ -1,5 +1,7 @@
 #include "theme.h"
 
+#include <math.h>
+
 namespace {
 
 Palette default_palette() {
@@ -24,6 +26,14 @@ int hex_digit(char c) {
   if (c >= 'A' && c <= 'F') return c - 'A' + 10;
   return -1;
 }
+
+float linear_channel(uint8_t c) {
+  const float v = static_cast<float>(c) / 255.0f;
+  return v <= 0.04045f ? v / 12.92f : powf((v + 0.055f) / 1.055f, 2.4f);
+}
+
+constexpr uint8_t kFillDarken = 110;  // white becomes a mid grey under a chalk knob
+constexpr uint8_t kMarkLighten = 150;
 
 uint8_t blend(uint8_t a, uint8_t b, uint8_t t) {
   return static_cast<uint8_t>((a * (255 - t) + b * t + 127) / 255);
@@ -70,4 +80,17 @@ uint32_t parse_hex(const char* s) {
     value = (value << 4) | static_cast<uint32_t>(d);
   }
   return digits == 6 ? value : kInvalidHex;
+}
+
+float relative_luminance(lv_color_t c) {
+  return 0.2126f * linear_channel(c.red) + 0.7152f * linear_channel(c.green) +
+         0.0722f * linear_channel(c.blue);
+}
+
+lv_color_t accent_fill(lv_color_t accent) {
+  return relative_luminance(accent) > kLightLuminance ? darken(accent, kFillDarken) : accent_mark(accent);
+}
+
+lv_color_t accent_mark(lv_color_t accent) {
+  return relative_luminance(accent) < kDarkLuminance ? mix(accent, theme().chalk, kMarkLighten) : accent;
 }

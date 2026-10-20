@@ -18,6 +18,17 @@
 //                    animation time (default 900)
 //   --reduced-motion static goal celebration
 //   --demo-goal      the favourite scores 6 s after start (no keyboard needed)
+//   --screen settings|zone|picker|picker-search
+//                    Settings, the time zone list, the team picker, or the
+//                    picker with "ars" typed and the keyboard up
+//   --prefs FILE     settings file (default ~/.config/soccer-display-sim/prefs.txt,
+//                    created on demand); "memory" keeps them for this run only.
+//                    Snapshots use memory unless --prefs is given.
+//   --reset-prefs    start with default settings (deletes the settings file)
+//   --tz ZONE        time zone id (for example Europe/London), saved like a
+//                    choice in Settings. Without a saved zone the window
+//                    picks the zone matching the computer's current offset.
+//   --now EPOCH      pretend the clock started at EPOCH (seconds, UTC)
 // Keys in the window: g = the favourite scores in its live match, w = that
 // match ends with the favourite ahead (full-time win).
 #include <SDL2/SDL.h>
@@ -38,12 +49,17 @@
 #include "app.h"
 #include "data_source.h"
 #include "demo_data.h"
+#include "file_prefs.h"
 #include "mock_image_provider.h"
 #include "mock_source.h"
+#include "prefs.h"
 #include "screens/detail.h"
 #include "screens/goal.h"
+#include "screens/team_picker.h"
+#include "sim_backlight.h"
 #include "snapshot.h"
 #include "store.h"
+#include "timezone.h"
 
 namespace {
 
@@ -65,6 +81,11 @@ struct Options {
   uint32_t atMs = kDefaultAtMs;
   bool reducedMotion = false;
   bool demoGoal = false;
+  std::string prefs;  // empty: the default file (memory for snapshots)
+  bool resetPrefs = false;
+  std::string tz;
+  bool hasNow = false;
+  int64_t now = 0;
 };
 
 bool goal_screen(const std::string& screen) { return screen == "goal" || screen == "goal-win"; }
@@ -74,6 +95,8 @@ bool goal_screen(const std::string& screen) { return screen == "goal" || screen 
       "usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]\n"
       "           [--screen live|matches|news|detail|summary|pitch|stats|goal|goal-win]\n"
       "           [--match ID] [--at-ms N] [--reduced-motion] [--demo-goal]\n"
+      "           [--screen settings|zone|picker|picker-search]\n"
+      "           [--prefs FILE|memory] [--reset-prefs] [--tz ZONE] [--now EPOCH]\n"
       "keys: g = favourite scores, w = favourite wins at full time\n");
   std::exit(code);
 }
@@ -94,8 +117,10 @@ Options parse_args(int argc, char** argv) {
       o.snapshot = argv[++i];
     } else if (std::strcmp(argv[i], "--screen") == 0 && hasValue) {
       o.screen = argv[++i];
-      const char* const kScreens[] = {"live",  "matches", "news", "detail",  "summary",
-                                      "pitch", "stats",   "goal", "goal-win"};
+      const char* const kScreens[] = {"live",     "matches",  "news",   "detail",
+                                      "summary",  "pitch",    "stats",  "goal",
+                                      "goal-win", "settings", "zone",   "picker",
+                                      "picker-search"};
       bool known = false;
       for (const char* k : kScreens) known = known || o.screen == k;
       if (!known) {
@@ -115,6 +140,24 @@ Options parse_args(int argc, char** argv) {
       o.reducedMotion = true;
     } else if (std::strcmp(argv[i], "--demo-goal") == 0) {
       o.demoGoal = true;
+    } else if (std::strcmp(argv[i], "--prefs") == 0 && hasValue) {
+      o.prefs = argv[++i];
+    } else if (std::strcmp(argv[i], "--reset-prefs") == 0) {
+      o.resetPrefs = true;
+    } else if (std::strcmp(argv[i], "--tz") == 0 && hasValue) {
+      o.tz = argv[++i];
+      if (find_zone(o.tz) == nullptr) {
+        std::fprintf(stderr, "unknown --tz '%s'; known zones:\n", o.tz.c_str());
+        for (const Zone& z : zones()) std::fprintf(stderr, "  %s\n", z.id);
+        std::exit(2);
+      }
+    } else if (std::strcmp(argv[i], "--now") == 0 && hasValue) {
+      o.now = std::strtoll(argv[++i], nullptr, 10);
+      o.hasNow = o.now > 0;
+      if (!o.hasNow) {
+        std::fprintf(stderr, "invalid --now '%s'\n", argv[i]);
+        std::exit(2);
+      }
     } else if (std::strcmp(argv[i], "--fixtures") == 0) {
       o.fixtures = true;
     } else if (std::strcmp(argv[i], "--help") == 0) {
@@ -153,6 +196,7 @@ void load_demo(MockSource& source, int64_t now) {
   const std::vector<MatchSummary> matches = demo_matches(now);
   source.set_matches(matches);
   source.set_news(demo_news(now));
+  source.set_teams(demo_teams());
   for (const MatchSummary& m : matches) {
     MatchDetail d = demo_detail(m.id);
     if (d.match.home.abbr.empty()) continue;  // no detail for this demo match
@@ -184,9 +228,12 @@ class Feed {
       }
     });
     if (updated && onMatches_) onMatches_(now);
-    source_.fetch_teams([&](bool ok, std::vector<Team> teams) {
-      if (ok) store_.set_teams(std::move(teams));
-    });
+    // The team list hardly changes: fetched once (the picker retries itself).
+    if (store_.teams().empty()) {
+      source_.fetch_teams([&](bool ok, std::vector<Team> teams) {
+        if (ok) store_.set_teams(std::move(teams));
+      });
+    }
     source_.fetch_news([&](bool ok, std::vector<NewsItem> news) {
       if (ok) store_.set_news(std::move(news));
     });
@@ -312,7 +359,6 @@ int main(int argc, char** argv) {
   } else {
     lv_tick_set_cb(headless ? steady_ms : sdl_ticks);
   }
-  goal_set_reduced_motion(opt.reducedMotion);
 
   lv_display_t* disp = nullptr;
   if (headless) {
@@ -332,18 +378,50 @@ int main(int argc, char** argv) {
     lv_sdl_mouse_create();
   }
 
+  // The simulated clock: the real one, shifted when --now is given.
+  const int64_t realStart = std::time(nullptr);
+  const int64_t clockShift = opt.hasNow ? opt.now - realStart : 0;
+  auto clock_now = [clockShift] { return static_cast<int64_t>(std::time(nullptr)) + clockShift; };
+  const int64_t start = clock_now();
+
+  // Settings: a file that survives restarts, or memory (snapshots, --prefs memory).
+  std::unique_ptr<Prefs> prefs;
+  const bool memoryPrefs = opt.prefs == "memory" || (headless && opt.prefs.empty());
+  if (memoryPrefs) {
+    prefs = std::make_unique<MemoryPrefs>();
+  } else {
+    const std::string path = opt.prefs.empty() ? FilePrefs::default_path() : opt.prefs;
+    if (opt.resetPrefs) std::remove(path.c_str());
+    prefs = std::make_unique<FilePrefs>(path);
+  }
+  std::string savedZone;
+  if (!opt.tz.empty()) {
+    prefs->set("zone", opt.tz);
+  } else if (!headless && !prefs->get("zone", savedZone)) {
+    // First run in the window: the zone that matches this computer right now.
+    const int local = local_tz_offset(static_cast<time_t>(start));
+    for (const Zone& z : zones()) {
+      if (offset_seconds(z, start) == local) {
+        prefs->set("zone", z.id);
+        break;
+      }
+    }
+  }
+
   Store store;
-  store.set_favourite(demo::kFavouriteId);
-  const time_t start = std::time(nullptr);
-  store.set_tz_offset(local_tz_offset(start));
   MockImageProvider images(opt.assets);
   Feed feed(store, opt.fixtures, start);
+  SimBacklight backlight;
 
-  AppDeps deps{store, images, feed.source(), [](const std::string& id) {
+  AppDeps deps{store, images, feed.source(),
+               [](const std::string& id) {
                  std::printf("open match %s\n", id.c_str());
                  std::fflush(stdout);
-               }};
+               },
+               *prefs, &backlight, nullptr};
   lv_obj_t* app = app_create(lv_screen_active(), deps);
+  // A session-only override of the saved setting.
+  if (opt.reducedMotion) goal_set_reduced_motion(true);
   feed.set_on_matches([app](int64_t now) { app_matches_changed(app, now); });
   feed.poll(start);
   app_refresh(app, start);
@@ -351,7 +429,7 @@ int main(int argc, char** argv) {
   // Runs a demo change through the whole path: source, poll, detector,
   // celebration.
   auto demo_change = [&](bool win) {
-    const int64_t now = std::time(nullptr);
+    const int64_t now = clock_now();
     const bool ok = win ? demo_win(feed.source(), store.favourite())
                         : demo_goal(feed.source(), store.favourite());
     if (!ok) {
@@ -371,6 +449,18 @@ int main(int argc, char** argv) {
     app_refresh(app, start);
   } else if (goal_screen(opt.screen)) {
     demo_change(opt.screen == "goal-win");
+  } else if (opt.screen == "settings") {
+    app_open_settings(app);
+  } else if (opt.screen == "zone") {
+    app_open_zones(app);
+  } else if (opt.screen == "picker" || opt.screen == "picker-search") {
+    app_open_settings(app);
+    app_open_team_picker(app);
+    if (opt.screen == "picker-search") {
+      lv_obj_t* picker = app_team_picker_view(app);
+      team_picker_set_query(picker, "ars");
+      team_picker_show_keyboard(picker, true);
+    }
   } else if (opt.screen != "live") {
     app_open_match(app, opt.match);
     lv_obj_t* view = app_detail_view(app);
@@ -413,7 +503,7 @@ int main(int argc, char** argv) {
       keys.win = false;
       demo_change(true);
     }
-    const int64_t now = std::time(nullptr);
+    const int64_t now = clock_now();
     if (now - lastPoll >= kPollSeconds) {
       feed.poll(now);
       lastPoll = now;

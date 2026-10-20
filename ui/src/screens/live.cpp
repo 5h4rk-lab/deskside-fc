@@ -42,6 +42,10 @@ constexpr int32_t kStatusMessageTop = 120;  // "Connecting...", "No matches soon
 
 const lv_font_t* const kNameFont = &bigshoulders_16;
 
+constexpr int32_t kGearSize = 32;     // tap target
+constexpr int32_t kGearIconTop = 2;   // glyph centred on the status row text
+constexpr int32_t kStatusRightGear = -32;  // status row's right edge with the gear
+
 enum class Mode { Connecting, NoMatches, Next, Live };
 
 // Everything the screen shows, computed from the Store. Applied to the
@@ -84,6 +88,7 @@ struct LiveState {
   Store* store = nullptr;
   ImageProvider* images = nullptr;
   std::function<void(std::string)> onOpen;
+  std::function<void()> onSettings;
   LiveParts parts{};
   View shown;
   StatusRow status;
@@ -221,6 +226,12 @@ void draw_background(lv_event_t* e) {
 void on_score_clicked(lv_event_t* e) {
   auto* st = static_cast<LiveState*>(lv_event_get_user_data(e));
   if (st->shown.mode == Mode::Live && st->onOpen) st->onOpen(st->shown.matchId);
+}
+
+void on_gear_clicked(lv_event_t* e) {
+  auto* st = static_cast<LiveState*>(lv_event_get_user_data(e));
+  const std::function<void()> f = st->onSettings;  // the host may rebuild this screen
+  if (f) f();
 }
 
 void on_delete(lv_event_t* e) { delete static_cast<LiveState*>(lv_event_get_user_data(e)); }
@@ -526,12 +537,38 @@ lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
     lv_obj_set_width(l, LV_PCT(100));
   }
 
+  // Settings gear at the top right, above everything else; shown once the
+  // host listens (live_set_on_settings).
+  p.gear = plain(root);
+  lv_obj_add_flag(p.gear, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(p.gear, kGearSize, kGearSize);
+  lv_obj_align(p.gear, LV_ALIGN_TOP_RIGHT, 0, 0);
+  lv_obj_set_style_bg_color(p.gear, pal.chalk, LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(p.gear, 30, LV_STATE_PRESSED);
+  lv_obj_set_style_radius(p.gear, LV_RADIUS_CIRCLE, 0);
+  lv_obj_t* gearIcon = label(p.gear, &lv_font_montserrat_14, pal.chalk);
+  lv_obj_set_style_text_opa(gearIcon, 200, 0);
+  lv_label_set_text(gearIcon, LV_SYMBOL_SETTINGS);
+  lv_obj_align(gearIcon, LV_ALIGN_TOP_MID, 0, kGearIconTop);
+  lv_obj_add_event_cb(p.gear, on_gear_clicked, LV_EVENT_CLICKED, st);
+  lv_obj_add_flag(p.gear, LV_OBJ_FLAG_HIDDEN);
+
   // Initial state: Connecting, nothing else visible until the first refresh.
   for (lv_obj_t* o : {p.homeCrest, p.awayCrest, p.countdown,
                       p.scoreArea, p.pill, p.score, p.homeName, p.awayName, p.eventStrip}) {
     lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
   return root;
+}
+
+void live_set_on_settings(lv_obj_t* screen, std::function<void()> onSettings) {
+  if (live_parts(screen) == nullptr) return;
+  LiveState* st = state_of(screen);
+  const bool on = static_cast<bool>(onSettings);
+  st->onSettings = std::move(onSettings);
+  show(st->parts.gear, on);
+  // The clock and stale marker make room for the gear.
+  lv_obj_align(lv_obj_get_parent(st->status.clock), LV_ALIGN_TOP_RIGHT, on ? kStatusRightGear : -10, 4);
 }
 
 void live_refresh(lv_obj_t* screen, int64_t now) {

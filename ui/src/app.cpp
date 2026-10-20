@@ -1,21 +1,34 @@
 #include "app.h"
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <utility>
+#include <vector>
 
+#include "dim_schedule.h"
 #include "fonts.h"
+#include "format.h"
 #include "goal_detector.h"
 #include "screens/detail.h"
 #include "screens/goal.h"
 #include "screens/live.h"
 #include "screens/matches.h"
 #include "screens/news.h"
+#include "screens/settings.h"
+#include "screens/team_picker.h"
+#include "screens/zone_list.h"
 #include "theme.h"
+#include "timezone.h"
 
 namespace {
 
 enum class Shown { None, Loading, Error, Detail };
+enum class OverlayKind { Detail, Settings, Picker };
+enum class TeamsLoad { Idle, Loading, Failed };
+
+constexpr uint32_t kOpponentHex = 0x034694;  // Chelsea blue, the default opponent colour
+constexpr int kTabCount = 3;
 
 // Everything the app needs after app_create(). Owned by the tab view.
 struct AppState {
@@ -23,10 +36,33 @@ struct AppState {
   ImageProvider* images = nullptr;
   DataSource* source = nullptr;
   std::function<void(const std::string&)> onOpenMatch;
+  Prefs* prefs = nullptr;
+  Backlight* backlight = nullptr;
+  std::function<void()> onOpenWifi;
+  std::function<void(std::string)> openMatch;  // what the screens call to open a match
   lv_obj_t* tabview = nullptr;
+  lv_obj_t* pages[kTabCount] = {nullptr, nullptr, nullptr};  // tab pages, kept across rebuilds
   lv_obj_t* live = nullptr;
   lv_obj_t* matches = nullptr;
   lv_obj_t* news = nullptr;
+
+  Settings settings;
+  int64_t now = 0;          // of the last app_refresh()
+  int lastPercent = -1;     // last value given to the backlight
+  bool previewing = false;  // the brightness slider is being dragged
+
+  // Settings overlay (above the tab content) and the zone list inside it.
+  lv_obj_t* settingsOverlay = nullptr;
+  lv_obj_t* settingsView = nullptr;
+  lv_obj_t* zoneView = nullptr;
+
+  // Team picker overlay (the whole screen) and the team list fetch.
+  lv_obj_t* pickerOverlay = nullptr;
+  lv_obj_t* picker = nullptr;
+  std::vector<std::string> pickerTeamIds;  // ids of the list the picker shows
+  bool pickerFailed = false;
+  TeamsLoad teamsLoad = TeamsLoad::Idle;
+  uint32_t teamsRequest = 0;
 
   // Detail overlay: a sibling above the tab view, covering the tab content.
   lv_obj_t* overlay = nullptr;
@@ -135,21 +171,65 @@ void on_overlay_gesture(lv_event_t* e) {
   if (dir == LV_DIR_BOTTOM || dir == LV_DIR_RIGHT) close_detail(st, true);
 }
 
-// The overlay may be deleted with the screen after the tab view is gone.
+// An overlay may be deleted with the screen after the tab view is gone.
 struct OverlayLink {
   AppState* st;
   std::shared_ptr<bool> alive;
+  OverlayKind kind;
 };
 
 void on_overlay_delete(lv_event_t* e) {
   auto* link = static_cast<OverlayLink*>(lv_event_get_user_data(e));
   lv_obj_t* obj = static_cast<lv_obj_t*>(lv_event_get_target(e));
-  if (*link->alive && link->st->overlay == obj) {
-    link->st->overlay = nullptr;
-    link->st->view = nullptr;
-    link->st->shown = Shown::None;
+  AppState* st = link->st;
+  if (*link->alive) {
+    if (link->kind == OverlayKind::Detail && st->overlay == obj) {
+      st->overlay = nullptr;
+      st->view = nullptr;
+      st->shown = Shown::None;
+    } else if (link->kind == OverlayKind::Settings && st->settingsOverlay == obj) {
+      st->settingsOverlay = nullptr;
+      st->settingsView = nullptr;
+      st->zoneView = nullptr;
+    } else if (link->kind == OverlayKind::Picker && st->pickerOverlay == obj) {
+      st->pickerOverlay = nullptr;
+      st->picker = nullptr;
+    }
   }
   delete link;
+}
+
+// A screen-level overlay above the tab view, covering the tab content (the
+// tab bar stays visible) or the whole screen. It swallows taps meant for what
+// is underneath, and swipes inside it end here (no gesture bubbling to the
+// tab view).
+lv_obj_t* make_overlay(AppState* st, OverlayKind kind, bool coverTabBar) {
+  lv_obj_t* screen = lv_obj_get_parent(st->tabview);
+  lv_obj_update_layout(screen);
+  lv_obj_t* o = lv_obj_create(screen);
+  lv_obj_remove_style_all(o);
+  lv_obj_set_pos(o, 0, 0);
+  lv_obj_set_size(o, lv_obj_get_width(screen),
+                  lv_obj_get_height(screen) - (coverTabBar ? 0 : layout::kTabBarHeight));
+  lv_obj_set_style_bg_color(o, theme().turf, 0);
+  lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+  lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(o, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  lv_obj_add_event_cb(o, on_overlay_delete, LV_EVENT_DELETE, new OverlayLink{st, st->alive, kind});
+  return o;
+}
+
+// Deletes an overlay (or a view inside one). From an event of an object
+// inside it, it is hidden now and deleted on the next cycle.
+void discard(lv_obj_t* obj, bool fromInside) {
+  if (obj == nullptr) return;
+  if (fromInside) {
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_delete_async(obj);
+  } else {
+    lv_obj_delete(obj);
+  }
 }
 
 void close_detail(AppState* st, bool fromInside) {
@@ -159,12 +239,206 @@ void close_detail(AppState* st, bool fromInside) {
   st->view = nullptr;
   st->shown = Shown::None;
   st->matchId.clear();
-  if (fromInside) {
-    // Called from an event of an object inside the overlay.
-    lv_obj_add_flag(overlay, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_delete_async(overlay);
+  discard(overlay, fromInside);
+}
+
+void close_settings(AppState* st, bool fromInside) {
+  lv_obj_t* overlay = st->settingsOverlay;
+  if (overlay == nullptr) return;
+  st->settingsOverlay = nullptr;
+  st->settingsView = nullptr;
+  st->zoneView = nullptr;
+  discard(overlay, fromInside);
+}
+
+void close_zones(AppState* st, bool fromInside) {
+  lv_obj_t* view = st->zoneView;
+  st->zoneView = nullptr;
+  discard(view, fromInside);
+}
+
+void close_picker(AppState* st, bool fromInside) {
+  lv_obj_t* overlay = st->pickerOverlay;
+  if (overlay == nullptr) return;
+  st->pickerOverlay = nullptr;
+  st->picker = nullptr;
+  discard(overlay, fromInside);
+}
+
+// ---------------------------------------------------------------- backlight
+
+// Day brightness, or the night level inside the night window unless the
+// screen was touched recently. Only changes reach the backlight.
+void drive_backlight(AppState* st, int64_t now) {
+  if (st->backlight == nullptr || st->previewing) return;
+  const Settings& s = st->settings;
+  int percent = s.dayBrightness;
+  if (s.nightDim) {
+    const bool touched = lv_display_get_inactive_time(nullptr) < kTouchWakeMs;
+    const int night = std::min(s.nightPercent, s.dayBrightness);
+    const DimSchedule schedule(s.nightStartHour, s.nightEndHour, static_cast<uint8_t>(night),
+                               static_cast<uint8_t>(s.dayBrightness));
+    percent = schedule.brightness_at(local_hour(now, st->store->tz_offset()), touched);
+  }
+  if (percent == st->lastPercent) return;
+  st->lastPercent = percent;
+  st->backlight->set_percent(static_cast<uint8_t>(percent));
+}
+
+// The brightness slider is being dragged: show the value at once.
+void preview_brightness(AppState* st, int percent) {
+  st->previewing = true;
+  if (st->backlight == nullptr || percent == st->lastPercent) return;
+  st->lastPercent = percent;
+  st->backlight->set_percent(static_cast<uint8_t>(percent));
+}
+
+// ---------------------------------------------------------------- settings
+
+void open_settings(AppState* st);
+void open_zones(AppState* st);
+void open_picker(AppState* st);
+
+// A change made on the Settings screen: take the fields it edits, save and
+// apply at once.
+void settings_changed(AppState* st, const Settings& from) {
+  Settings& s = st->settings;
+  s.dayBrightness = from.dayBrightness;
+  s.nightDim = from.nightDim;
+  s.nightStartHour = from.nightStartHour;
+  s.nightEndHour = from.nightEndHour;
+  s.nightPercent = from.nightPercent;
+  s.reducedMotion = from.reducedMotion;
+  save_settings(*st->prefs, s);
+  goal_set_reduced_motion(s.reducedMotion);
+  st->previewing = false;
+  drive_backlight(st, st->now);
+}
+
+SettingsCallbacks settings_callbacks(AppState* st) {
+  std::shared_ptr<bool> alive = st->alive;
+  SettingsCallbacks cb;
+  cb.onBack = [st, alive] {
+    if (*alive) close_settings(st, true);
+  };
+  cb.onTeam = [st, alive] {
+    if (*alive) open_picker(st);
+  };
+  cb.onZone = [st, alive] {
+    if (*alive) open_zones(st);
+  };
+  if (st->onOpenWifi) {
+    cb.onWifi = [st, alive] {
+      if (!*alive) return;
+      const std::function<void()> f = st->onOpenWifi;
+      if (f) f();
+    };
+  }
+  cb.onBrightnessPreview = [st, alive](int percent) {
+    if (*alive) preview_brightness(st, percent);
+  };
+  cb.onChanged = [st, alive](const Settings& s) {
+    if (*alive) settings_changed(st, s);
+  };
+  return cb;
+}
+
+void open_settings(AppState* st) {
+  if (st->settingsOverlay != nullptr) return;
+  close_detail(st, false);
+  st->settingsOverlay = make_overlay(st, OverlayKind::Settings, false);
+  st->settingsView = settings_create(st->settingsOverlay, st->settings, *st->images,
+                                     settings_callbacks(st), st->now);
+}
+
+void pick_zone(AppState* st, const std::string& zoneId) {
+  st->settings.zoneId = zoneId;
+  save_settings(*st->prefs, st->settings);
+  st->store->set_tz_offset(offset_seconds(zoneId, st->now));
+  close_zones(st, true);  // called from a row of the list
+  app_refresh(st->tabview, st->now);
+}
+
+void open_zones(AppState* st) {
+  open_settings(st);
+  if (st->zoneView != nullptr) return;
+  std::shared_ptr<bool> alive = st->alive;
+  st->zoneView = zone_list_create(
+      st->settingsOverlay, st->settings.zoneId, st->now,
+      [st, alive](std::string id) {
+        if (*alive) pick_zone(st, id);
+      },
+      [st, alive] {
+        if (*alive) close_zones(st, true);
+      });
+}
+
+// ---------------------------------------------------------------- teams
+
+void fetch_teams(AppState* st);
+
+std::vector<std::string> team_ids(const std::vector<Team>& teams) {
+  std::vector<std::string> ids;
+  ids.reserve(teams.size());
+  for (const Team& t : teams) ids.push_back(t.id);
+  return ids;
+}
+
+// Brings an open picker in line with the Store's team list and the fetch.
+void sync_picker(AppState* st) {
+  if (st->picker == nullptr) return;
+  std::vector<std::string> ids = team_ids(st->store->teams());
+  if (ids != st->pickerTeamIds) {
+    team_picker_set_teams(st->picker, st->store->teams());
+    st->pickerTeamIds = std::move(ids);
+  }
+  const bool failed = st->teamsLoad == TeamsLoad::Failed && st->store->teams().empty();
+  if (failed != st->pickerFailed) {
+    st->pickerFailed = failed;
+    std::shared_ptr<bool> alive = st->alive;
+    team_picker_set_failed(st->picker, failed, [st, alive] {
+      if (*alive) fetch_teams(st);
+    });
+  }
+  team_picker_refresh(st->picker);
+}
+
+void fetch_teams(AppState* st) {
+  st->teamsLoad = TeamsLoad::Loading;
+  const uint32_t request = ++st->teamsRequest;
+  sync_picker(st);
+  std::shared_ptr<bool> alive = st->alive;
+  // The result may arrive at once or much later (picker closed, app gone).
+  st->source->fetch_teams([st, alive, request](bool ok, std::vector<Team> teams) {
+    if (!*alive || request != st->teamsRequest) return;
+    if (ok && !teams.empty()) {
+      st->store->set_teams(std::move(teams));
+      st->teamsLoad = TeamsLoad::Idle;
+    } else {
+      st->teamsLoad = TeamsLoad::Failed;
+    }
+    sync_picker(st);
+  });
+}
+
+void open_picker(AppState* st) {
+  if (st->pickerOverlay != nullptr) return;
+  std::shared_ptr<bool> alive = st->alive;
+  st->pickerOverlay = make_overlay(st, OverlayKind::Picker, true);
+  st->picker = team_picker_create(
+      st->pickerOverlay, st->store->teams(), st->settings.favourite, *st->images,
+      [st, alive](Team team) {
+        if (*alive) app_apply_team(st->tabview, team);
+      },
+      [st, alive] {
+        if (*alive) close_picker(st, true);
+      });
+  st->pickerTeamIds = team_ids(st->store->teams());
+  st->pickerFailed = false;
+  if (st->store->teams().empty() && st->teamsLoad != TeamsLoad::Loading) {
+    fetch_teams(st);
   } else {
-    lv_obj_delete(overlay);
+    sync_picker(st);
   }
 }
 
@@ -174,9 +448,11 @@ void on_app_delete(lv_event_t* e) {
   delete st;
 }
 
-// Picking a main tab leaves the detail.
+// Picking a main tab leaves the detail and Settings.
 void on_tab_button(lv_event_t* e) {
-  close_detail(static_cast<AppState*>(lv_event_get_user_data(e)), false);
+  auto* st = static_cast<AppState*>(lv_event_get_user_data(e));
+  close_detail(st, false);
+  close_settings(st, false);
 }
 
 struct TabSpec {
@@ -250,6 +526,22 @@ void style_tab_button(lv_obj_t* button, lv_obj_t* tabview) {
   lv_obj_add_event_cb(button, on_tab_changed, LV_EVENT_CLICKED, tabview);
 }
 
+// (Re)creates the three tab screens inside their pages, so everything that
+// captured the accent colour at build time follows the current theme. The
+// selected tab stays.
+void build_tabs(AppState* st) {
+  const uint32_t active = lv_tabview_get_tab_active(st->tabview);
+  for (lv_obj_t* page : st->pages) lv_obj_clean(page);
+  st->live = live_create(st->pages[0], *st->store, *st->images, st->openMatch);
+  st->matches = matches_create(st->pages[1], *st->store, *st->images, st->openMatch);
+  st->news = news_create(st->pages[2], *st->store, *st->images);
+  std::shared_ptr<bool> alive = st->alive;
+  live_set_on_settings(st->live, [st, alive] {
+    if (*alive) open_settings(st);
+  });
+  lv_tabview_set_active(st->tabview, active, LV_ANIM_OFF);
+}
+
 }  // namespace
 
 lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
@@ -258,6 +550,15 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   st->images = &deps.images;
   st->source = &deps.source;
   st->onOpenMatch = deps.onOpenMatch;
+  st->prefs = &deps.prefs;
+  st->backlight = deps.backlight;
+  st->onOpenWifi = deps.onOpenWifi;
+
+  // Saved settings first: the screens capture the accent colour as they are built.
+  st->settings = load_settings(deps.prefs);
+  deps.store.set_favourite(st->settings.favourite.id);
+  theme_set_team(st->settings.favourite.color, kOpponentHex);
+  goal_set_reduced_motion(st->settings.reducedMotion);
 
   lv_obj_set_style_bg_color(root, theme().turf, 0);
   lv_obj_set_style_bg_opa(root, LV_OPA_COVER, 0);
@@ -281,34 +582,23 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   lv_obj_set_style_border_side(bar, LV_BORDER_SIDE_TOP, 0);
   lv_obj_set_style_pad_all(bar, 0, 0);
 
-  auto open_match = [st](std::string id) {
+  st->openMatch = [st](std::string id) {
     app_open_match(st->tabview, id);
     if (st->onOpenMatch) st->onOpenMatch(id);
   };
-  lv_obj_t* live = nullptr;
-  lv_obj_t* matches = nullptr;
-  lv_obj_t* news = nullptr;
-  for (const TabSpec& spec : kTabs) {
-    lv_obj_t* tab = lv_tabview_add_tab(tabview, spec.label);
+  for (int i = 0; i < kTabCount; ++i) {
+    lv_obj_t* tab = lv_tabview_add_tab(tabview, kTabs[i].label);
     // Full-bleed screens that manage their own scrolling.
     lv_obj_set_style_bg_opa(tab, LV_OPA_TRANSP, 0);
     lv_obj_set_style_pad_all(tab, 0, 0);
     lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
     lv_obj_remove_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
-    if (&spec == &kTabs[0]) {
-      live = live_create(tab, deps.store, deps.images, open_match);
-    } else if (&spec == &kTabs[1]) {
-      matches = matches_create(tab, deps.store, deps.images, open_match);
-    } else {
-      news = news_create(tab, deps.store, deps.images);
-    }
+    st->pages[i] = tab;
   }
   st->tabview = tabview;
-  st->live = live;
-  st->matches = matches;
-  st->news = news;
   lv_obj_set_user_data(tabview, st);
   lv_obj_add_event_cb(tabview, on_app_delete, LV_EVENT_DELETE, st);
+  build_tabs(st);
 
   const uint32_t n = lv_obj_get_child_count(bar);
   for (uint32_t i = 0; i < n; ++i) {
@@ -327,36 +617,92 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
 void app_refresh(lv_obj_t* appRoot, int64_t now) {
   AppState* st = app_state(appRoot);
   if (st == nullptr) return;
+  st->now = now;
+  // Every screen's local times follow the zone, daylight saving included.
+  st->store->set_tz_offset(offset_seconds(st->settings.zoneId, now));
+  drive_backlight(st, now);
   if (st->live != nullptr) live_refresh(st->live, now);
   if (st->matches != nullptr) matches_refresh(st->matches, now);
   if (st->news != nullptr) news_refresh(st->news, now);
   // The open detail follows the Store: newer events, published lineups, the
   // clock from the match list. Unchanged data touches nothing.
   if (st->overlay != nullptr) show_detail(st);
+  if (st->settingsView != nullptr) settings_refresh(st->settingsView, st->settings, now);
+  sync_picker(st);
 }
+
+const Settings* app_settings(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? &st->settings : nullptr;
+}
+
+void app_open_settings(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  if (st != nullptr) open_settings(st);
+}
+
+void app_close_settings(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  if (st != nullptr) close_settings(st, false);
+}
+
+lv_obj_t* app_settings_view(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->settingsView : nullptr;
+}
+
+void app_open_zones(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  if (st != nullptr) open_zones(st);
+}
+
+lv_obj_t* app_zone_view(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->zoneView : nullptr;
+}
+
+void app_open_team_picker(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  if (st != nullptr) open_picker(st);
+}
+
+lv_obj_t* app_team_picker_view(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->picker : nullptr;
+}
+
+void app_apply_team(lv_obj_t* appRoot, const Team& team) {
+  AppState* st = app_state(appRoot);
+  if (st == nullptr) return;
+  st->settings.favourite = team;
+  save_settings(*st->prefs, st->settings);
+  st->store->set_favourite(team.id);
+  theme_set_team(team.color, kOpponentHex);
+
+  // Usually called from a row of the picker: it goes on the next cycle.
+  close_picker(st, true);
+  build_tabs(st);
+  refresh_icons(st->tabview);
+  if (st->settingsView != nullptr) {
+    // Rebuilt in the new colour, under the zone list if that is open.
+    discard(st->settingsView, true);
+    st->settingsView = settings_create(st->settingsOverlay, st->settings, *st->images,
+                                       settings_callbacks(st), st->now);
+    lv_obj_move_to_index(st->settingsView, 0);
+  }
+  app_refresh(appRoot, st->now);
+}
+
 
 void app_open_match(lv_obj_t* appRoot, const std::string& matchId) {
   AppState* st = app_state(appRoot);
   if (st == nullptr) return;
   close_detail(st, false);
+  close_settings(st, false);
+  close_picker(st, false);
 
-  lv_obj_t* screen = lv_obj_get_parent(appRoot);
-  lv_obj_update_layout(screen);
-  st->overlay = lv_obj_create(screen);
-  lv_obj_remove_style_all(st->overlay);
-  lv_obj_set_pos(st->overlay, 0, 0);
-  lv_obj_set_size(st->overlay, lv_obj_get_width(screen),
-                  lv_obj_get_height(screen) - layout::kTabBarHeight);
-  lv_obj_set_style_bg_color(st->overlay, theme().turf, 0);
-  lv_obj_set_style_bg_opa(st->overlay, LV_OPA_COVER, 0);
-  lv_obj_remove_flag(st->overlay, LV_OBJ_FLAG_SCROLLABLE);
-  // Swallows taps meant for the tab content underneath; swipes inside end
-  // here (no gesture bubbling past the overlay).
-  lv_obj_add_flag(st->overlay, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_remove_flag(st->overlay, LV_OBJ_FLAG_GESTURE_BUBBLE);
+  st->overlay = make_overlay(st, OverlayKind::Detail, false);
   lv_obj_add_event_cb(st->overlay, on_overlay_gesture, LV_EVENT_GESTURE, st);
-  lv_obj_add_event_cb(st->overlay, on_overlay_delete, LV_EVENT_DELETE,
-                      new OverlayLink{st, st->alive});
   st->matchId = matchId;
   st->shown = Shown::None;
   st->view = nullptr;

@@ -41,6 +41,32 @@ void crest_load(lv_obj_t* img, ImageProvider& images, const std::string& path);
 // centring independent of the font's line metrics.
 void digit_metrics(const lv_font_t* font, int32_t& top, int32_t& height);
 
+// Pages opened from Settings (Settings itself, the zone list, the team
+// picker): "< Back" at the top left over a Big Shoulders title.
+constexpr int32_t kPageSide = 10;      // left edge of the Back text and the title
+constexpr int32_t kPageTitleY = 16;
+constexpr int32_t kPageBodyY = 54;     // where the page's content starts
+constexpr int32_t kCardRadius = 10;
+constexpr int32_t kListSide = 8;       // side margins of a scrolling list of cards
+constexpr int32_t kListGap = 5;
+
+struct PageHeader {
+  lv_obj_t* back = nullptr;   // tap target, 80x28, holding "< Back"
+  lv_obj_t* title = nullptr;
+};
+PageHeader page_header_create(lv_obj_t* parent, const char* title);
+
+// A panel card (rounded, panel colour). A clickable one lightens while pressed.
+lv_obj_t* card(lv_obj_t* parent, bool clickable);
+
+// A vertical scrolling column for cards: no scrollbar, momentum, side margins
+// kListSide and gaps kListGap. Clickable so a drag between cards scrolls too.
+lv_obj_t* scroll_column(lv_obj_t* parent);
+
+// A selection tick (LV_SYMBOL_OK) in the accent, kept visible on the dark
+// panels whatever the accent (see accent_mark()).
+lv_obj_t* tick(lv_obj_t* parent);
+
 // What the status row shows besides its left text.
 struct StatusInfo {
   std::string clock;      // local HH:MM

@@ -30,6 +30,11 @@ std::pair<lv_color_t, lv_color_t> split_colors(lv_color_t home, lv_color_t away)
 lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
                       std::function<void(std::string matchId)> onOpen);
 
+// Shows the gear at the top right of the status row (the clock moves left to
+// make room) and calls `onSettings` when it is tapped. An empty function hides
+// the gear again.
+void live_set_on_settings(lv_obj_t* screen, std::function<void()> onSettings);
+
 // Updates the screen from the Store. Widgets are reused: only data that
 // changed since the last call is touched.
 void live_refresh(lv_obj_t* screen, int64_t now);
@@ -59,6 +64,7 @@ struct LiveParts {
   lv_obj_t* eventCutout;
   lv_obj_t* eventCaption; // "58'  Goal"
   lv_obj_t* eventPlayer;
+  lv_obj_t* gear;         // settings button (32x32), hidden until live_set_on_settings()
 };
 
 // Parts of a screen made by live_create(), or nullptr for any other object.

@@ -17,6 +17,10 @@ int local_hour(int64_t utc, int offsetSeconds);
 // "HH:MM" of a local time.
 std::string hh_mm(int64_t local);
 
+// A UTC offset in seconds as shown in Settings: "UTC+0", "UTC+1", "UTC-4",
+// "UTC+5:30", "UTC-9:30". Seconds within a minute are dropped.
+std::string utc_offset_text(int offsetSeconds);
+
 // "Mon" .. "Sun" of a local time.
 const char* weekday(int64_t local);
 

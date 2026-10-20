@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "app.h"
+#include "prefs.h"
 #include "data_source.h"
 #include "fonts.h"
 #include "format.h"
@@ -547,7 +548,8 @@ struct AppHost {
   CountingImages images;
   DeferredSource source;
   std::vector<std::string> opened;
-  AppDeps deps{store, images, source, [this](const std::string& id) { opened.push_back(id); }};
+  MemoryPrefs prefs;
+  AppDeps deps{store, images, source, [this](const std::string& id) { opened.push_back(id); }, prefs};
   lv_obj_t* app = nullptr;
 
   AppHost() {

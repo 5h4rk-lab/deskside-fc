@@ -114,6 +114,55 @@ void digit_metrics(const lv_font_t* font, int32_t& top, int32_t& height) {
   }
 }
 
+PageHeader page_header_create(lv_obj_t* parent, const char* title) {
+  const Palette& pal = theme();
+  PageHeader h;
+  h.back = plain(parent);
+  lv_obj_add_flag(h.back, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_pos(h.back, 0, 0);
+  lv_obj_set_size(h.back, 80, 28);
+  lv_obj_t* text = label(h.back, &hanken_10, pal.chalk);
+  lv_label_set_text(text, "< Back");
+  lv_obj_set_pos(text, kPageSide, 4);
+  h.title = label(parent, &bigshoulders_28, pal.chalk);
+  lv_label_set_text(h.title, title);
+  lv_obj_set_pos(h.title, kPageSide, kPageTitleY);
+  return h;
+}
+
+lv_obj_t* card(lv_obj_t* parent, bool clickable) {
+  const Palette& pal = theme();
+  lv_obj_t* c = plain(parent);
+  lv_obj_set_style_bg_color(c, pal.panel, 0);
+  lv_obj_set_style_bg_opa(c, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(c, kCardRadius, 0);
+  if (clickable) {
+    lv_obj_add_flag(c, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_style_bg_color(c, mix(pal.panel, pal.chalk, 18), LV_STATE_PRESSED);
+  }
+  return c;
+}
+
+lv_obj_t* scroll_column(lv_obj_t* parent) {
+  lv_obj_t* list = plain(parent);
+  lv_obj_add_flag(list, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(list, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_set_scroll_dir(list, LV_DIR_VER);
+  lv_obj_set_scrollbar_mode(list, LV_SCROLLBAR_MODE_OFF);
+  lv_obj_set_flex_flow(list, LV_FLEX_FLOW_COLUMN);
+  lv_obj_set_style_pad_left(list, kListSide, 0);
+  lv_obj_set_style_pad_right(list, kListSide, 0);
+  lv_obj_set_style_pad_bottom(list, 10, 0);
+  lv_obj_set_style_pad_row(list, kListGap, 0);
+  return list;
+}
+
+lv_obj_t* tick(lv_obj_t* parent) {
+  lv_obj_t* t = label(parent, &lv_font_montserrat_14, accent_mark(theme().accent));
+  lv_label_set_text(t, LV_SYMBOL_OK);
+  return t;
+}
+
 StatusInfo status_info(const Store& store, int64_t now) {
   StatusInfo s;
   s.clock = hh_mm(now + store.tz_offset());

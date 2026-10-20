@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "app.h"
+#include "prefs.h"
 #include "demo_data.h"
 #include "mock_source.h"
 #include "screens/goal.h"
@@ -480,6 +481,7 @@ struct AppFixture {
   Store store;
   NullImages images;
   CountingSource source;
+  MemoryPrefs prefs;
   lv_obj_t* app = nullptr;
   int64_t now = 1792526400;
 
@@ -491,7 +493,7 @@ struct AppFixture {
     MatchSummary m = live_match(2, 1);
     source.set_matches({m});
     source.set_detail(demo_detail_for(m));
-    app = app_create(lv_screen_active(), AppDeps{store, images, source, nullptr});
+    app = app_create(lv_screen_active(), AppDeps{store, images, source, nullptr, prefs});
   }
   ~AppFixture() {
     theme_reset();

@@ -4,9 +4,11 @@
 #include <vector>
 
 #include "app.h"
+#include "prefs.h"
 #include "fonts.h"
 #include "screens/live.h"
 #include "test_display.h"
+#include "theme.h"
 
 namespace {
 
@@ -33,7 +35,8 @@ struct Host {
   NoImages images;
   NoSource source;
   std::vector<std::string> opened;
-  AppDeps deps{store, images, source, [this](const std::string& id) { opened.push_back(id); }};
+  MemoryPrefs prefs;
+  AppDeps deps{store, images, source, [this](const std::string& id) { opened.push_back(id); }, prefs};
 };
 
 }  // namespace
@@ -86,7 +89,8 @@ TEST_CASE("active tab has an accent icon and chalk text, others are dim") {
     lv_obj_t* button = lv_obj_get_child(bar, tab);
     return lv_color_to_u32(lv_obj_get_style_text_color(lv_obj_get_child(button, 0), 0));
   };
-  const uint32_t accent = lv_color_to_u32(lv_color_hex(0xEF0107));
+  const uint32_t accent = lv_color_to_u32(theme().accent);
+  CHECK(accent == lv_color_to_u32(lv_color_hex(0xEF0107)));  // the default favourite
   const uint32_t dim = lv_color_to_u32(lv_color_hex(0x7C8F84));
   const uint32_t chalk = lv_color_to_u32(lv_color_hex(0xF1EFE4));
 
@@ -108,8 +112,8 @@ TEST_CASE("active tab has an accent icon and chalk text, others are dim") {
 TEST_CASE("the Live tab hosts the live screen, refreshed through app_refresh") {
   init_test_display();
   Host host;
-  host.store.set_favourite("1");
   lv_obj_t* app = app_create(lv_screen_active(), host.deps);
+  host.store.set_favourite("1");  // after app_create, which applies the saved favourite
   lv_obj_t* tab = lv_obj_get_child(lv_tabview_get_content(app), 0);
   lv_obj_t* live = lv_obj_get_child(tab, 0);
   const LiveParts* parts = live_parts(live);

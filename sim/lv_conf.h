@@ -7,6 +7,9 @@
  *   - LV_COLOR_DEPTH 16 (RGB565, same as the ILI9341-class panel)
  *   - LV_FONT_FMT_TXT_LARGE 0 (the generated ui/fonts/*.c assume the default)
  *   - LV_USE_TABVIEW, LV_USE_SNAPSHOT, LV_USE_LODEPNG, LV_USE_TJPGD enabled
+ *   - LV_USE_KEYBOARD (needs LV_USE_BUTTONMATRIX), LV_USE_TEXTAREA,
+ *     LV_USE_SLIDER, LV_USE_SWITCH enabled (Settings and the team picker).
+ *     They default to 1 here but to 0 under ESP-IDF Kconfig: set them there.
  *   - LV_FONT_MONTSERRAT_14 enabled (default theme font and LV_SYMBOL_* glyphs)
  *   - LV_USE_DRAW_SW_COMPLEX_GRADIENTS 1 (radial shading on the Live screen)
  *   - LV_USE_FS_* is NOT needed by the UI; the helper serves images as bytes
@@ -35,6 +38,11 @@
 
 /* [FW] Widgets used by the UI. */
 #define LV_USE_TABVIEW 1
+#define LV_USE_BUTTONMATRIX 1
+#define LV_USE_KEYBOARD 1
+#define LV_USE_TEXTAREA 1
+#define LV_USE_SLIDER 1
+#define LV_USE_SWITCH 1
 
 /* [FW] Image decoders: PNG (lodepng) and JPEG (tjpgd) for crests and photos. */
 #define LV_USE_LODEPNG 1

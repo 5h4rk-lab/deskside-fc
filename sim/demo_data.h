@@ -37,6 +37,13 @@ std::vector<MatchSummary> demo_matches(int64_t now);
 // `now` in the fixture's order. Empty when the fixture cannot be read.
 std::vector<NewsItem> demo_news(int64_t now);
 
+// Teams for the favourite-team picker: the Premier League teams of
+// contract/fixtures/teams-normalised.json (read at runtime from
+// CONTRACT_FIXTURES_DIR) plus a handful of clubs from each of La Liga, Serie A,
+// Bundesliga and Ligue 1 with their ESPN ids, abbreviations and the helper's
+// curated colours. Clubs with a crest in sim/assets use it.
+std::vector<Team> demo_teams();
+
 // Detail for a demo match. The live match has lineups (Arsenal 4-3-3, Chelsea
 // 4-2-3-1; faces for Saka, Havertz, Rice and Palmer), five events (goals by
 // Saka 12', Palmer 34' and Havertz 58', a yellow card and a substitution) and
