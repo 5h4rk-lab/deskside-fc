@@ -5,7 +5,8 @@
 //   --assets DIR     image assets (default: the repo's sim/assets)
 //   --fixtures       load the contract fixtures instead of the demo data
 //   --snapshot PATH  render once without a window, write a PNG and exit
-//   --screen VIEW    live (default), matches (the Matches tab), or the match
+//   --screen VIEW    live (default), matches (the Matches tab), news (the News
+//                    tab), or the match
 //                    detail: detail (its default sub-tab), summary, pitch or
 //                    stats
 //   --match ID       match the detail opens (default: the live demo match;
@@ -49,7 +50,7 @@ struct Options {
 [[noreturn]] void usage(int code) {
   std::printf(
       "usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]\n"
-      "           [--screen live|matches|detail|summary|pitch|stats] [--match ID]\n");
+      "           [--screen live|matches|news|detail|summary|pitch|stats] [--match ID]\n");
   std::exit(code);
 }
 
@@ -69,7 +70,7 @@ Options parse_args(int argc, char** argv) {
       o.snapshot = argv[++i];
     } else if (std::strcmp(argv[i], "--screen") == 0 && hasValue) {
       o.screen = argv[++i];
-      const char* const kScreens[] = {"live", "matches", "detail", "summary", "pitch", "stats"};
+      const char* const kScreens[] = {"live", "matches", "news", "detail", "summary", "pitch", "stats"};
       bool known = false;
       for (const char* k : kScreens) known = known || o.screen == k;
       if (!known) {
@@ -126,7 +127,9 @@ class DemoSource : public DataSource {
     }
     cb(true, std::move(d));
   }
-  void fetch_news(std::function<void(bool, std::vector<NewsItem>)> cb) override { cb(true, {}); }
+  void fetch_news(std::function<void(bool, std::vector<NewsItem>)> cb) override {
+    cb(true, demo_news(now_));
+  }
   void fetch_teams(std::function<void(bool, std::vector<Team>)> cb) override { cb(true, {}); }
 
  private:
@@ -223,6 +226,9 @@ int main(int argc, char** argv) {
 
   if (opt.screen == "matches") {
     lv_tabview_set_active(app, 1, LV_ANIM_OFF);
+    app_refresh(app, start);
+  } else if (opt.screen == "news") {
+    lv_tabview_set_active(app, 2, LV_ANIM_OFF);
     app_refresh(app, start);
   } else if (opt.screen != "live") {
     app_open_match(app, opt.match);

@@ -7,6 +7,7 @@
 #include "screens/detail.h"
 #include "screens/live.h"
 #include "screens/matches.h"
+#include "screens/news.h"
 #include "theme.h"
 
 namespace {
@@ -22,6 +23,7 @@ struct AppState {
   lv_obj_t* tabview = nullptr;
   lv_obj_t* live = nullptr;
   lv_obj_t* matches = nullptr;
+  lv_obj_t* news = nullptr;
 
   // Detail overlay: a sibling above the tab view, covering the tab content.
   lv_obj_t* overlay = nullptr;
@@ -174,13 +176,12 @@ void on_tab_button(lv_event_t* e) {
 struct TabSpec {
   const char* label;
   const char* icon;  // LVGL symbol, rendered with the built-in symbol font
-  const char* hint;
 };
 
 const TabSpec kTabs[] = {
-    {"Live", LV_SYMBOL_PLAY, "no live match"},
-    {"Matches", LV_SYMBOL_LIST, "no matches yet"},
-    {"News", LV_SYMBOL_FILE, "no news yet"},
+    {"Live", LV_SYMBOL_PLAY},
+    {"Matches", LV_SYMBOL_LIST},
+    {"News", LV_SYMBOL_FILE},
 };
 
 // Child 0 of a tab button is the text label (created by the tabview), child 1
@@ -243,24 +244,6 @@ void style_tab_button(lv_obj_t* button, lv_obj_t* tabview) {
   lv_obj_add_event_cb(button, on_tab_changed, LV_EVENT_CLICKED, tabview);
 }
 
-void build_tab(lv_obj_t* tab, const TabSpec& spec) {
-  lv_obj_set_style_bg_opa(tab, LV_OPA_TRANSP, 0);
-  lv_obj_set_style_pad_all(tab, 0, 0);
-  lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
-
-  lv_obj_t* title = lv_label_create(tab);
-  lv_label_set_text(title, spec.label);
-  lv_obj_set_style_text_font(title, &bigshoulders_40, 0);
-  lv_obj_set_style_text_color(title, theme().chalk, 0);
-  lv_obj_align(title, LV_ALIGN_CENTER, 0, -14);
-
-  lv_obj_t* hint = lv_label_create(tab);
-  lv_label_set_text(hint, spec.hint);
-  lv_obj_set_style_text_font(hint, &hanken_12, 0);
-  lv_obj_set_style_text_color(hint, theme().dim, 0);
-  lv_obj_align(hint, LV_ALIGN_CENTER, 0, 18);
-}
-
 }  // namespace
 
 lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
@@ -298,26 +281,26 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   };
   lv_obj_t* live = nullptr;
   lv_obj_t* matches = nullptr;
+  lv_obj_t* news = nullptr;
   for (const TabSpec& spec : kTabs) {
     lv_obj_t* tab = lv_tabview_add_tab(tabview, spec.label);
-    if (&spec == &kTabs[0] || &spec == &kTabs[1]) {
-      // Full-bleed screens that manage their own scrolling.
-      lv_obj_set_style_bg_opa(tab, LV_OPA_TRANSP, 0);
-      lv_obj_set_style_pad_all(tab, 0, 0);
-      lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
-      lv_obj_remove_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
-      if (&spec == &kTabs[0]) {
-        live = live_create(tab, deps.store, deps.images, open_match);
-      } else {
-        matches = matches_create(tab, deps.store, deps.images, open_match);
-      }
+    // Full-bleed screens that manage their own scrolling.
+    lv_obj_set_style_bg_opa(tab, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(tab, 0, 0);
+    lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
+    lv_obj_remove_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
+    if (&spec == &kTabs[0]) {
+      live = live_create(tab, deps.store, deps.images, open_match);
+    } else if (&spec == &kTabs[1]) {
+      matches = matches_create(tab, deps.store, deps.images, open_match);
     } else {
-      build_tab(tab, spec);
+      news = news_create(tab, deps.store, deps.images);
     }
   }
   st->tabview = tabview;
   st->live = live;
   st->matches = matches;
+  st->news = news;
   lv_obj_set_user_data(tabview, st);
   lv_obj_add_event_cb(tabview, on_app_delete, LV_EVENT_DELETE, st);
 
@@ -340,6 +323,7 @@ void app_refresh(lv_obj_t* appRoot, int64_t now) {
   if (st == nullptr) return;
   if (st->live != nullptr) live_refresh(st->live, now);
   if (st->matches != nullptr) matches_refresh(st->matches, now);
+  if (st->news != nullptr) news_refresh(st->news, now);
   // The open detail follows the Store: newer events, published lineups, the
   // clock from the match list. Unchanged data touches nothing.
   if (st->overlay != nullptr) show_detail(st);

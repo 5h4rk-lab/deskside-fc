@@ -157,3 +157,60 @@ TEST_CASE("detail_for returns the detail stored for a match and keeps the last f
   CHECK(s.detail_for("m0") != nullptr);
   CHECK(s.detail_for("m" + std::to_string(Store::kDetailCacheSize - 1)) != nullptr);
 }
+
+namespace {
+
+MatchSummary scored(const std::string& id, const std::string& homeId, const std::string& awayId,
+                    MatchState state, int64_t kickoff) {
+  MatchSummary m = make(id, homeId, awayId, state, kickoff);
+  m.homeScore = 1;
+  m.awayScore = 0;
+  return m;
+}
+
+}  // namespace
+
+TEST_CASE("last_for picks the team's most recent finished match not after now") {
+  Store s;
+  CHECK(s.last_for("1", 5000) == nullptr);  // no data
+  s.set_matches({scored("old", "1", "2", MatchState::Post, 1000),
+                 scored("recent", "3", "1", MatchState::Post, 3000),  // away role
+                 scored("newest", "1", "4", MatchState::Post, 4000),
+                 scored("future-post", "1", "5", MatchState::Post, 9000),
+                 make("live", "1", "6", MatchState::Live, 4500),
+                 make("pre", "1", "7", MatchState::Pre, 4800),
+                 make("ppd", "1", "8", MatchState::Postponed, 4900),
+                 scored("other", "7", "8", MatchState::Post, 4990)},
+                5000);
+  const MatchSummary* m = s.last_for("1", 5000);
+  REQUIRE(m != nullptr);
+  CHECK(m->id == "newest");
+  m = s.last_for("1", 3999);  // "newest" is still in the future
+  REQUIRE(m != nullptr);
+  CHECK(m->id == "recent");
+  m = s.last_for("1", 4000);  // kickoff == now counts
+  REQUIRE(m != nullptr);
+  CHECK(m->id == "newest");
+  m = s.last_for("1", 1000);
+  REQUIRE(m != nullptr);
+  CHECK(m->id == "old");
+  CHECK(s.last_for("1", 999) == nullptr);
+  CHECK(s.last_for("9", 5000) == nullptr);
+  m = s.last_for("2", 5000);  // only ever the away team of "old"
+  REQUIRE(m != nullptr);
+  CHECK(m->id == "old");
+}
+
+TEST_CASE("last_for ignores unfinished matches and keeps the first of equal kickoffs") {
+  Store s;
+  s.set_matches({make("live", "1", "2", MatchState::Live, 100),
+                 make("pre", "1", "3", MatchState::Pre, 200)},
+                1000);
+  CHECK(s.last_for("1", 1000) == nullptr);
+  s.set_matches({scored("a", "1", "2", MatchState::Post, 100),
+                 scored("b", "3", "1", MatchState::Post, 100)},
+                1000);
+  const MatchSummary* m = s.last_for("1", 1000);
+  REQUIRE(m != nullptr);
+  CHECK(m->id == "a");
+}

@@ -1,6 +1,7 @@
 #include "demo_data.h"
 
 #include "format.h"
+#include "mock_source.h"
 
 namespace {
 
@@ -33,6 +34,7 @@ Team milan() { return {"103", "MIL", "AC Milan", fd_crest("98"), 0xFB090B, ""}; 
 Team atletico() { return {"1068", "ATM", "Atletico Madrid", fd_crest("78"), 0xCB3524, ""}; }
 Team sevilla() { return {"243", "SEV", "Sevilla", fd_crest("559"), 0xD6001C, ""}; }
 Team brighton() { return {"331", "BHA", "Brighton", espn_crest("331"), 0x0057B8, ""}; }
+Team tottenham() { return {"367", "TOT", "Tottenham Hotspur", espn_crest("367"), 0x132257, ""}; }
 Team marseille() { return {"176", "MAR", "Marseille", fd_crest("516"), 0x2FAEE0, ""}; }
 
 MatchSummary match(const char* id, const char* league, MatchState state, const char* clock,
@@ -90,7 +92,29 @@ std::vector<MatchSummary> demo_matches(int64_t now) {
   old.homeScore = 1;
   old.awayScore = 0;
   out.push_back(old);
+
+  // The favourite's last result and next fixture, for the News tiles.
+  MatchSummary last = match("demo-ars-mnc", "eng.1", MatchState::Post, "FT",
+                            today - 3 * kDay + 15 * 3600, arsenal(), man_city());
+  last.homeScore = 3;
+  last.awayScore = 1;
+  out.push_back(last);
+  out.push_back(match("demo-tot-ars", "eng.1", MatchState::Pre, "",
+                      today + toSaturday * kDay + 17 * 3600 + 1800, tottenham(), arsenal()));
   return out;
+}
+
+std::vector<NewsItem> demo_news(int64_t now) {
+  std::vector<NewsItem> items;
+  MockSource source(CONTRACT_FIXTURES_DIR);
+  source.fetch_news([&](bool ok, std::vector<NewsItem> news) {
+    if (ok) items = std::move(news);
+  });
+  const int64_t ages[] = {25 * 60, 2 * 3600, 5 * 3600, kDay + 2 * 3600, 3 * kDay, 9 * kDay};
+  for (size_t i = 0; i < items.size() && i < sizeof(ages) / sizeof(ages[0]); ++i) {
+    items[i].published = now - ages[i];
+  }
+  return items;
 }
 
 namespace {

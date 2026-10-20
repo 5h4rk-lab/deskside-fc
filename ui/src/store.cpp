@@ -30,6 +30,15 @@ const MatchSummary* Store::next_for(const std::string& teamId, int64_t now) cons
   return best;
 }
 
+const MatchSummary* Store::last_for(const std::string& teamId, int64_t now) const {
+  const MatchSummary* best = nullptr;
+  for (const MatchSummary& m : matches_) {
+    if (m.state != MatchState::Post || m.kickoff > now || !involves(m, teamId)) continue;
+    if (!best || m.kickoff > best->kickoff) best = &m;
+  }
+  return best;
+}
+
 bool Store::stale(int64_t now) const {
   return hasData_ && now - lastSuccess_ > kStaleAfterSeconds;
 }

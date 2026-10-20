@@ -1,5 +1,5 @@
-// Small widget helpers and the status row shared by the screens (Live and
-// Matches). Shared with the ESP32 firmware: no clock reads, no SDL, no stdio.
+// Small widget helpers and the status row shared by the screens (Live,
+// Matches and News). Shared with the ESP32 firmware: no clock reads, no SDL, no stdio.
 #pragma once
 
 #include <lvgl.h>
@@ -22,6 +22,10 @@ lv_obj_t* dot(lv_obj_t* parent, int32_t size, lv_color_t color);
 void set_text(lv_obj_t* label, const std::string& text);
 // Shows or hides an object, touching the flag only when needed.
 void show(lv_obj_t* obj, bool visible);
+
+// Short team label for narrow cells: the abbreviation when it is one to four
+// letters long, otherwise the first three letters of the name in capitals.
+std::string team_abbr(const Team& team);
 
 // Crest image of `size` x `size` px with a faint circle as placeholder until
 // the picture arrives. The caller positions it.

@@ -37,8 +37,6 @@ constexpr int32_t kHeaderPadLeft = 4;  // plus the list's 8 px: the mockup's 12
 constexpr int32_t kHeaderPadTop = 4;   // on top of the row gap
 constexpr int32_t kListPadBottom = 10;
 constexpr int32_t kEmptyCardWidth = 196;
-constexpr int32_t kAbbrMaxLength = 4;
-constexpr int32_t kFallbackLength = 3;
 constexpr uint32_t kLiveRowColor = 0x1A2410;  // mockup .m.lv
 
 const lv_font_t* const kCentreFont = &bigshoulders_22;
@@ -121,37 +119,6 @@ MatchesState* state_of(lv_obj_t* screen) {
 
 // ---------------------------------------------------------------- view
 
-size_t code_points(const std::string& s) {
-  size_t n = 0;
-  for (unsigned char c : s) {
-    if ((c & 0xC0) != 0x80) ++n;
-  }
-  return n;
-}
-
-// First `count` code points of `s`.
-std::string prefix(const std::string& s, size_t count) {
-  size_t n = 0;
-  size_t i = 0;
-  for (; i < s.size(); ++i) {
-    if (static_cast<unsigned char>(s[i]) & 0x80 && (static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) {
-      continue;  // continuation byte
-    }
-    if (n == count) break;
-    ++n;
-  }
-  return s.substr(0, i);
-}
-
-// Rows are narrow: the abbreviation when it is short, else the first letters
-// of the name.
-std::string abbr_of(const Team& t) {
-  const size_t len = code_points(t.abbr);
-  if (len > 0 && len <= static_cast<size_t>(kAbbrMaxLength)) return t.abbr;
-  const std::string fallback = to_upper(prefix(t.name, kFallbackLength));
-  return fallback.empty() ? t.abbr.substr(0, 3) : fallback;
-}
-
 int32_t text_width(const std::string& s, const lv_font_t* font) {
   lv_point_t size;
   lv_text_get_size(&size, s.c_str(), font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
@@ -160,8 +127,8 @@ int32_t text_width(const std::string& s, const lv_font_t* font) {
 
 RowView row_view(const MatchSummary& m, const Store& store, int tz) {
   RowView r;
-  r.homeAbbr = abbr_of(m.home);
-  r.awayAbbr = abbr_of(m.away);
+  r.homeAbbr = widgets::team_abbr(m.home);
+  r.awayAbbr = widgets::team_abbr(m.away);
   r.homeCrest = sized(m.home.crest, kCrestSize, kCrestSize);
   r.awayCrest = sized(m.away.crest, kCrestSize, kCrestSize);
   r.state = m.state;

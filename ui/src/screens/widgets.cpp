@@ -7,7 +7,31 @@
 namespace widgets {
 
 namespace {
+
 constexpr lv_opa_t kPlaceholderOpa = 24;
+constexpr size_t kAbbrMaxLength = 4;
+constexpr size_t kFallbackLength = 3;
+
+size_t code_points(const std::string& s) {
+  size_t n = 0;
+  for (unsigned char c : s) {
+    if ((c & 0xC0) != 0x80) ++n;
+  }
+  return n;
+}
+
+// First `count` code points of `s`.
+std::string prefix(const std::string& s, size_t count) {
+  size_t n = 0;
+  size_t i = 0;
+  for (; i < s.size(); ++i) {
+    if ((static_cast<unsigned char>(s[i]) & 0xC0) == 0x80) continue;  // continuation byte
+    if (n == count) break;
+    ++n;
+  }
+  return s.substr(0, i);
+}
+
 }  // namespace
 
 lv_obj_t* plain(lv_obj_t* parent) {
@@ -47,6 +71,13 @@ void show(lv_obj_t* obj, bool visible) {
       lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
     }
   }
+}
+
+std::string team_abbr(const Team& t) {
+  const size_t len = code_points(t.abbr);
+  if (len > 0 && len <= kAbbrMaxLength) return t.abbr;
+  const std::string fallback = to_upper(prefix(t.name, kFallbackLength));
+  return fallback.empty() ? t.abbr.substr(0, 3) : fallback;
 }
 
 lv_obj_t* crest_image(lv_obj_t* parent, int32_t size) {

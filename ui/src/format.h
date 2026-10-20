@@ -27,6 +27,15 @@ std::string short_date(int64_t local);
 // within six days either way, otherwise a short date ("SAT 24 OCT").
 std::string day_header(int64_t kickoffLocal, int64_t nowLocal);
 
+// "12 Oct" of a local time: the short date without the weekday, in sentence case.
+std::string day_month(int64_t local);
+
+// Age of a news item for display: "just now" (under a minute, or a timestamp
+// in the future), "N min ago", "Nh ago", "yesterday" (24 to 47 h), "N days ago"
+// up to 29 days, then the date ("12 Oct"). `tzOffset` (seconds) only shifts the
+// date of the last form.
+std::string relative_time(int64_t now, int64_t published, int tzOffset = 0);
+
 // ASCII letters to upper case; other bytes (UTF-8 included) are unchanged.
 std::string to_upper(std::string s);
 

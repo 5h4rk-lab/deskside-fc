@@ -58,6 +58,29 @@ std::string short_date(int64_t local) {
   return to_upper(weekday(local)) + " " + std::to_string(day) + " " + kMonths[month - 1];
 }
 
+std::string day_month(int64_t local) {
+  // "SAT 24 OCT" -> "24 Oct"
+  const std::string full = short_date(local);
+  const size_t space = full.find(' ');
+  std::string rest = full.substr(space + 1);  // "24 OCT"
+  const size_t last = rest.rfind(' ');
+  for (size_t i = last + 2; i < rest.size(); ++i) {
+    if (rest[i] >= 'A' && rest[i] <= 'Z') rest[i] = static_cast<char>(rest[i] - 'A' + 'a');
+  }
+  return rest;
+}
+
+std::string relative_time(int64_t now, int64_t published, int tzOffset) {
+  const int64_t age = now - published;
+  if (age < 60) return "just now";  // includes timestamps in the future
+  if (age < 3600) return std::to_string(age / 60) + " min ago";
+  if (age < 86400) return std::to_string(age / 3600) + "h ago";
+  if (age < 2 * 86400) return "yesterday";
+  const int64_t days = age / 86400;
+  if (days < 30) return std::to_string(days) + " days ago";
+  return day_month(published + tzOffset);
+}
+
 std::string day_header(int64_t kickoffLocal, int64_t nowLocal) {
   const int64_t diff = floor_div(kickoffLocal, 86400) - floor_div(nowLocal, 86400);
   if (diff == 0) return "TODAY";

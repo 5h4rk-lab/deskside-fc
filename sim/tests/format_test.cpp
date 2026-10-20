@@ -172,3 +172,44 @@ TEST_CASE("day_header names the day relative to now") {
   CHECK(at(-6, 12) == "WEDNESDAY");
   CHECK(at(-7, 12) == "TUE 13 OCT");
 }
+
+TEST_CASE("relative_time: just now below a minute and for the future") {
+  const int64_t now = kTue2000;
+  CHECK(relative_time(now, now) == "just now");
+  CHECK(relative_time(now, now - 59) == "just now");
+  CHECK(relative_time(now, now + 1) == "just now");       // a future timestamp
+  CHECK(relative_time(now, now + 86400) == "just now");
+}
+
+TEST_CASE("relative_time: minutes, hours, yesterday, days, then a date") {
+  const int64_t now = kTue2000;
+  CHECK(relative_time(now, now - 60) == "1 min ago");
+  CHECK(relative_time(now, now - 119) == "1 min ago");
+  CHECK(relative_time(now, now - 25 * 60) == "25 min ago");
+  CHECK(relative_time(now, now - (59 * 60 + 59)) == "59 min ago");
+  CHECK(relative_time(now, now - 3600) == "1h ago");
+  CHECK(relative_time(now, now - 2 * 3600) == "2h ago");
+  CHECK(relative_time(now, now - (23 * 3600 + 59 * 60)) == "23h ago");
+  CHECK(relative_time(now, now - 24 * 3600) == "yesterday");
+  CHECK(relative_time(now, now - 47 * 3600) == "yesterday");
+  CHECK(relative_time(now, now - 48 * 3600) == "2 days ago");
+  CHECK(relative_time(now, now - 3 * 86400) == "3 days ago");
+  CHECK(relative_time(now, now - 29 * 86400) == "29 days ago");
+  // 30 days back is Sun 20 Sep 2026.
+  CHECK(relative_time(now, now - 30 * 86400) == "20 Sep");
+  CHECK(relative_time(now, now - 400 * 86400) == "15 Sep");
+}
+
+TEST_CASE("relative_time dates use the local day when given an offset") {
+  const int64_t now = kTue2000;
+  const int64_t published = now - 30 * 86400;  // 20 Sep 20:00 UTC
+  CHECK(relative_time(now, published, 0) == "20 Sep");
+  CHECK(relative_time(now, published, kIndia) == "21 Sep");  // 01:30 next day
+}
+
+TEST_CASE("day_month is a short date without the weekday") {
+  CHECK(day_month(kTue2000) == "20 Oct");
+  CHECK(day_month(kTue2000 - 8 * 86400) == "12 Oct");
+  CHECK(day_month(kTue2000 + 12 * 86400) == "1 Nov");
+  CHECK(day_month(-86400) == "31 Dec");
+}

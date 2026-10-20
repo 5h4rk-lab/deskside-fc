@@ -1,6 +1,6 @@
 // Latest data fetched from the helper, shared by every screen.
 //
-// Pointers returned by live_for() and next_for() point into matches() and are
+// Pointers returned by live_for(), next_for() and last_for() point into matches() and are
 // invalidated by the next set_matches(). Nothing here reads the clock: every
 // time-dependent call takes `now` (epoch seconds).
 #pragma once
@@ -28,6 +28,10 @@ class Store {
   const MatchSummary* live_for(const std::string& teamId) const;
   // Earliest Pre match of the team with kickoff >= now, else nullptr.
   const MatchSummary* next_for(const std::string& teamId, int64_t now) const;
+
+  // Most recent Post match of the team (home or away) with kickoff <= now
+  // (the first of equal kickoffs), else nullptr.
+  const MatchSummary* last_for(const std::string& teamId, int64_t now) const;
 
   // Time of the last successful set_matches() (0 before the first one).
   int64_t last_success() const { return lastSuccess_; }
