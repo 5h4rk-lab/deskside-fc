@@ -10,14 +10,28 @@
 #include <string>
 #include <vector>
 
+#include "data_source.h"
 #include "model.h"
 
 class Store {
  public:
-  // Replaces the match list and records `now` as the last success time.
+  // Replaces the match list and records `now` as the last success time. A
+  // success: resets failures() to 0.
   void set_matches(std::vector<MatchSummary> matches, int64_t now);
-  // A failed poll: keeps the old data and does not touch the success time.
-  void mark_failure() {}
+  // A failed poll: keeps the old data, does not touch the success time and
+  // counts one more failure.
+  void mark_failure() { ++failures_; }
+  // Failed match polls since the last success (drives the refresh back-off).
+  int failures() const { return failures_; }
+
+  // Why fetching is failing, as last reported by the poller (None when fine).
+  void set_error(FetchError error) { error_ = error; }
+  FetchError last_error() const { return error_; }
+  // Plain-English state of the data for Settings: "Live data is up to date",
+  // "Waiting for the first update...", or what is wrong ("Cannot reach the
+  // helper", "Helper rejected the token", "Helper returned an error", "Helper
+  // sent unreadable data"). An error wins over old data.
+  std::string data_status_text() const;
 
   const std::vector<MatchSummary>& matches() const { return matches_; }
   // True once set_matches() has succeeded at least once (UI shows "Connecting"
@@ -67,5 +81,7 @@ class Store {
   std::string favourite_;
   int64_t lastSuccess_ = 0;
   bool hasData_ = false;
+  int failures_ = 0;
+  FetchError error_ = FetchError::None;
   int tzOffset_ = 0;
 };

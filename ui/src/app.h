@@ -105,6 +105,10 @@ void app_close_detail(lv_obj_t* appRoot);
 // when no detail is open. For tests and screenshots.
 lv_obj_t* app_detail_view(lv_obj_t* appRoot);
 
+// Id of the match whose detail overlay is open, or "" when none is (the host
+// passes it to Poller::set_detail_watch).
+std::string app_open_match_id(lv_obj_t* appRoot);
+
 // Call after every Store::set_matches(). Runs the goal detector on the new
 // match list; for any goal or full-time event it fetches that match's detail
 // into the Store (the Live strip shows the new event) and, for the favourite's

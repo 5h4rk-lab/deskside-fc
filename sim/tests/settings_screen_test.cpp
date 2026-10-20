@@ -357,3 +357,30 @@ TEST_CASE("utc_offset_text: whole hours, half hours and negatives") {
   CHECK(utc_offset_text(-9000) == "UTC-2:30");
   CHECK(utc_offset_text(45 * 60 + 5 * 3600) == "UTC+5:45");
 }
+
+TEST_CASE("settings: the data status line sits under the version, dim or amber") {
+  Screen s;
+  const SettingsParts* p = s.parts();
+  REQUIRE(p->dataStatus != nullptr);
+  // Before the host says anything: empty, so no false claim.
+  CHECK(text(p->dataStatus).empty());
+  // Directly under the About line, in the same list.
+  CHECK(lv_obj_get_parent(p->dataStatus) == lv_obj_get_parent(p->about));
+  CHECK(lv_obj_get_index(p->dataStatus) == lv_obj_get_index(p->about) + 1);
+
+  settings_set_data_status(s.obj, "Live data is up to date", false);
+  s.settle();
+  CHECK(text(p->dataStatus) == "Live data is up to date");
+  CHECK(lv_color_to_u32(lv_obj_get_style_text_color(p->dataStatus, 0)) == lv_color_to_u32(theme().dim));
+
+  settings_set_data_status(s.obj, "Helper rejected the token", true);
+  s.settle();
+  CHECK(text(p->dataStatus) == "Helper rejected the token");
+  CHECK(lv_color_to_u32(lv_obj_get_style_text_color(p->dataStatus, 0)) == lv_color_to_u32(theme().amber));
+
+  settings_set_data_status(s.obj, "Live data is up to date", false);
+  CHECK(lv_color_to_u32(lv_obj_get_style_text_color(p->dataStatus, 0)) == lv_color_to_u32(theme().dim));
+  // Other objects are ignored.
+  settings_set_data_status(lv_screen_active(), "x", true);
+  settings_set_data_status(nullptr, "x", true);
+}

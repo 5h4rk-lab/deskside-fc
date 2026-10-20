@@ -12,6 +12,18 @@ void Store::set_matches(std::vector<MatchSummary> matches, int64_t now) {
   matches_ = std::move(matches);
   lastSuccess_ = now;
   hasData_ = true;
+  failures_ = 0;
+}
+
+std::string Store::data_status_text() const {
+  switch (error_) {
+    case FetchError::Offline: return "Cannot reach the helper";
+    case FetchError::Auth: return "Helper rejected the token";
+    case FetchError::Server: return "Helper returned an error";
+    case FetchError::Parse: return "Helper sent unreadable data";
+    case FetchError::None: break;
+  }
+  return hasData_ ? "Live data is up to date" : "Waiting for the first update...";
 }
 
 const MatchSummary* Store::live_for(const std::string& teamId) const {

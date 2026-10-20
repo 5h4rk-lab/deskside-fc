@@ -37,8 +37,17 @@
 //                    the network list, the first-start setup, the password
 //                    page (a few characters typed), after a wrong password,
 //                    and while joining
-// Keys in the window: g = the favourite scores in its live match, w = that
-// match ends with the favourite ahead (full-time win).
+//   --helper URL     fetch real data from the helper at URL (also the
+//                    HELPER_URL environment variable) instead of the demo
+//   --token T        the helper's access token (also HELPER_TOKEN); never
+//                    printed
+//   --offline-test   the demo source is down most of the time (only every
+//                    5th match poll succeeds), to see the stale marker and the
+//                    Settings data line
+// Data is fetched by the Poller (ui/src/poller.h) in every mode: every 25 s
+// while a match is live, every 3 min otherwise, backing off after failures.
+// Keys in the window (demo data only): g = the favourite scores in its live
+// match, w = that match ends with the favourite ahead (full-time win).
 #include <SDL2/SDL.h>
 #include <lvgl.h>
 
@@ -55,12 +64,15 @@
 #include <vector>
 
 #include "app.h"
+#include "curl_transport.h"
 #include "data_source.h"
 #include "demo_data.h"
 #include "file_prefs.h"
+#include "http_source.h"
 #include "mock_image_provider.h"
 #include "mock_source.h"
 #include "mock_wifi.h"
+#include "poller.h"
 #include "prefs.h"
 #include "screens/detail.h"
 #include "screens/goal.h"
@@ -76,7 +88,8 @@ namespace {
 constexpr int kWidth = 240;
 constexpr int kHeight = 320;
 constexpr int kDefaultScale = 2;
-constexpr int64_t kPollSeconds = 30;
+constexpr int kOfflineTestCycle = 5;      // --offline-test: 1 good poll in 5
+constexpr int64_t kHelperSnapshotMs = 10000;  // headless with --helper: wait for data
 constexpr uint32_t kDefaultAtMs = 900;
 constexpr uint32_t kDemoGoalMs = 6000;
 constexpr uint32_t kSnapshotStepMs = 10;
@@ -98,6 +111,9 @@ struct Options {
   int64_t now = 0;
   bool wifi = true;
   bool wifiSaved = true;
+  std::string helper;  // empty: the demo / fixtures
+  std::string token;
+  bool offlineTest = false;
 };
 
 bool goal_screen(const std::string& screen) { return screen == "goal" || screen == "goal-win"; }
@@ -134,7 +150,9 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
       "           [--prefs FILE|memory] [--reset-prefs] [--tz ZONE] [--now EPOCH]\n"
       "           [--wifi none|demo] [--wifi-saved none]\n"
       "           [--screen wifi|wifi-first|wifi-password|wifi-failed|wifi-connecting]\n"
-      "keys: g = favourite scores, w = favourite wins at full time\n");
+      "           [--helper URL --token T] [--offline-test]\n"
+      "env: HELPER_URL, HELPER_TOKEN (when the flags are absent)\n"
+      "keys: g = favourite scores, w = favourite wins at full time (demo data)\n");
   std::exit(code);
 }
 
@@ -212,6 +230,12 @@ Options parse_args(int argc, char** argv) {
       o.wifiSaved = false;
     } else if (std::strcmp(argv[i], "--fixtures") == 0) {
       o.fixtures = true;
+    } else if (std::strcmp(argv[i], "--helper") == 0 && hasValue) {
+      o.helper = argv[++i];
+    } else if (std::strcmp(argv[i], "--token") == 0 && hasValue) {
+      o.token = argv[++i];
+    } else if (std::strcmp(argv[i], "--offline-test") == 0) {
+      o.offlineTest = true;
     } else if (std::strcmp(argv[i], "--help") == 0) {
       usage(0);
     } else {
@@ -219,7 +243,32 @@ Options parse_args(int argc, char** argv) {
       usage(2);
     }
   }
+  if (o.helper.empty()) {
+    if (const char* env = std::getenv("HELPER_URL")) o.helper = env;
+  }
+  if (o.token.empty()) {
+    if (const char* env = std::getenv("HELPER_TOKEN")) o.token = env;
+  }
+  if (!o.helper.empty() && o.helper.rfind("http://", 0) != 0 && o.helper.rfind("https://", 0) != 0) {
+    std::fprintf(stderr, "invalid --helper '%s' (an http:// or https:// URL)\n", o.helper.c_str());
+    std::exit(2);
+  }
+  if (!o.helper.empty() && o.token.empty()) {
+    std::fprintf(stderr, "--helper needs a token: --token T or HELPER_TOKEN\n");
+    std::exit(2);
+  }
+  if (!o.helper.empty() && o.offlineTest) {
+    std::fprintf(stderr, "--offline-test works on the demo data only (not with --helper)\n");
+    std::exit(2);
+  }
   return o;
+}
+
+// Milliseconds since start on a monotonic clock (for the Poller).
+int64_t monotonic_ms() {
+  using namespace std::chrono;
+  static const auto start = steady_clock::now();
+  return duration_cast<milliseconds>(steady_clock::now() - start).count();
 }
 
 uint32_t sdl_ticks() { return SDL_GetTicks(); }
@@ -257,49 +306,30 @@ void load_demo(MockSource& source, int64_t now) {
   }
 }
 
-// Fills the store from the demo data or the contract fixtures. `onMatches`
-// runs after every successful Store::set_matches().
-class Feed {
+// --offline-test: the demo source, down most of the time. Only every
+// kOfflineTestCycle-th matches fetch (the first included) succeeds; while it is
+// down every kind of fetch fails as if the helper could not be reached.
+class FlakySource : public DataSource {
  public:
-  Feed(Store& store, bool fixtures, int64_t now)
-      : store_(store), source_(fixtures ? CONTRACT_FIXTURES_DIR : "/nonexistent-fixtures") {
-    if (!fixtures) load_demo(source_, now);
+  explicit FlakySource(MockSource& inner) : inner_(inner) {}
+  void fetch_matches(std::function<void(bool, std::vector<MatchSummary>)> cb) override {
+    inner_.set_fail(polls_++ % kOfflineTestCycle != 0, FetchError::Offline);
+    inner_.fetch_matches(std::move(cb));
   }
-
-  MockSource& source() { return source_; }
-  void set_on_matches(std::function<void(int64_t)> cb) { onMatches_ = std::move(cb); }
-
-  void poll(int64_t now) {
-    bool updated = false;
-    source_.fetch_matches([&](bool ok, std::vector<MatchSummary> matches) {
-      if (ok) {
-        store_.set_matches(std::move(matches), now);
-        updated = true;
-      } else {
-        store_.mark_failure();
-      }
-    });
-    if (updated && onMatches_) onMatches_(now);
-    // The team list hardly changes: fetched once (the picker retries itself).
-    if (store_.teams().empty()) {
-      source_.fetch_teams([&](bool ok, std::vector<Team> teams) {
-        if (ok) store_.set_teams(std::move(teams));
-      });
-    }
-    source_.fetch_news([&](bool ok, std::vector<NewsItem> news) {
-      if (ok) store_.set_news(std::move(news));
-    });
-    if (const MatchSummary* live = store_.live_for(store_.favourite())) {
-      source_.fetch_detail(live->id, [&](bool ok, MatchDetail detail) {
-        if (ok) store_.set_detail(std::move(detail));
-      });
-    }
+  void fetch_detail(const std::string& id, std::function<void(bool, MatchDetail)> cb) override {
+    inner_.fetch_detail(id, std::move(cb));
   }
+  void fetch_news(std::function<void(bool, std::vector<NewsItem>)> cb) override {
+    inner_.fetch_news(std::move(cb));
+  }
+  void fetch_teams(std::function<void(bool, std::vector<Team>)> cb) override {
+    inner_.fetch_teams(std::move(cb));
+  }
+  FetchError last_error() const override { return inner_.last_error(); }
 
  private:
-  Store& store_;
-  MockSource source_;
-  std::function<void(int64_t)> onMatches_;
+  MockSource& inner_;
+  int polls_ = 0;
 };
 
 // The favourite's live match in the source, or false.
@@ -462,8 +492,26 @@ int main(int argc, char** argv) {
 
   Store store;
   MockImageProvider images(opt.assets);
-  Feed feed(store, opt.fixtures, start);
   SimBacklight backlight;
+
+  // Data: the real helper (--helper), or the demo data / contract fixtures in
+  // a MockSource (optionally flaky). The Poller drives all of them.
+  MockSource mock(opt.fixtures ? CONTRACT_FIXTURES_DIR : "/nonexistent-fixtures");
+  if (!opt.fixtures) load_demo(mock, start);
+  FlakySource flaky(mock);
+  std::unique_ptr<CurlTransport> transport;
+  std::unique_ptr<HttpSource> http;
+  DataSource* source = &mock;
+  if (!opt.helper.empty()) {
+    transport = std::make_unique<CurlTransport>();
+    http = std::make_unique<HttpSource>(*transport, opt.helper, opt.token);
+    source = http.get();
+    std::printf("fetching from the helper at %s\n", opt.helper.c_str());  // never the token
+    std::fflush(stdout);
+  } else if (opt.offlineTest) {
+    source = &flaky;
+  }
+  const bool demoData = opt.helper.empty();
 
   // Wi-Fi: the demo networks. In the window results take a moment (spinners
   // show); snapshots are synchronous, except the joining one which never
@@ -472,31 +520,67 @@ int main(int argc, char** argv) {
   load_demo_wifi(wifi, opt.wifiSaved && opt.screen != "wifi-first");
   wifi.set_async(!headless || opt.screen == "wifi-connecting");
 
-  AppDeps deps{store, images, feed.source(),
+  lv_obj_t* app = nullptr;
+  bool matchesChanged = false;
+  Poller poller(store, *source, [&app, &matchesChanged](int64_t now) {
+    app_matches_changed(app, now);
+    matchesChanged = true;
+  });
+  // The open detail, else the favourite's live match (its latest event feeds
+  // the Live tab's strip).
+  auto detail_watch = [&]() {
+    std::string id = app_open_match_id(app);
+    if (id.empty()) {
+      if (const MatchSummary* m = store.live_for(store.favourite())) id = m->id;
+    }
+    return id;
+  };
+  // One step of the data path: deliver finished requests, then schedule.
+  auto pump = [&](int64_t now) {
+    if (transport) transport->poll();
+    poller.set_detail_watch(detail_watch());
+    poller.tick(monotonic_ms(), now);
+  };
+
+  AppDeps deps{store, images, *source,
                [](const std::string& id) {
                  std::printf("open match %s\n", id.c_str());
                  std::fflush(stdout);
                },
                *prefs, &backlight, opt.wifi ? &wifi : nullptr};
-  lv_obj_t* app = app_create(lv_screen_active(), deps);
+  app = app_create(lv_screen_active(), deps);
   // A session-only override of the saved setting.
   if (opt.reducedMotion) goal_set_reduced_motion(true);
-  feed.set_on_matches([app](int64_t now) { app_matches_changed(app, now); });
-  feed.poll(start);
+  pump(start);  // matches, teams, news (at once with the demo source)
+  pump(start);  // the favourite's live detail, now that the matches are in
+  if (headless && transport) {
+    // A snapshot of real data: wait (a bounded time) for the answers.
+    const int64_t until = monotonic_ms() + kHelperSnapshotMs;
+    while (monotonic_ms() < until &&
+           !(store.has_data() && !store.news().empty()) && store.last_error() == FetchError::None) {
+      pump(start);
+      SDL_Delay(10);
+    }
+  }
   app_refresh(app, start);
 
   // Runs a demo change through the whole path: source, poll, detector,
   // celebration.
   auto demo_change = [&](bool win) {
     const int64_t now = clock_now();
-    const bool ok = win ? demo_win(feed.source(), store.favourite())
-                        : demo_goal(feed.source(), store.favourite());
+    if (!demoData) {
+      std::printf("the demo keys work on the demo data only (not with --helper)\n");
+      std::fflush(stdout);
+      return;
+    }
+    const bool ok = win ? demo_win(mock, store.favourite()) : demo_goal(mock, store.favourite());
     if (!ok) {
       std::printf("no live match of the favourite\n");
       std::fflush(stdout);
       return;
     }
-    feed.poll(now);
+    poller.request_matches_now();
+    pump(now);
     app_refresh(app, now);
   };
 
@@ -576,7 +660,6 @@ int main(int argc, char** argv) {
   SDL_AddEventWatch(watch_keys, &keys);
   bool demoGoalDone = !opt.demoGoal;
   int64_t lastRefresh = start;
-  int64_t lastPoll = start;
   uint32_t lastWifiMs = SDL_GetTicks();
   for (;;) {
     lv_timer_handler();
@@ -593,13 +676,11 @@ int main(int argc, char** argv) {
       demo_change(true);
     }
     const int64_t now = clock_now();
-    if (now - lastPoll >= kPollSeconds) {
-      feed.poll(now);
-      lastPoll = now;
-    }
-    if (now != lastRefresh) {
+    pump(now);
+    if (now != lastRefresh || matchesChanged) {
       app_refresh(app, now);
       lastRefresh = now;
+      matchesChanged = false;
     }
     SDL_Delay(5);
   }

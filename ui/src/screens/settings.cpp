@@ -372,6 +372,11 @@ void build(SettingsState* st, lv_obj_t* root) {
   lv_obj_set_style_text_align(p.about, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_pad_top(p.about, 6, 0);
   lv_label_set_text(p.about, (std::string(kAppName) + " " + kAppVersion).c_str());
+  p.dataStatus = label(p.list, &hanken_10, pal.dim);
+  lv_obj_set_width(p.dataStatus, LV_PCT(100));
+  lv_label_set_long_mode(p.dataStatus, LV_LABEL_LONG_WRAP);
+  lv_obj_set_style_text_align(p.dataStatus, LV_TEXT_ALIGN_CENTER, 0);
+  lv_label_set_text(p.dataStatus, "");
 }
 
 void set_checked(lv_obj_t* obj, bool on) {
@@ -456,6 +461,17 @@ void settings_refresh(lv_obj_t* screen, const Settings& settings, int64_t now) {
 void settings_set_wifi_status(lv_obj_t* screen, const std::string& text) {
   SettingsState* st = settings_state(screen);
   if (st != nullptr && st->parts.wifiStatus != nullptr) set_text(st->parts.wifiStatus, text);
+}
+
+void settings_set_data_status(lv_obj_t* screen, const std::string& text, bool problem) {
+  SettingsState* st = settings_state(screen);
+  if (st == nullptr) return;
+  lv_obj_t* l = st->parts.dataStatus;
+  set_text(l, text);
+  const lv_color_t color = problem ? theme().amber : theme().dim;
+  if (lv_color_to_u32(lv_obj_get_style_text_color(l, 0)) != lv_color_to_u32(color)) {
+    lv_obj_set_style_text_color(l, color, 0);
+  }
 }
 
 const Settings* settings_current(lv_obj_t* screen) {

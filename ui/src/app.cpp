@@ -325,6 +325,13 @@ void sync_settings_wifi(AppState* st) {
   settings_set_wifi_status(st->settingsView, wifi_status_text(st->wifi->status()));
 }
 
+// The About area's data line: how fetching is going.
+void sync_settings_data(AppState* st) {
+  if (st->settingsView == nullptr) return;
+  settings_set_data_status(st->settingsView, st->store->data_status_text(),
+                           st->store->last_error() != FetchError::None);
+}
+
 void save(AppState* st) {
   save_settings(*st->prefs, st->settings);
   st->saved = st->settings;
@@ -387,6 +394,7 @@ void open_settings(AppState* st) {
   st->settingsView = settings_create(st->settingsOverlay, st->settings, *st->images,
                                      settings_callbacks(st), st->now);
   sync_settings_wifi(st);
+  sync_settings_data(st);
 }
 
 // ---------------------------------------------------------------- wifi
@@ -697,6 +705,7 @@ void app_refresh(lv_obj_t* appRoot, int64_t now) {
   if (st->overlay != nullptr) show_detail(st);
   if (st->settingsView != nullptr) settings_refresh(st->settingsView, st->settings, now);
   sync_settings_wifi(st);
+  sync_settings_data(st);
   if (st->wifiView != nullptr) wifi_refresh(st->wifiView);
   sync_picker(st);
 }
@@ -775,6 +784,7 @@ void app_apply_team(lv_obj_t* appRoot, const Team& team) {
                                        settings_callbacks(st), st->now);
     lv_obj_move_to_index(st->settingsView, 0);
     sync_settings_wifi(st);
+    sync_settings_data(st);
   }
   app_refresh(appRoot, st->now);
 }
@@ -805,6 +815,11 @@ void app_close_detail(lv_obj_t* appRoot) {
 lv_obj_t* app_detail_view(lv_obj_t* appRoot) {
   AppState* st = app_state(appRoot);
   return st != nullptr && st->overlay != nullptr ? st->view : nullptr;
+}
+
+std::string app_open_match_id(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr && st->overlay != nullptr ? st->matchId : std::string();
 }
 
 void app_matches_changed(lv_obj_t* appRoot, int64_t now) {

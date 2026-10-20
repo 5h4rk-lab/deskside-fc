@@ -214,3 +214,47 @@ TEST_CASE("last_for ignores unfinished matches and keeps the first of equal kick
   REQUIRE(m != nullptr);
   CHECK(m->id == "a");
 }
+
+// ------------------------------------------------------------ fetch health
+
+TEST_CASE("failures counts failed polls and a success resets it") {
+  Store s;
+  CHECK(s.failures() == 0);
+  s.mark_failure();
+  s.mark_failure();
+  CHECK(s.failures() == 2);
+  CHECK_FALSE(s.has_data());
+  s.set_matches({}, 1000);
+  CHECK(s.failures() == 0);
+  s.mark_failure();
+  CHECK(s.failures() == 1);
+  CHECK(s.last_success() == 1000);
+}
+
+TEST_CASE("last_error round trips and starts as None") {
+  Store s;
+  CHECK(s.last_error() == FetchError::None);
+  s.set_error(FetchError::Auth);
+  CHECK(s.last_error() == FetchError::Auth);
+  s.set_error(FetchError::None);
+  CHECK(s.last_error() == FetchError::None);
+}
+
+TEST_CASE("data_status_text says plainly how the data is doing") {
+  Store s;
+  CHECK(s.data_status_text() == "Waiting for the first update...");
+  s.set_error(FetchError::Offline);
+  CHECK(s.data_status_text() == "Cannot reach the helper");
+  s.set_error(FetchError::Auth);
+  CHECK(s.data_status_text() == "Helper rejected the token");
+  s.set_error(FetchError::Server);
+  CHECK(s.data_status_text() == "Helper returned an error");
+  s.set_error(FetchError::Parse);
+  CHECK(s.data_status_text() == "Helper sent unreadable data");
+  s.set_error(FetchError::None);
+  s.set_matches({}, 1000);
+  CHECK(s.data_status_text() == "Live data is up to date");
+  // An error wins over old data.
+  s.set_error(FetchError::Offline);
+  CHECK(s.data_status_text() == "Cannot reach the helper");
+}

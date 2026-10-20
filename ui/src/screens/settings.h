@@ -54,6 +54,11 @@ void settings_refresh(lv_obj_t* screen, const Settings& settings, int64_t now);
 // nothing without a Wi-Fi row.
 void settings_set_wifi_status(lv_obj_t* screen, const std::string& text);
 
+// The dim line under the version in the About area: how the live data is
+// doing (the host passes Store::data_status_text()). Amber when `problem`.
+// Empty until the host sets it.
+void settings_set_data_status(lv_obj_t* screen, const std::string& text, bool problem);
+
 // The settings the screen currently shows (its copy).
 const Settings* settings_current(lv_obj_t* screen);
 
@@ -94,6 +99,7 @@ struct SettingsParts {
   lv_obj_t* wifiRow = nullptr;     // nullptr when there is no Wi-Fi row
   lv_obj_t* wifiStatus = nullptr;  // "Connected to <ssid>" / "Not connected", one line
   lv_obj_t* about = nullptr;    // "Soccer display 0.1"
+  lv_obj_t* dataStatus = nullptr;  // under about: "Live data is up to date", ...
 };
 
 // Parts of a screen made by settings_create(), or nullptr for any other object.

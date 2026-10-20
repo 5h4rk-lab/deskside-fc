@@ -25,8 +25,13 @@ class MockSource : public DataSource {
   void set_detail(MatchDetail detail);
   void set_news(std::vector<NewsItem> news) { news_ = std::move(news); }
   void set_teams(std::vector<Team> teams) { teams_ = std::move(teams); }
-  // While true every fetch reports ok=false with empty data.
-  void set_fail(bool fail) { fail_ = fail; }
+  // While true every fetch reports ok=false with empty data, and last_error()
+  // reports `error`.
+  void set_fail(bool fail, FetchError error = FetchError::Offline) {
+    fail_ = fail;
+    failError_ = error;
+  }
+  FetchError last_error() const override { return fail_ ? failError_ : FetchError::None; }
 
   // Increments one side's score of the match; a Pre match becomes Live. Unknown
   // ids are ignored.
@@ -40,4 +45,5 @@ class MockSource : public DataSource {
   std::vector<NewsItem> news_;
   std::vector<Team> teams_;
   bool fail_ = false;
+  FetchError failError_ = FetchError::Offline;
 };
