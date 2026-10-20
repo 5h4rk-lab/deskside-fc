@@ -71,6 +71,16 @@ class TeamsSource : public DataSource {
   std::function<void(bool, std::vector<Team>)> pending;
 };
 
+// Counts writes, so a test can tell "saved again" from "left alone".
+class CountingPrefs : public MemoryPrefs {
+ public:
+  void set(const std::string& key, const std::string& value) override {
+    ++writes;
+    MemoryPrefs::set(key, value);
+  }
+  int writes = 0;
+};
+
 Team make_team(const char* id, const char* abbr, const char* name, uint32_t color,
                const char* league = "eng.1") {
   Team t;
@@ -107,7 +117,7 @@ struct Host {
   Store store;
   NoImages images;
   TeamsSource source;
-  MemoryPrefs prefs;
+  CountingPrefs prefs;
   FakeBacklight backlight;
   std::function<void()> wifi;
   int wifiCalls = 0;
@@ -287,6 +297,74 @@ TEST_CASE("app: the brightness slider previews on the backlight and saves on rel
   // The next refresh (screen just touched, daytime) keeps 35: no new call.
   app_refresh(h.app, kSummer + 1);
   CHECK(h.backlight.values == std::vector<int>{40, 35});
+}
+
+TEST_CASE("app: a refresh during a drag keeps the dragged value; release saves it") {
+  Host h;
+  app_refresh(h.app, kSummer);
+  app_open_settings(h.app);
+  const SettingsParts* p = h.settings();
+  lv_obj_t* slider = p->brightSlider;
+  lv_obj_add_state(slider, LV_STATE_PRESSED);  // the finger is down
+  lv_slider_set_value(slider, 55, LV_ANIM_OFF);
+  lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, nullptr);
+  // The finger pauses: refreshes come and go.
+  app_refresh(h.app, kSummer + 1);
+  CHECK(text(p->brightValue) == "55%");
+  CHECK(lv_slider_get_value(slider) == 55);
+  app_refresh(h.app, kSummer + 2);
+  app_refresh(h.app, kSummer + 3);
+  CHECK(text(p->brightValue) == "55%");
+  CHECK(lv_slider_get_value(slider) == 55);
+  CHECK(h.backlight.values.back() == 55);
+  // The finger lifts without moving.
+  lv_obj_remove_state(slider, LV_STATE_PRESSED);
+  lv_obj_send_event(slider, LV_EVENT_RELEASED, nullptr);
+  CHECK(app_settings(h.app)->dayBrightness == 55);
+  CHECK(pref(h.prefs, "bright") == "55");
+  CHECK(h.backlight.values.back() == 55);
+  for (int v : h.backlight.values) CHECK(v != 0);
+  app_refresh(h.app, kSummer + 4);
+  CHECK(text(p->brightValue) == "55%");
+  CHECK(lv_slider_get_value(slider) == 55);
+  CHECK(h.backlight.values.back() == 55);
+}
+
+TEST_CASE("app: refreshes while the slider is held never move the label or the slider") {
+  Host h;
+  app_refresh(h.app, kSummer);
+  app_open_settings(h.app);
+  const SettingsParts* p = h.settings();
+  lv_obj_add_state(p->brightSlider, LV_STATE_PRESSED);
+  for (int v : {70, 45, 30}) {
+    lv_slider_set_value(p->brightSlider, v, LV_ANIM_OFF);
+    lv_obj_send_event(p->brightSlider, LV_EVENT_VALUE_CHANGED, nullptr);
+    for (int i = 1; i <= 3; ++i) {
+      app_refresh(h.app, kSummer + v + i);
+      CHECK(text(p->brightValue) == std::to_string(v) + "%");
+      CHECK(lv_slider_get_value(p->brightSlider) == v);
+    }
+  }
+  CHECK(pref(h.prefs, "bright") == "<missing>");
+}
+
+TEST_CASE("app: a tap on the slider that leaves the value alone writes nothing") {
+  Host h;
+  app_refresh(h.app, kSummer);
+  app_open_settings(h.app);
+  const int before = h.prefs.writes;
+  lv_obj_t* slider = h.settings()->brightSlider;
+  lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, nullptr);  // same value
+  lv_obj_send_event(slider, LV_EVENT_RELEASED, nullptr);
+  CHECK(h.prefs.writes == before);
+  // Moved and moved back before lifting: nothing to save either.
+  lv_slider_set_value(slider, 60, LV_ANIM_OFF);
+  lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_slider_set_value(slider, 100, LV_ANIM_OFF);
+  lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, nullptr);
+  lv_obj_send_event(slider, LV_EVENT_RELEASED, nullptr);
+  CHECK(h.prefs.writes == before);
+  CHECK(h.backlight.values.back() == 100);
 }
 
 TEST_CASE("app: night dimming switch and steppers are saved") {

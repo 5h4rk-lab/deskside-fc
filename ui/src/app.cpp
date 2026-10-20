@@ -47,6 +47,7 @@ struct AppState {
   lv_obj_t* news = nullptr;
 
   Settings settings;
+  Settings saved;           // as last written to the prefs
   int64_t now = 0;          // of the last app_refresh()
   int lastPercent = -1;     // last value given to the backlight
   bool previewing = false;  // the brightness slider is being dragged
@@ -287,6 +288,8 @@ void drive_backlight(AppState* st, int64_t now) {
 
 // The brightness slider is being dragged: show the value at once.
 void preview_brightness(AppState* st, int percent) {
+  // In use at once (refreshes keep it), saved only when the finger lifts.
+  st->settings.dayBrightness = percent;
   st->previewing = true;
   if (st->backlight == nullptr || percent == st->lastPercent) return;
   st->lastPercent = percent;
@@ -299,8 +302,21 @@ void open_settings(AppState* st);
 void open_zones(AppState* st);
 void open_picker(AppState* st);
 
-// A change made on the Settings screen: take the fields it edits, save and
-// apply at once.
+void save(AppState* st) {
+  save_settings(*st->prefs, st->settings);
+  st->saved = st->settings;
+}
+
+// The fields the Settings screen edits.
+bool same_display(const Settings& a, const Settings& b) {
+  return a.dayBrightness == b.dayBrightness && a.nightDim == b.nightDim &&
+         a.nightStartHour == b.nightStartHour && a.nightEndHour == b.nightEndHour &&
+         a.nightPercent == b.nightPercent && a.reducedMotion == b.reducedMotion;
+}
+
+// A change made on the Settings screen: take the fields it edits, apply them
+// at once and save them when they differ from what is saved (a tap on the
+// slider that leaves it where it was writes nothing).
 void settings_changed(AppState* st, const Settings& from) {
   Settings& s = st->settings;
   s.dayBrightness = from.dayBrightness;
@@ -309,7 +325,7 @@ void settings_changed(AppState* st, const Settings& from) {
   s.nightEndHour = from.nightEndHour;
   s.nightPercent = from.nightPercent;
   s.reducedMotion = from.reducedMotion;
-  save_settings(*st->prefs, s);
+  if (!same_display(s, st->saved)) save(st);
   goal_set_reduced_motion(s.reducedMotion);
   st->previewing = false;
   drive_backlight(st, st->now);
@@ -353,7 +369,7 @@ void open_settings(AppState* st) {
 
 void pick_zone(AppState* st, const std::string& zoneId) {
   st->settings.zoneId = zoneId;
-  save_settings(*st->prefs, st->settings);
+  save(st);
   st->store->set_tz_offset(offset_seconds(zoneId, st->now));
   close_zones(st, true);  // called from a row of the list
   app_refresh(st->tabview, st->now);
@@ -556,6 +572,7 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
 
   // Saved settings first: the screens capture the accent colour as they are built.
   st->settings = load_settings(deps.prefs);
+  st->saved = st->settings;
   deps.store.set_favourite(st->settings.favourite.id);
   theme_set_team(st->settings.favourite.color, kOpponentHex);
   goal_set_reduced_motion(st->settings.reducedMotion);
@@ -675,7 +692,7 @@ void app_apply_team(lv_obj_t* appRoot, const Team& team) {
   AppState* st = app_state(appRoot);
   if (st == nullptr) return;
   st->settings.favourite = team;
-  save_settings(*st->prefs, st->settings);
+  save(st);
   st->store->set_favourite(team.id);
   theme_set_team(team.color, kOpponentHex);
 

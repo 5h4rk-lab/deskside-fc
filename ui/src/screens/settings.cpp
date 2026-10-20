@@ -22,6 +22,10 @@ using widgets::show;
 
 constexpr int32_t kCardPad = 10;
 constexpr int32_t kCrestSize = 24;
+// Team line: 240 - 2 * 8 (list margins) - 2 * kCardPad = 204 px of content.
+constexpr int32_t kTeamTextX = kCrestSize + 8;
+constexpr int32_t kTeamTextW = 204 - kTeamTextX - 18;  // 18: room for the chevron
+constexpr int32_t kTeamLineH = 34;
 constexpr int32_t kSwitchW = 40;
 constexpr int32_t kSwitchH = 22;
 constexpr int32_t kStepButton = 28;
@@ -282,15 +286,19 @@ void build(SettingsState* st, lv_obj_t* root) {
   lv_obj_set_style_pad_row(p.teamRow, 6, 0);
   lv_obj_add_event_cb(p.teamRow, on_team, LV_EVENT_CLICKED, st);
   text_label(p.teamRow, &hanken_10, pal.dim, "Favourite team");
-  lv_obj_t* teamLine = line(p.teamRow, kCrestSize + 2);
+  // Crest, then the name over the league (as in the picker): a long name
+  // ends in "..." before the chevron and never meets the league text.
+  lv_obj_t* teamLine = line(p.teamRow, kTeamLineH);
   p.teamCrest = widgets::crest_image(teamLine, kCrestSize);
   lv_obj_align(p.teamCrest, LV_ALIGN_LEFT_MID, 0, 0);
   p.teamName = label(teamLine, &hanken_14, pal.chalk);
   lv_label_set_long_mode(p.teamName, LV_LABEL_LONG_DOT);
-  lv_obj_set_size(p.teamName, 110, hanken_14.line_height);
-  lv_obj_align(p.teamName, LV_ALIGN_LEFT_MID, kCrestSize + 8, 0);
+  lv_obj_set_size(p.teamName, kTeamTextW, hanken_14.line_height);
+  lv_obj_set_pos(p.teamName, kTeamTextX, 0);
   p.teamLeague = label(teamLine, &hanken_10, pal.dim);
-  lv_obj_align(p.teamLeague, LV_ALIGN_RIGHT_MID, -18, 0);
+  lv_label_set_long_mode(p.teamLeague, LV_LABEL_LONG_DOT);
+  lv_obj_set_size(p.teamLeague, kTeamTextW, hanken_10.line_height);
+  lv_obj_set_pos(p.teamLeague, kTeamTextX, hanken_14.line_height);
   chevron(p.teamRow, 0);
 
   // Time zone.
@@ -433,7 +441,12 @@ lv_obj_t* settings_create(lv_obj_t* parent, const Settings& settings, ImageProvi
 void settings_refresh(lv_obj_t* screen, const Settings& settings, int64_t now) {
   SettingsState* st = settings_state(screen);
   if (st == nullptr) return;
+  // While the slider is held its value is the one in progress: the label and
+  // the slider stay as the finger left them.
+  const bool dragging = lv_obj_has_state(st->parts.brightSlider, LV_STATE_PRESSED);
+  const int inProgress = st->s.dayBrightness;
   st->s = settings;
+  if (dragging) st->s.dayBrightness = inProgress;
   apply(st, now);
 }
 

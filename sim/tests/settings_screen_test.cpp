@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 
+#include "fonts.h"
 #include "format.h"
 #include "screens/settings.h"
 #include "screens/zone_list.h"
@@ -114,6 +115,47 @@ TEST_CASE("settings: rows and texts for the given settings and time") {
   // The crest of the favourite is requested.
   REQUIRE_FALSE(s.images.requested.empty());
   CHECK(s.images.requested[0].find("359.png") != std::string::npos);
+}
+
+TEST_CASE("settings: a long team name never meets the league name") {
+  const char* names[] = {"Brighton & Hove Albion", "Wolverhampton Wanderers",
+                         "A Very Long Football Club Name Indeed FC"};  // 40 characters
+  for (const char* name : names) {
+    Settings st = sample_settings();
+    st.favourite.name = name;
+    st.favourite.league = "eng.1";
+    Screen s(st);
+    const SettingsParts* p = s.parts();
+    // The whole name, or its start with "..." when it is too long.
+    const std::string shown = text(p->teamName);
+    CHECK((shown == name || (shown.size() > 3 && shown.compare(shown.size() - 3, 3, "...") == 0 &&
+                             std::string(name).compare(0, shown.size() - 3, shown, 0,
+                                                       shown.size() - 3) == 0)));
+    lv_area_t n;
+    lv_area_t l;
+    lv_area_t row;
+    lv_obj_get_coords(p->teamName, &n);
+    lv_obj_get_coords(p->teamLeague, &l);
+    lv_obj_get_coords(p->teamRow, &row);
+    // The league sits under the name, both inside the card.
+    CHECK(l.y1 > n.y2);
+    CHECK(n.x2 < row.x2 - 10);
+    CHECK(l.x2 < row.x2 - 10);
+    CHECK(lv_label_get_long_mode(p->teamName) == LV_LABEL_LONG_DOT);
+    CHECK(lv_obj_get_height(p->teamName) == hanken_14.line_height);  // one line
+  }
+}
+
+TEST_CASE("settings: the team card keeps one height whatever the name") {
+  int32_t heights[2] = {0, 0};
+  const char* names[] = {"Arsenal", "A Very Long Football Club Name Indeed FC"};
+  for (int i = 0; i < 2; ++i) {
+    Settings st = sample_settings();
+    st.favourite.name = names[i];
+    Screen s(st);
+    heights[i] = lv_obj_get_height(s.parts()->teamRow);
+  }
+  CHECK(heights[0] == heights[1]);
 }
 
 TEST_CASE("settings: the zone row follows daylight saving and the time") {
