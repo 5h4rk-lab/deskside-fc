@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { requireToken } from "../src/auth.js";
-import { fetchMatches } from "../src/espn.js";
+import { DateRangeError, expandDates, fetchMatchesDetailed } from "../src/espn.js";
 
 function first(v: string | string[] | undefined): string | undefined {
   return Array.isArray(v) ? v[0] : v;
@@ -30,14 +30,24 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     res.status(400).json({ error: "invalid leagues" });
     return;
   }
-  if (!/^\d{8}$/.test(from) || !/^\d{8}$/.test(to)) {
-    res.status(400).json({ error: "from/to must be YYYYMMDD" });
-    return;
+  try {
+    expandDates(from, to);
+  } catch (err) {
+    if (err instanceof DateRangeError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    throw err;
   }
 
   try {
-    const matches = await fetchMatches(leagues, from, to);
+    const { matches, failed, total } = await fetchMatchesDetailed(leagues, from, to);
+    if (total > 0 && failed === total) {
+      res.status(502).json({ error: "upstream error" });
+      return;
+    }
     res.setHeader("Cache-Control", "s-maxage=20, stale-while-revalidate=60");
+    if (failed > 0) res.setHeader("x-helper-partial", "1");
     res.status(200).json({ updated: Math.floor(Date.now() / 1000), matches });
   } catch {
     res.status(502).json({ error: "upstream error" });

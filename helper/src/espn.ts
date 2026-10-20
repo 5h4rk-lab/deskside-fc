@@ -88,21 +88,94 @@ export function normalizeScoreboard(raw: unknown, league: string): MatchSummary[
   return out;
 }
 
+export const MAX_SPAN_DAYS = 14;
+export const MAX_IN_FLIGHT = 8;
+
+/** Thrown for an unusable from/to window; the endpoint maps it to HTTP 400. */
+export class DateRangeError extends Error {}
+
+function parseYmd(s: string): number {
+  if (!/^\d{8}$/.test(s)) throw new DateRangeError("from/to must be YYYYMMDD");
+  const y = Number(s.slice(0, 4));
+  const m = Number(s.slice(4, 6));
+  const d = Number(s.slice(6, 8));
+  const ms = Date.UTC(y, m - 1, d);
+  const back = new Date(ms);
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== m - 1 || back.getUTCDate() !== d) {
+    throw new DateRangeError("from/to must be real calendar dates");
+  }
+  return ms;
+}
+
+/** Inclusive list of UTC calendar days from..to as YYYYMMDD (ESPN rejects date ranges). */
+export function expandDates(from: string, to: string): string[] {
+  const start = parseYmd(from);
+  const end = parseYmd(to);
+  if (start > end) throw new DateRangeError("from must not be after to");
+  const days = Math.round((end - start) / 86_400_000) + 1;
+  if (days > MAX_SPAN_DAYS) throw new DateRangeError(`span is limited to ${MAX_SPAN_DAYS} days`);
+  return Array.from({ length: days }, (_, i) => new Date(start + i * 86_400_000).toISOString().slice(0, 10).replace(/-/g, ""));
+}
+
+// Runs the tasks with at most `limit` in flight; results keep the input order.
+async function runLimited<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+  const results = new Array<T>(tasks.length);
+  let next = 0;
+  const worker = async (): Promise<void> => {
+    while (next < tasks.length) {
+      const i = next++;
+      results[i] = await tasks[i]();
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, tasks.length) }, worker));
+  return results;
+}
+
+export interface MatchesResult {
+  matches: MatchSummary[];
+  /** requests that failed (non-2xx, network error or invalid JSON) */
+  failed: number;
+  /** requests issued: leagues x dates */
+  total: number;
+}
+
+// One request per league per date: the real ESPN soccer scoreboard answers 400 to any
+// dates=YYYYMMDD-YYYYMMDD range. Failures are tolerated here and counted; the caller decides.
+export async function fetchMatchesDetailed(
+  leagues: string[],
+  from: string,
+  to: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<MatchesResult> {
+  const dates = expandDates(from, to);
+  const jobs = leagues.flatMap((league) =>
+    dates.map((date) => async (): Promise<MatchSummary[] | null> => {
+      try {
+        const resp = await fetchImpl(`${ESPN_BASE}/${league}/scoreboard?dates=${date}`);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        return normalizeScoreboard(await resp.json(), league);
+      } catch (err) {
+        console.error(`ESPN ${league} scoreboard ${date} failed: ${err instanceof Error ? err.message : "error"}`);
+        return null;
+      }
+    }),
+  );
+  const results = await runLimited(jobs, MAX_IN_FLIGHT);
+  const byId = new Map<string, MatchSummary>();
+  for (const list of results) for (const m of list ?? []) if (!byId.has(m.id)) byId.set(m.id, m);
+  const matches = [...byId.values()].sort((a, b) => a.kickoff - b.kickoff || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  return { matches, failed: results.filter((r) => r === null).length, total: jobs.length };
+}
+
 export async function fetchMatches(
   leagues: string[],
   from: string,
   to: string,
   fetchImpl: typeof fetch = fetch,
 ): Promise<MatchSummary[]> {
-  const perLeague = await Promise.all(
-    leagues.map(async (league) => {
-      const url = `${ESPN_BASE}/${league}/scoreboard?dates=${from}-${to}`;
-      const resp = await fetchImpl(url);
-      if (!resp.ok) throw new Error(`ESPN ${league} scoreboard: HTTP ${resp.status}`);
-      return normalizeScoreboard(await resp.json(), league);
-    }),
-  );
-  return perLeague.flat().sort((a, b) => a.kickoff - b.kickoff);
+  const res = await fetchMatchesDetailed(leagues, from, to, fetchImpl);
+  if (res.total > 0 && res.failed === res.total) throw new Error("ESPN scoreboard: every request failed");
+  return res.matches;
 }
 
 export function cutoutPath(name: string, size = 40): string {
