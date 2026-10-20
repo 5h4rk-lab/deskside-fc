@@ -88,22 +88,23 @@ LineupPlayer player(const char* name, int number, float x, float y, bool photo =
 }
 
 // Contract convention: y = 0 is the team's own goal line and y grows towards
-// the halfway line (the helper spreads a formation over 0.08..0.92); x runs
+// the halfway line (the helper puts a formation's lines evenly over
+// 0.08..0.92); x runs
 // 0..1 left to right as the team sees the pitch when attacking.
 Lineup arsenal_lineup() {
   return {"4-3-3",
           {
               player("David Raya", 22, 0.50f, 0.08f),
-              player("Riccardo Calafiori", 33, 0.14f, 0.32f),
-              player("Gabriel", 6, 0.38f, 0.28f),
-              player("William Saliba", 2, 0.62f, 0.28f),
-              player("Jurrien Timber", 12, 0.86f, 0.32f),
-              player("Declan Rice", 41, 0.28f, 0.58f, true),
-              player("Martin Zubimendi", 36, 0.50f, 0.52f),
-              player("Martin Odegaard", 8, 0.72f, 0.58f),
-              player("Gabriel Martinelli", 11, 0.18f, 0.84f),
-              player("Kai Havertz", 29, 0.50f, 0.90f, true),
-              player("Bukayo Saka", 7, 0.82f, 0.84f, true),
+              player("Riccardo Calafiori", 33, 0.14f, 0.36f),
+              player("Gabriel", 6, 0.38f, 0.36f),
+              player("William Saliba", 2, 0.62f, 0.36f),
+              player("Jurrien Timber", 12, 0.86f, 0.36f),
+              player("Declan Rice", 41, 0.25f, 0.64f, true),
+              player("Martin Zubimendi", 36, 0.50f, 0.64f),
+              player("Martin Odegaard", 8, 0.75f, 0.64f),
+              player("Gabriel Martinelli", 11, 0.18f, 0.92f),
+              player("Kai Havertz", 29, 0.50f, 0.92f, true),
+              player("Bukayo Saka", 7, 0.82f, 0.92f, true),
           }};
 }
 
@@ -111,15 +112,15 @@ Lineup chelsea_lineup() {
   return {"4-2-3-1",
           {
               player("Robert Sanchez", 1, 0.50f, 0.08f),
-              player("Marc Cucurella", 3, 0.14f, 0.32f),
-              player("Levi Colwill", 6, 0.38f, 0.28f),
-              player("Wesley Fofana", 29, 0.62f, 0.28f),
-              player("Reece James", 24, 0.86f, 0.32f),
-              player("Enzo Fernandez", 8, 0.29f, 0.50f),
-              player("Moises Caicedo", 25, 0.71f, 0.50f),
-              player("Noni Madueke", 11, 0.14f, 0.72f),
-              player("Cole Palmer", 10, 0.50f, 0.62f, true),
-              player("Pedro Neto", 7, 0.86f, 0.72f),
+              player("Marc Cucurella", 3, 0.14f, 0.29f),
+              player("Levi Colwill", 6, 0.38f, 0.29f),
+              player("Wesley Fofana", 29, 0.62f, 0.29f),
+              player("Reece James", 24, 0.86f, 0.29f),
+              player("Enzo Fernandez", 8, 0.33f, 0.50f),
+              player("Moises Caicedo", 25, 0.67f, 0.50f),
+              player("Noni Madueke", 11, 0.20f, 0.71f),
+              player("Cole Palmer", 10, 0.50f, 0.71f, true),
+              player("Pedro Neto", 7, 0.80f, 0.71f),
               player("Liam Delap", 9, 0.50f, 0.92f),
           }};
 }

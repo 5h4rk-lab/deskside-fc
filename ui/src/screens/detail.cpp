@@ -16,15 +16,18 @@
 namespace {
 
 constexpr int32_t kSide = 10;      // left/right text inset
-constexpr int32_t kStatusY = 4;
-constexpr int32_t kTitleY = 17;
-constexpr int32_t kSubY = 44;
-constexpr int32_t kBodyY = 64;
+constexpr int32_t kStatusY = 3;
+constexpr int32_t kTitleY = 13;
+constexpr int32_t kSubY = 40;
+constexpr int32_t kBodyY = 59;
 constexpr int32_t kPitchInset = 8;
-constexpr int32_t kPitchTop = 30;  // inside the Pitch tab, under the two subtitle lines
-constexpr int32_t kPitchBottom = 8;
-constexpr int32_t kMarker = 24;
-constexpr int32_t kPhoto = 40;     // photos are drawn larger than the marker, top-aligned
+constexpr int32_t kPitchTop = 13;  // inside the Pitch tab, under the one-line blurb
+constexpr int32_t kPitchBottom = 4;
+constexpr int32_t kMarkerMax = 24;  // mockup size; smaller when a team has many rows
+constexpr int32_t kMarkerMin = 14;
+constexpr int32_t kRing = 2;        // 1.5 px in the mockup; LVGL borders are whole pixels
+constexpr int32_t kPhotoRequest = 40;  // photo size asked from the helper
+constexpr float kRowTolerance = 0.03f;  // y values closer than this share a row
 constexpr int32_t kStripe = 24;    // mowing stripe height
 constexpr int32_t kBoxHeight = 34;
 constexpr int32_t kCircle = 54;
@@ -36,6 +39,7 @@ constexpr uint32_t kRed = 0xE0302B;
 constexpr uint32_t kSubIn = 0x4CC38A;
 constexpr uint32_t kSubOut = 0xE0605A;
 constexpr uint32_t kCardMs = 180;
+constexpr int32_t kCardMargin = 4;  // name card inset from the pitch sides
 constexpr uint32_t kTabMs = 220;
 
 const char* const kTabNames[3] = {"Summary", "Pitch", "Stats"};
@@ -699,18 +703,32 @@ void show_card(DetailState* st, lv_obj_t* marker) {
   set_text(p.nameCardName, info->name);
   lv_obj_set_style_border_color(p.nameCard, side_color(st, info->side), 0);
   show(p.nameCard, true);
-  lv_obj_update_layout(p.nameCard);
 
-  // Above the marker, or below it when there is no room; inside the page.
+  // The card never gets wider than the pitch: long names end in dots.
   lv_obj_t* page = lv_obj_get_parent(p.nameCard);
+  lv_area_t pt;
+  lv_obj_get_coords(p.pitch, &pt);
+  const int32_t pitchW = lv_area_get_width(&pt);
+  lv_obj_set_width(p.nameCardName, LV_SIZE_CONTENT);
+  lv_obj_update_layout(p.nameCard);
+  const int32_t chrome = lv_obj_get_width(p.nameCard) - lv_obj_get_width(p.nameCardName);
+  const int32_t maxName = pitchW - 2 * kCardMargin - chrome;
+  if (lv_obj_get_width(p.nameCardName) > maxName) {
+    lv_obj_set_width(p.nameCardName, LV_MAX(maxName, 20));
+    lv_obj_update_layout(p.nameCard);
+  }
+
+  // Above the marker, or below it when there is no room; inside the pitch.
   lv_area_t mk;
   lv_area_t pg;
   lv_obj_get_coords(marker, &mk);
   lv_obj_get_coords(page, &pg);
   const int32_t cw = lv_obj_get_width(p.nameCard);
   const int32_t ch = lv_obj_get_height(p.nameCard);
+  const int32_t minX = pt.x1 - pg.x1 + kCardMargin;
+  const int32_t maxX = LV_MAX(minX, pt.x2 + 1 - pg.x1 - kCardMargin - cw);
   int32_t x = (mk.x1 + mk.x2) / 2 - pg.x1 - cw / 2;
-  x = LV_CLAMP(4, x, lv_obj_get_width(page) - cw - 4);
+  x = LV_CLAMP(minX, x, maxX);
   int32_t y = mk.y1 - pg.y1 - ch - 4;
   if (y < kPitchTop) y = mk.y2 - pg.y1 + 5;
   lv_obj_set_pos(p.nameCard, x, y);
@@ -755,30 +773,66 @@ bool sync_photos(DetailState* st) {
   return changed;
 }
 
+// Row of each player (0 = nearest its own goal) and the number of rows.
+// Players whose y values are within kRowTolerance of the previous one in y
+// order share a row. Only the order of the rows matters, not their spacing.
+std::vector<int> lineup_rows(const Lineup& lineup, int& rows) {
+  const size_t n = lineup.players.size();
+  std::vector<size_t> order(n);
+  for (size_t i = 0; i < n; ++i) order[i] = i;
+  std::stable_sort(order.begin(), order.end(), [&](size_t a, size_t b) {
+    return lineup.players[a].y < lineup.players[b].y;
+  });
+  std::vector<int> row(n, 0);
+  rows = 0;
+  float last = 0.0f;
+  for (size_t k = 0; k < n; ++k) {
+    const float y = lineup.players[order[k]].y;
+    if (k == 0 || y - last > kRowTolerance) ++rows;
+    row[order[k]] = rows - 1;
+    last = y;
+  }
+  return row;
+}
+
+// Marker layout for one team: `size` px circles, rows `spacing` px apart
+// (top of the box, from its own goal line).
+struct RowLayout {
+  int32_t size = kMarkerMax;
+  int32_t spacing = 0;
+};
+
+// Rows spread evenly over the team's half: the first row touches its goal
+// line, the last one the halfway line, and adjacent rows are at least one
+// marker apart. `size` is shared by both teams so markers look alike.
+RowLayout row_layout(int rows, int32_t size, int32_t half) {
+  RowLayout r;
+  r.size = size;
+  r.spacing = rows > 1 ? (half - size) / (rows - 1) : 0;
+  return r;
+}
+
 lv_obj_t* add_marker(DetailState* st, lv_obj_t* pitch, const LineupPlayer& pl, Side side,
-                     int32_t w, int32_t h) {
-  // Each team fills its own half: y = 0 on its goal line, y = 1 at halfway.
-  // The away team faces the viewer, so its left (small x) is the screen's right.
-  const int32_t halfH = h / 2;
-  const float y = LV_CLAMP(0.0f, pl.y, 1.0f);
+                     int row, const RowLayout& layout, int32_t w, int32_t h) {
+  // Home defends the bottom goal, away the top one. The away team faces the
+  // viewer, so its left (small x) is the screen's right.
+  const int32_t size = layout.size;
   const float x = LV_CLAMP(0.0f, pl.x, 1.0f);
-  const int32_t depth = 6 + static_cast<int32_t>(y * static_cast<float>(halfH - 12) + 0.5f);
   const float across = side == Side::Home ? x : 1.0f - x;
-  int32_t cx = static_cast<int32_t>(across * static_cast<float>(w) + 0.5f);
-  int32_t cy = side == Side::Home ? h - depth : depth;
-  constexpr int32_t kEdge = kMarker / 2 + 1;
-  cx = LV_CLAMP(kEdge, cx, w - kEdge);
-  cy = LV_CLAMP(kEdge, cy, h - kEdge);
+  const int32_t cx = static_cast<int32_t>(across * static_cast<float>(w) + 0.5f);
+  const int32_t left = LV_CLAMP(1, cx - size / 2, w - size - 1);
+  const int32_t fromGoal = row * layout.spacing;
+  const int32_t top = side == Side::Home ? h - fromGoal - size : fromGoal;
 
   const lv_color_t color = side_color(st, side);
   lv_obj_t* m = plain(pitch);
-  lv_obj_set_pos(m, cx - kMarker / 2, cy - kMarker / 2);
-  lv_obj_set_size(m, kMarker, kMarker);
+  lv_obj_set_pos(m, left, top);
+  lv_obj_set_size(m, size, size);
   lv_obj_set_style_radius(m, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(m, color, 0);
   lv_obj_set_style_bg_opa(m, LV_OPA_COVER, 0);
   lv_obj_set_style_border_color(m, theme().chalk, 0);
-  lv_obj_set_style_border_width(m, 2, 0);
+  lv_obj_set_style_border_width(m, kRing, 0);
   lv_obj_set_style_border_post(m, true, 0);  // the ring stays above the photo
   lv_obj_set_style_shadow_color(m, lv_color_black(), 0);
   lv_obj_set_style_shadow_width(m, 5, 0);
@@ -796,21 +850,38 @@ lv_obj_t* add_marker(DetailState* st, lv_obj_t* pitch, const LineupPlayer& pl, S
   lv_obj_add_event_cb(m, on_marker_delete, LV_EVENT_DELETE, info);
   lv_obj_add_event_cb(m, on_marker, LV_EVENT_CLICKED, st);
 
+  // Big Shoulders 16 is the smallest generated size; its digits still fit a
+  // 20 px marker (the label box overflows the ring and is clipped by it).
   info->numberLabel = label(m, &bigshoulders_16, text_on(color), std::to_string(pl.number).c_str());
   lv_obj_center(info->numberLabel);
 
   if (!pl.photo.empty()) {
-    // Cropped by the round marker, head and shoulders at the top.
+    // Cropped by the round marker, head and shoulders at the top: the photo
+    // is drawn 5/3 of the marker size.
+    const int32_t photo = size * 5 / 3;
     info->photo = lv_image_create(m);
     lv_obj_remove_flag(info->photo, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_set_size(info->photo, kPhoto, kPhoto);
-    // Child positions start inside the 2 px border: undo that to centre on the marker.
-    lv_obj_set_pos(info->photo, (kMarker - kPhoto) / 2 - 2, -2);
+    lv_obj_set_size(info->photo, photo, photo);
+    // Child positions start inside the ring: undo that to centre on the marker.
+    lv_obj_set_pos(info->photo, (size - photo) / 2 - kRing, -kRing);
     lv_image_set_inner_align(info->photo, LV_IMAGE_ALIGN_STRETCH);
     st->photoMarkers.push_back(m);
-    image_load_into(info->photo, *st->images, sized(pl.photo, kPhoto, kPhoto));
+    image_load_into(info->photo, *st->images, sized(pl.photo, kPhotoRequest, kPhotoRequest));
   }
   return m;
+}
+
+// Small "CHE 4-2-3-1" tag in the corner by a team's goal line.
+lv_obj_t* formation_tag(lv_obj_t* pitch, const std::string& abbr, const std::string& formation,
+                        bool top) {
+  if (formation.empty()) return nullptr;
+  lv_obj_t* tag = label(pitch, &hanken_10, theme().chalk, (abbr + " " + formation).c_str());
+  lv_obj_set_style_bg_color(tag, theme().turf, 0);
+  lv_obj_set_style_bg_opa(tag, 150, 0);
+  lv_obj_set_style_radius(tag, 4, 0);
+  lv_obj_set_style_pad_hor(tag, 4, 0);
+  lv_obj_align(tag, top ? LV_ALIGN_TOP_LEFT : LV_ALIGN_BOTTOM_LEFT, 4, top ? 3 : -3);
+  return tag;
 }
 
 void build_pitch(DetailState* st) {
@@ -825,22 +896,18 @@ void build_pitch(DetailState* st) {
   const bool homeOut = !d.home.players.empty();
   const bool awayOut = !d.away.players.empty();
 
-  // Subtitle: both formations, then the chip team's formation in words.
-  std::string formations;
-  if (!d.home.formation.empty()) formations = d.match.home.abbr + " " + d.home.formation;
-  if (!d.away.formation.empty()) {
-    if (!formations.empty()) formations += "   ";
-    formations += d.match.away.abbr + " " + d.away.formation;
-  }
-  p.formations = label(page, &hanken_10, theme().chalk, formations.c_str());
-  lv_obj_set_pos(p.formations, kSide, 0);
+  p.homeFormation = nullptr;
+  p.awayFormation = nullptr;
+
+  // One subtitle line: the chip team's formation in words. Both formations
+  // are tagged inside the pitch, by each team's goal.
   const Side chip = chip_side(d, st->ctx);
   const std::string blurb =
       formation_blurb(chip == Side::Home ? d.home.formation : d.away.formation);
   const std::string& chipAbbr = chip == Side::Home ? d.match.home.abbr : d.match.away.abbr;
   p.blurb = label(page, &hanken_10, theme().dim,
                   blurb.empty() ? "" : (chipAbbr + ": " + blurb).c_str());
-  lv_obj_set_pos(p.blurb, kSide, 13);
+  lv_obj_set_pos(p.blurb, kSide, -1);
 
   lv_obj_update_layout(st->root);
   const int32_t w = 240 - 2 * kPitchInset;
@@ -878,8 +945,27 @@ void build_pitch(DetailState* st) {
     lv_obj_align(p.pitchMessage, LV_ALIGN_TOP_MID, 0, kPitchTop + h / 2 - 18);
   } else {
     show(p.pitchMessage, false);
-    for (const LineupPlayer& pl : d.home.players) add_marker(st, p.pitch, pl, Side::Home, w, h);
-    for (const LineupPlayer& pl : d.away.players) add_marker(st, p.pitch, pl, Side::Away, w, h);
+    int homeRows = 0;
+    int awayRows = 0;
+    const std::vector<int> homeRow = lineup_rows(d.home, homeRows);
+    const std::vector<int> awayRow = lineup_rows(d.away, awayRows);
+    const int32_t half = h / 2;
+    const int32_t size =
+        LV_CLAMP(kMarkerMin, half / LV_MAX(LV_MAX(homeRows, awayRows), 1), kMarkerMax);
+    const RowLayout homeLayout = row_layout(homeRows, size, half);
+    const RowLayout awayLayout = row_layout(awayRows, size, half);
+    for (size_t i = 0; i < d.home.players.size(); ++i) {
+      add_marker(st, p.pitch, d.home.players[i], Side::Home, homeRow[i], homeLayout, w, h);
+    }
+    for (size_t i = 0; i < d.away.players.size(); ++i) {
+      add_marker(st, p.pitch, d.away.players[i], Side::Away, awayRow[i], awayLayout, w, h);
+    }
+    if (homeOut) {
+      p.homeFormation = formation_tag(p.pitch, d.match.home.abbr, d.home.formation, false);
+    }
+    if (awayOut) {
+      p.awayFormation = formation_tag(p.pitch, d.match.away.abbr, d.away.formation, true);
+    }
     if (!homeOut || !awayOut) {
       const std::string& abbr = homeOut ? d.match.away.abbr : d.match.home.abbr;
       p.halfNote = label(p.pitch, &hanken_10, theme().chalk,
@@ -916,6 +1002,7 @@ void build_pitch(DetailState* st) {
   lv_obj_add_event_cb(p.nameCard, on_dismiss, LV_EVENT_CLICKED, st);
   p.nameCardNumber = label(p.nameCard, &bigshoulders_16, theme().amber);
   p.nameCardName = label(p.nameCard, &hanken_12, theme().chalk);
+  lv_label_set_long_mode(p.nameCardName, LV_LABEL_LONG_DOT);
   lv_obj_add_flag(p.nameCard, LV_OBJ_FLAG_HIDDEN);
 
   sync_photos(st);

@@ -2,13 +2,20 @@
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <functional>
 #include <memory>
 #include <string>
 #include <vector>
 
+#include <math.h>
+
+#include <fstream>
+#include <sstream>
+
 #include "app.h"
 #include "data_source.h"
+#include "json_parse.h"
 #include "demo_data.h"
 #include "screens/detail.h"
 #include "screens/live.h"
@@ -269,8 +276,15 @@ TEST_CASE("pitch: formation chip, both formations and the plain-English blurb") 
   const DetailParts* p = s.parts();
   CHECK(text(p->chipLabel) == "4-3-3");
   CHECK(visible(p->chip));
-  CHECK(text(p->formations) == "ARS 4-3-3   CHE 4-2-3-1");
   CHECK(text(p->blurb) == "ARS: 4 defenders, 3 midfielders, 3 attackers");
+  // Formation tags by each goal: home at the bottom, away at the top.
+  REQUIRE(p->homeFormation != nullptr);
+  REQUIRE(p->awayFormation != nullptr);
+  CHECK(text(p->homeFormation) == "ARS 4-3-3");
+  CHECK(text(p->awayFormation) == "CHE 4-2-3-1");
+  const int32_t h = lv_obj_get_height(p->pitch);
+  CHECK(centre_in(p->homeFormation, p->pitch).y > h * 3 / 4);
+  CHECK(centre_in(p->awayFormation, p->pitch).y < h / 4);
 }
 
 TEST_CASE("pitch: the chip follows the favourite team when it plays away") {
@@ -345,6 +359,190 @@ TEST_CASE("pitch: a missing photo shows the shirt number, a loaded one hides it"
   REQUIRE(raya != nullptr);
   CHECK(raya->photo == nullptr);
   CHECK(visible(raya->numberLabel));
+}
+
+// ------------------------------------------------------- pitch geometry
+
+namespace {
+
+MatchDetail fixture_detail() {
+  std::ifstream in(std::string(CONTRACT_FIXTURES_DIR) + "/detail-normalised.json",
+                   std::ios::binary);
+  std::stringstream ss;
+  ss << in.rdbuf();
+  MatchDetail d;
+  REQUIRE(parse_detail(ss.str(), d));
+  return d;
+}
+
+// A formation as the helper lays it out: lines evenly over y 0.08..0.92,
+// players of a line evenly across x. `lines` excludes the keeper.
+Lineup lineup(const std::string& formation, const std::vector<int>& lines) {
+  Lineup l;
+  l.formation = formation;
+  l.players.push_back({"Keeper", 1, 0.5f, 0.08f, ""});
+  int number = 2;
+  for (size_t li = 0; li < lines.size(); ++li) {
+    const float y = 0.08f + 0.84f * static_cast<float>(li + 1) / static_cast<float>(lines.size());
+    for (int k = 0; k < lines[li]; ++k) {
+      const float x = static_cast<float>(k + 1) / static_cast<float>(lines[li] + 1);
+      l.players.push_back({"Player " + std::to_string(number), number, x, y, ""});
+      ++number;
+    }
+  }
+  return l;
+}
+
+// The detail in a 240x276 parent: the real overlay size above the tab bar.
+struct OverlayScreen {
+  CountingImages images;
+  lv_obj_t* screen = nullptr;
+  explicit OverlayScreen(const MatchDetail& d) {
+    init_test_display();
+    lv_obj_t* box = lv_obj_create(lv_screen_active());
+    lv_obj_remove_style_all(box);
+    lv_obj_set_size(box, 240, 320 - 44);
+    screen = detail_create(box, d, images, [] {});
+    detail_select_tab(screen, DetailTab::Pitch, false);
+    test_advance(20);
+    lv_obj_update_layout(lv_screen_active());
+  }
+  ~OverlayScreen() { deinit_test_display(); }
+};
+
+double dist(lv_point_t a, lv_point_t b) {
+  const double dx = a.x - b.x;
+  const double dy = a.y - b.y;
+  return sqrt(dx * dx + dy * dy);
+}
+
+// No two markers overlap, every marker is inside the pitch and in its own
+// half, and the formation tags do not cover a marker.
+void check_layout(const MatchDetail& d) {
+  OverlayScreen s(d);
+  const DetailParts* p = detail_parts(s.screen);
+  const std::vector<lv_obj_t*> ms = markers(p->pitch);
+  REQUIRE(ms.size() == d.home.players.size() + d.away.players.size());
+  const int32_t w = lv_obj_get_width(p->pitch);
+  const int32_t h = lv_obj_get_height(p->pitch);
+  CHECK(h >= 196);  // close to the mockup's 206 px
+  lv_area_t pitch;
+  lv_obj_get_coords(p->pitch, &pitch);
+  const int32_t size = lv_obj_get_width(ms[0]);
+  CHECK(size >= 20);
+  for (size_t i = 0; i < ms.size(); ++i) {
+    lv_area_t a;
+    lv_obj_get_coords(ms[i], &a);
+    CHECK(lv_obj_get_width(ms[i]) == size);
+    CHECK(a.x1 >= pitch.x1);
+    CHECK(a.x2 <= pitch.x2);
+    CHECK(a.y1 >= pitch.y1);
+    CHECK(a.y2 <= pitch.y2);
+    if (detail_marker(ms[i])->side == Side::Home) {
+      CHECK(a.y1 - pitch.y1 >= h / 2);
+    } else {
+      CHECK(a.y2 - pitch.y1 < h / 2 + 1);
+    }
+    for (size_t j = i + 1; j < ms.size(); ++j) {
+      INFO(detail_marker(ms[i])->name << " vs " << detail_marker(ms[j])->name);
+      CHECK(dist(centre_in(ms[i], p->pitch), centre_in(ms[j], p->pitch)) >= size);
+    }
+    for (lv_obj_t* tag : {p->homeFormation, p->awayFormation}) {
+      if (tag == nullptr) continue;
+      lv_area_t t;
+      lv_obj_get_coords(tag, &t);
+      const bool overlap = a.x1 <= t.x2 && t.x1 <= a.x2 && a.y1 <= t.y2 && t.y1 <= a.y2;
+      CHECK_FALSE(overlap);
+    }
+  }
+  (void)w;
+}
+
+// Centre y of each distinct row of one side, sorted.
+std::vector<int32_t> row_centres(const DetailParts* p, Side side) {
+  std::vector<int32_t> ys;
+  for (lv_obj_t* m : markers(p->pitch)) {
+    if (detail_marker(m)->side != side) continue;
+    const int32_t y = centre_in(m, p->pitch).y;
+    if (std::find(ys.begin(), ys.end(), y) == ys.end()) ys.push_back(y);
+  }
+  std::sort(ys.begin(), ys.end());
+  return ys;
+}
+
+}  // namespace
+
+TEST_CASE("pitch geometry: the contract fixture (3-1-4-2 v 4-2-3-1) has no overlaps") {
+  const MatchDetail d = fixture_detail();
+  REQUIRE(d.home.formation == "3-1-4-2");
+  REQUIRE(d.away.formation == "4-2-3-1");
+  check_layout(d);
+}
+
+TEST_CASE("pitch geometry: the demo detail has no overlaps") { check_layout(full_detail()); }
+
+TEST_CASE("pitch geometry: rows are spread evenly, whatever the numbers in y") {
+  MatchDetail d = empty_detail(MatchState::Live);
+  d.home = lineup("5-3-2", {5, 3, 2});
+  d.away = lineup("4-4-2", {4, 4, 2});
+  check_layout(d);
+  // Uneven raw y values: only their order counts.
+  d.away.players[1].y = d.away.players[2].y = d.away.players[3].y = d.away.players[4].y = 0.15f;
+  check_layout(d);
+
+  OverlayScreen s(d);
+  const DetailParts* p = detail_parts(s.screen);
+  const int32_t size = lv_obj_get_width(markers(p->pitch)[0]);
+  for (Side side : {Side::Home, Side::Away}) {
+    const std::vector<int32_t> ys = row_centres(p, side);
+    REQUIRE(ys.size() == 4);
+    const int32_t step = ys[1] - ys[0];
+    CHECK(step >= size);
+    for (size_t i = 1; i < ys.size(); ++i) {
+      CHECK(ys[i] - ys[i - 1] == step);
+    }
+  }
+  // Keepers sit by their own goal lines.
+  const int32_t h = lv_obj_get_height(p->pitch);
+  const std::vector<int32_t> home = row_centres(p, Side::Home);
+  const std::vector<int32_t> away = row_centres(p, Side::Away);
+  CHECK(home.back() + size / 2 >= h - 1);
+  CHECK(away.front() - size / 2 <= 1);
+}
+
+TEST_CASE("pitch geometry: five-row formations on both sides fit") {
+  MatchDetail d = empty_detail(MatchState::Live);
+  d.home = lineup("4-1-4-1", {4, 1, 4, 1});
+  d.away = lineup("3-4-2-1", {3, 4, 2, 1});
+  check_layout(d);
+}
+
+TEST_CASE("name card: a long name stays inside the pitch near either edge") {
+  MatchDetail d = full_detail();
+  const std::string longName = "Aleksandar Mitrovic-Vanderbilt";  // 30 characters
+  REQUIRE(longName.size() == 30);
+  d.home.players[1].name = longName;  // left back
+  d.home.players[1].x = 0.0f;
+  d.home.players[4].name = longName + " Jr";  // right back
+  d.home.players[4].x = 1.0f;
+  OverlayScreen s(d);
+  const DetailParts* p = detail_parts(s.screen);
+  lv_area_t pitch;
+  lv_obj_get_coords(p->pitch, &pitch);
+  for (const std::string& name : {longName, longName + " Jr"}) {
+    lv_obj_t* m = marker_named(p->pitch, name);
+    REQUIRE(m != nullptr);
+    lv_obj_send_event(m, LV_EVENT_CLICKED, nullptr);
+    test_advance(400);
+    lv_obj_update_layout(lv_screen_active());
+    REQUIRE(visible(p->nameCard));
+    lv_area_t c;
+    lv_obj_get_coords(p->nameCard, &c);
+    CHECK(c.x1 - pitch.x1 >= 0);
+    CHECK(c.x2 - pitch.x1 + 1 <= lv_area_get_width(&pitch));
+    CHECK(lv_label_get_long_mode(p->nameCardName) == LV_LABEL_LONG_DOT);
+    lv_obj_send_event(p->pitch, LV_EVENT_CLICKED, nullptr);
+  }
 }
 
 // ---------------------------------------------------------------- summary

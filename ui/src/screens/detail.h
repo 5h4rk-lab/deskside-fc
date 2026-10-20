@@ -59,8 +59,9 @@ struct DetailParts {
   lv_obj_t* tabview = nullptr;
 
   // Pitch tab.
-  lv_obj_t* formations = nullptr;    // "ARS 4-3-3   CHE 4-2-3-1"
-  lv_obj_t* blurb = nullptr;         // "ARS: 4 defenders, 3 midfielders, 3 attackers"
+  lv_obj_t* blurb = nullptr;          // "ARS: 4 defenders, 3 midfielders, 3 attackers"
+  lv_obj_t* homeFormation = nullptr;  // "ARS 4-3-3" tag by the home goal (bottom)
+  lv_obj_t* awayFormation = nullptr;  // "CHE 4-2-3-1" tag by the away goal (top)
   lv_obj_t* pitch = nullptr;         // its marker children are the players (see detail_marker)
   lv_obj_t* pitchMessage = nullptr;  // shown instead of the pitch when no lineup is out
   lv_obj_t* halfNote = nullptr;      // "CHE lineup not published yet" when only one is out
