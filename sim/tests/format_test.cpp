@@ -134,3 +134,41 @@ TEST_CASE("stat_number reads the leading number of a stat value") {
   CHECK_FALSE(stat_number("n/a", v));
   CHECK_FALSE(stat_number("%", v));
 }
+
+TEST_CASE("weekday_full and short_date name the local day") {
+  CHECK(std::string(weekday_full(kTue2000)) == "Tuesday");
+  CHECK(std::string(weekday_full(kTue2000 + 4 * 86400)) == "Saturday");
+  CHECK(std::string(weekday_full(kTue2000 - 2 * 86400)) == "Sunday");
+  CHECK(short_date(kTue2000 + 4 * 86400) == "SAT 24 OCT");
+  CHECK(short_date(kTue2000) == "TUE 20 OCT");
+  CHECK(short_date(kTue2000 + 12 * 86400) == "SUN 1 NOV");
+}
+
+TEST_CASE("short_date handles month and year ends and leap days") {
+  const int64_t dec31 = 1798675200;  // Thu 2026-12-31 00:00 UTC
+  CHECK(short_date(dec31) == "THU 31 DEC");
+  CHECK(short_date(dec31 + 86400) == "FRI 1 JAN");
+  const int64_t feb29 = 1709164800;  // Thu 2024-02-29 00:00 UTC
+  CHECK(short_date(feb29) == "THU 29 FEB");
+  CHECK(short_date(feb29 + 86400) == "FRI 1 MAR");
+  CHECK(short_date(-86400) == "WED 31 DEC");  // 1969-12-31
+}
+
+TEST_CASE("day_header names the day relative to now") {
+  const int64_t now = kTue2000;  // Tuesday evening, "local" for this test
+  auto at = [&](int days, int hour) {
+    return day_header(now - 20 * 3600 + days * 86400 + hour * 3600, now);
+  };
+  CHECK(at(0, 0) == "TODAY");
+  CHECK(at(0, 23) == "TODAY");
+  CHECK(at(1, 0) == "TOMORROW");
+  CHECK(at(2, 12) == "THURSDAY");
+  CHECK(at(6, 12) == "MONDAY");
+  CHECK(at(7, 12) == "TUE 27 OCT");
+  CHECK(at(30, 12) == "THU 19 NOV");
+  CHECK(at(-1, 23) == "YESTERDAY");
+  CHECK(at(-1, 0) == "YESTERDAY");
+  CHECK(at(-2, 12) == "SUNDAY");
+  CHECK(at(-6, 12) == "WEDNESDAY");
+  CHECK(at(-7, 12) == "TUE 13 OCT");
+}

@@ -35,6 +35,38 @@ const char* weekday(int64_t local) {
   return kDays[d];
 }
 
+const char* weekday_full(int64_t local) {
+  static const char* const kDays[] = {"Sunday",   "Monday", "Tuesday", "Wednesday",
+                                      "Thursday", "Friday", "Saturday"};
+  int64_t d = (floor_div(local, 86400) + 4) % 7;
+  if (d < 0) d += 7;
+  return kDays[d];
+}
+
+std::string short_date(int64_t local) {
+  // Civil date from days since 1970-01-01 (Howard Hinnant's algorithm).
+  const int64_t z = floor_div(local, 86400) + 719468;
+  const int64_t era = floor_div(z, 146097);
+  const int64_t doe = z - era * 146097;
+  const int64_t yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+  const int64_t doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+  const int64_t mp = (5 * doy + 2) / 153;
+  const int day = static_cast<int>(doy - (153 * mp + 2) / 5 + 1);
+  const int month = static_cast<int>(mp < 10 ? mp + 3 : mp - 9);
+  static const char* const kMonths[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
+                                        "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+  return to_upper(weekday(local)) + " " + std::to_string(day) + " " + kMonths[month - 1];
+}
+
+std::string day_header(int64_t kickoffLocal, int64_t nowLocal) {
+  const int64_t diff = floor_div(kickoffLocal, 86400) - floor_div(nowLocal, 86400);
+  if (diff == 0) return "TODAY";
+  if (diff == 1) return "TOMORROW";
+  if (diff == -1) return "YESTERDAY";
+  if (diff > -7 && diff < 7) return to_upper(weekday_full(kickoffLocal));
+  return short_date(kickoffLocal);
+}
+
 std::string to_upper(std::string s) {
   for (char& c : s) {
     if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');

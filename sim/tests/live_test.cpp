@@ -304,7 +304,10 @@ TEST_CASE("latest event strip shows the last event from the match detail") {
 
 TEST_CASE("demo data: live Arsenal v Chelsea with the latest goal by Havertz") {
   const std::vector<MatchSummary> ms = demo_matches(kNow);
-  REQUIRE(ms.size() == 5);
+  REQUIRE(ms.size() == 9);
+  for (const MatchSummary& m : ms) CHECK_FALSE(m.league.empty());
+  CHECK(ms[4].state == MatchState::Post);  // yesterday
+  CHECK(ms[7].state == MatchState::Postponed);
   CHECK(ms[0].id == demo::kLiveMatchId);
   CHECK(ms[0].state == MatchState::Live);
   CHECK(ms[0].home.id == "359");

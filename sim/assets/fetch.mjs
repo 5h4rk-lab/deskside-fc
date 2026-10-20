@@ -23,7 +23,7 @@ const add = (name, url, kind) => {
 };
 
 // Crests from football-data.org.
-for (const id of [57, 61, 86, 81, 65, 64, 5, 4, 524, 516]) {
+for (const id of [57, 61, 86, 81, 65, 64, 5, 4, 524, 516, 108, 98, 78, 559]) {
   add(`crest-${id}.png`, `https://crests.football-data.org/${id}.png`, 'logo');
 }
 

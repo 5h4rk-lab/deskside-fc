@@ -5,8 +5,9 @@
 //   --assets DIR     image assets (default: the repo's sim/assets)
 //   --fixtures       load the contract fixtures instead of the demo data
 //   --snapshot PATH  render once without a window, write a PNG and exit
-//   --screen VIEW    live (default), or the match detail: detail (its default
-//                    sub-tab), summary, pitch or stats
+//   --screen VIEW    live (default), matches (the Matches tab), or the match
+//                    detail: detail (its default sub-tab), summary, pitch or
+//                    stats
 //   --match ID       match the detail opens (default: the live demo match;
 //                    demo-rma-bar is a pre-match with no lineups yet)
 #include <SDL2/SDL.h>
@@ -48,7 +49,7 @@ struct Options {
 [[noreturn]] void usage(int code) {
   std::printf(
       "usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]\n"
-      "           [--screen live|detail|summary|pitch|stats] [--match ID]\n");
+      "           [--screen live|matches|detail|summary|pitch|stats] [--match ID]\n");
   std::exit(code);
 }
 
@@ -68,7 +69,7 @@ Options parse_args(int argc, char** argv) {
       o.snapshot = argv[++i];
     } else if (std::strcmp(argv[i], "--screen") == 0 && hasValue) {
       o.screen = argv[++i];
-      const char* const kScreens[] = {"live", "detail", "summary", "pitch", "stats"};
+      const char* const kScreens[] = {"live", "matches", "detail", "summary", "pitch", "stats"};
       bool known = false;
       for (const char* k : kScreens) known = known || o.screen == k;
       if (!known) {
@@ -220,7 +221,10 @@ int main(int argc, char** argv) {
   lv_obj_t* app = app_create(lv_screen_active(), deps);
   app_refresh(app, start);
 
-  if (opt.screen != "live") {
+  if (opt.screen == "matches") {
+    lv_tabview_set_active(app, 1, LV_ANIM_OFF);
+    app_refresh(app, start);
+  } else if (opt.screen != "live") {
     app_open_match(app, opt.match);
     lv_obj_t* view = app_detail_view(app);
     if (opt.screen == "summary") detail_select_tab(view, DetailTab::Summary, false);

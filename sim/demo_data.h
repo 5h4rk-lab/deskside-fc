@@ -22,7 +22,10 @@ constexpr const char* kFavouriteId = "359";
 
 // A live Arsenal v Chelsea (67', 2:1), Real Madrid v Barcelona today 19:00 UTC,
 // Man City v Liverpool tomorrow, Bayern v Dortmund on the coming Saturday and
-// PSG v Marseille yesterday (3:1, full time). Times are relative to `now`.
+// PSG v Marseille yesterday (3:1, full time), then Inter v Milan today 21:00
+// UTC, Atletico v Sevilla in two days, Brighton v Liverpool tomorrow
+// (postponed) and Real Madrid v Atletico three days ago (1:0, full time), so
+// the Matches list scrolls. Times are relative to `now`.
 std::vector<MatchSummary> demo_matches(int64_t now);
 
 // Detail for a demo match. The live match has lineups (Arsenal 4-3-3, Chelsea

@@ -16,6 +16,17 @@ std::string hh_mm(int64_t local);
 // "Mon" .. "Sun" of a local time.
 const char* weekday(int64_t local);
 
+// "Sunday" .. "Saturday" of a local time.
+const char* weekday_full(int64_t local);
+
+// "SAT 24 OCT" of a local time (day without a leading zero).
+std::string short_date(int64_t local);
+
+// Header of the day group a local kickoff belongs to, relative to the local
+// time `nowLocal`: "TODAY", "TOMORROW", "YESTERDAY", the weekday name ("SATURDAY")
+// within six days either way, otherwise a short date ("SAT 24 OCT").
+std::string day_header(int64_t kickoffLocal, int64_t nowLocal);
+
 // ASCII letters to upper case; other bytes (UTF-8 included) are unchanged.
 std::string to_upper(std::string s);
 

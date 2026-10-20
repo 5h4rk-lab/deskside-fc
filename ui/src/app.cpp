@@ -6,6 +6,7 @@
 #include "fonts.h"
 #include "screens/detail.h"
 #include "screens/live.h"
+#include "screens/matches.h"
 #include "theme.h"
 
 namespace {
@@ -20,6 +21,7 @@ struct AppState {
   std::function<void(const std::string&)> onOpenMatch;
   lv_obj_t* tabview = nullptr;
   lv_obj_t* live = nullptr;
+  lv_obj_t* matches = nullptr;
 
   // Detail overlay: a sibling above the tab view, covering the tab content.
   lv_obj_t* overlay = nullptr;
@@ -290,24 +292,32 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   lv_obj_set_style_border_side(bar, LV_BORDER_SIDE_TOP, 0);
   lv_obj_set_style_pad_all(bar, 0, 0);
 
+  auto open_match = [st](std::string id) {
+    app_open_match(st->tabview, id);
+    if (st->onOpenMatch) st->onOpenMatch(id);
+  };
   lv_obj_t* live = nullptr;
+  lv_obj_t* matches = nullptr;
   for (const TabSpec& spec : kTabs) {
     lv_obj_t* tab = lv_tabview_add_tab(tabview, spec.label);
-    if (&spec == &kTabs[0]) {
+    if (&spec == &kTabs[0] || &spec == &kTabs[1]) {
+      // Full-bleed screens that manage their own scrolling.
       lv_obj_set_style_bg_opa(tab, LV_OPA_TRANSP, 0);
       lv_obj_set_style_pad_all(tab, 0, 0);
       lv_obj_set_scrollbar_mode(tab, LV_SCROLLBAR_MODE_OFF);
       lv_obj_remove_flag(tab, LV_OBJ_FLAG_SCROLLABLE);
-      live = live_create(tab, deps.store, deps.images, [st](std::string id) {
-        app_open_match(st->tabview, id);
-        if (st->onOpenMatch) st->onOpenMatch(id);
-      });
+      if (&spec == &kTabs[0]) {
+        live = live_create(tab, deps.store, deps.images, open_match);
+      } else {
+        matches = matches_create(tab, deps.store, deps.images, open_match);
+      }
     } else {
       build_tab(tab, spec);
     }
   }
   st->tabview = tabview;
   st->live = live;
+  st->matches = matches;
   lv_obj_set_user_data(tabview, st);
   lv_obj_add_event_cb(tabview, on_app_delete, LV_EVENT_DELETE, st);
 
@@ -329,6 +339,7 @@ void app_refresh(lv_obj_t* appRoot, int64_t now) {
   AppState* st = app_state(appRoot);
   if (st == nullptr) return;
   if (st->live != nullptr) live_refresh(st->live, now);
+  if (st->matches != nullptr) matches_refresh(st->matches, now);
   // The open detail follows the Store: newer events, published lineups, the
   // clock from the match list. Unchanged data touches nothing.
   if (st->overlay != nullptr) show_detail(st);

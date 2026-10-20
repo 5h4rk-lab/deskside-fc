@@ -1,0 +1,74 @@
+// Small widget helpers and the status row shared by the screens (Live and
+// Matches). Shared with the ESP32 firmware: no clock reads, no SDL, no stdio.
+#pragma once
+
+#include <lvgl.h>
+#include <stdint.h>
+
+#include <string>
+
+#include "image_provider.h"
+#include "store.h"
+
+namespace widgets {
+
+// A bare object: no style, not scrollable, not clickable.
+lv_obj_t* plain(lv_obj_t* parent);
+// A label with `font` and `color`, empty.
+lv_obj_t* label(lv_obj_t* parent, const lv_font_t* font, lv_color_t color);
+// A filled circle.
+lv_obj_t* dot(lv_obj_t* parent, int32_t size, lv_color_t color);
+// Sets the text only when it differs, so unchanged labels are not invalidated.
+void set_text(lv_obj_t* label, const std::string& text);
+// Shows or hides an object, touching the flag only when needed.
+void show(lv_obj_t* obj, bool visible);
+
+// Crest image of `size` x `size` px with a faint circle as placeholder until
+// the picture arrives. The caller positions it.
+lv_obj_t* crest_image(lv_obj_t* parent, int32_t size);
+// The placeholder goes away once an image is shown: call after a picture may
+// have arrived (cheap when nothing changed).
+void crest_sync(lv_obj_t* img);
+// Shows `path` in the crest, dropping the old picture first so a different
+// team never shows a stale crest. An empty path leaves the placeholder.
+void crest_load(lv_obj_t* img, ImageProvider& images, const std::string& path);
+
+// Glyph top offset and cap height of the digits in `font`, for vertical
+// centring independent of the font's line metrics.
+void digit_metrics(const lv_font_t* font, int32_t& top, int32_t& height);
+
+// What the status row shows besides its left text.
+struct StatusInfo {
+  std::string clock;      // local HH:MM
+  bool connecting = true; // no data yet: no stale marker, no freshness dot
+  bool stale = false;
+  std::string staleText;  // "Updated N min ago" while stale
+
+  bool operator==(const StatusInfo& o) const {
+    return clock == o.clock && connecting == o.connecting && stale == o.stale &&
+           staleText == o.staleText;
+  }
+  bool operator!=(const StatusInfo& o) const { return !(*this == o); }
+};
+
+// Local clock, "connecting" until the Store has data, stale marker when the
+// last success is older than the Store's limit.
+StatusInfo status_info(const Store& store, int64_t now);
+
+// Top row of a screen: free text on the left; stale marker (amber dot and
+// "Updated N min ago") and local clock on the right, with a quiet dot while
+// the data is fresh.
+struct StatusRow {
+  lv_obj_t* left = nullptr;
+  lv_obj_t* clock = nullptr;
+  lv_obj_t* staleDot = nullptr;
+  lv_obj_t* staleLabel = nullptr;
+  lv_obj_t* freshDot = nullptr;
+};
+
+// Creates the row at the top of `parent` (10 px side margins, y = 4). The
+// stale and freshness markers start hidden.
+StatusRow status_row_create(lv_obj_t* parent);
+void status_row_apply(const StatusRow& row, const std::string& left, const StatusInfo& info);
+
+}  // namespace widgets

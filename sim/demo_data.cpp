@@ -28,6 +28,11 @@ Team barcelona() { return {"83", "BAR", "Barcelona", fd_crest("81"), 0xA50044, "
 Team bayern() { return {"132", "BAY", "Bayern Munich", fd_crest("5"), 0xDC052D, ""}; }
 Team dortmund() { return {"124", "DOR", "Borussia Dortmund", fd_crest("4"), 0xFDE100, ""}; }
 Team psg() { return {"160", "PSG", "Paris Saint-Germain", fd_crest("524"), 0x004170, ""}; }
+Team inter() { return {"110", "INT", "Inter Milan", fd_crest("108"), 0x0068A8, ""}; }
+Team milan() { return {"103", "MIL", "AC Milan", fd_crest("98"), 0xFB090B, ""}; }
+Team atletico() { return {"1068", "ATM", "Atletico Madrid", fd_crest("78"), 0xCB3524, ""}; }
+Team sevilla() { return {"243", "SEV", "Sevilla", fd_crest("559"), 0xD6001C, ""}; }
+Team brighton() { return {"331", "BHA", "Brighton", espn_crest("331"), 0x0057B8, ""}; }
 Team marseille() { return {"176", "MAR", "Marseille", fd_crest("516"), 0x2FAEE0, ""}; }
 
 MatchSummary match(const char* id, const char* league, MatchState state, const char* clock,
@@ -72,6 +77,19 @@ std::vector<MatchSummary> demo_matches(int64_t now) {
   post.homeScore = 3;
   post.awayScore = 1;
   out.push_back(post);
+
+  // More rows, so the Matches list needs scrolling.
+  out.push_back(match("demo-int-mil", "ita.1", MatchState::Pre, "", today + 21 * 3600, inter(),
+                      milan()));
+  out.push_back(match("demo-atm-sev", "esp.1", MatchState::Pre, "",
+                      today + 2 * kDay + 20 * 3600, atletico(), sevilla()));
+  out.push_back(match("demo-bha-liv", "eng.1", MatchState::Postponed, "",
+                      today + kDay + 15 * 3600, brighton(), liverpool()));
+  MatchSummary old = match("demo-rma-atm", "esp.1", MatchState::Post, "FT",
+                           today - 3 * kDay + 20 * 3600, real_madrid(), atletico());
+  old.homeScore = 1;
+  old.awayScore = 0;
+  out.push_back(old);
   return out;
 }
 

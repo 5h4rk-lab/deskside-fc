@@ -2,12 +2,21 @@
 
 #include "fonts.h"
 #include "format.h"
+#include "screens/widgets.h"
 #include "theme.h"
 
 // Geometry follows screen 1 of the mockup (240x320, tab bar overlaid at the
 // bottom). The screen lives in the Live tab, which is 276 px tall; everything
 // keeps its mockup y position and the lower part is simply cut by the tab bar.
 namespace {
+
+using widgets::dot;
+using widgets::label;
+using widgets::plain;
+using widgets::set_text;
+using widgets::show;
+using widgets::StatusInfo;
+using widgets::StatusRow;
 
 constexpr int32_t kVirtualHeight = 320;  // mockup screen height
 constexpr int32_t kSplitCenterY = kVirtualHeight / 2;
@@ -40,9 +49,7 @@ enum class Mode { Connecting, NoMatches, Next, Live };
 struct View {
   Mode mode = Mode::Connecting;
   std::string league;
-  std::string clock;
-  bool stale = false;
-  std::string staleText;
+  StatusInfo status;
   std::string message;
   std::string countdown;
   std::string matchId;
@@ -62,8 +69,7 @@ struct View {
   uint32_t eventColor = 0;
 
   bool operator==(const View& o) const {
-    return mode == o.mode && league == o.league && clock == o.clock && stale == o.stale &&
-           staleText == o.staleText && message == o.message && countdown == o.countdown &&
+    return mode == o.mode && league == o.league && status == o.status && message == o.message && countdown == o.countdown &&
            matchId == o.matchId && homeCrest == o.homeCrest && awayCrest == o.awayCrest &&
            homeColor == o.homeColor && awayColor == o.awayColor && pill == o.pill &&
            scoreHome == o.scoreHome && scoreAway == o.scoreAway && homeName == o.homeName &&
@@ -80,7 +86,7 @@ struct LiveState {
   std::function<void(std::string)> onOpen;
   LiveParts parts{};
   View shown;
-  lv_obj_t* freshDot = nullptr;
+  StatusRow status;
   bool everApplied = false;
   bool splitVisible = false;
   lv_color_t splitHome{};
@@ -110,76 +116,20 @@ bool too_close(lv_color_t a, lv_color_t b) {
   return distance_sq(a, b) < kSplitMinDistance * kSplitMinDistance;
 }
 
-void set_text(lv_obj_t* label, const std::string& text) {
-  if (text != lv_label_get_text(label)) lv_label_set_text(label, text.c_str());
-}
-
-void show(lv_obj_t* obj, bool visible) {
-  if (visible == lv_obj_has_flag(obj, LV_OBJ_FLAG_HIDDEN)) {
-    if (visible) {
-      lv_obj_remove_flag(obj, LV_OBJ_FLAG_HIDDEN);
-    } else {
-      lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
-    }
-  }
-}
-
 LiveState* state_of(lv_obj_t* screen) {
   return static_cast<LiveState*>(lv_obj_get_user_data(screen));
 }
 
 // ---------------------------------------------------------------- widgets
 
-lv_obj_t* plain(lv_obj_t* parent) {
-  lv_obj_t* o = lv_obj_create(parent);
-  lv_obj_remove_style_all(o);
-  lv_obj_remove_flag(o, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
-  return o;
-}
-
-lv_obj_t* label(lv_obj_t* parent, const lv_font_t* font, lv_color_t color) {
-  lv_obj_t* l = lv_label_create(parent);
-  lv_obj_set_style_text_font(l, font, 0);
-  lv_obj_set_style_text_color(l, color, 0);
-  lv_label_set_text(l, "");
-  return l;
-}
-
-lv_obj_t* dot(lv_obj_t* parent, int32_t size, lv_color_t color) {
-  lv_obj_t* d = plain(parent);
-  lv_obj_set_size(d, size, size);
-  lv_obj_set_style_radius(d, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_color(d, color, 0);
-  lv_obj_set_style_bg_opa(d, LV_OPA_COVER, 0);
-  return d;
-}
-
-// Crest image with a faint circle as placeholder until the picture arrives.
 lv_obj_t* crest(lv_obj_t* parent, int32_t x) {
-  lv_obj_t* img = lv_image_create(parent);
+  lv_obj_t* img = widgets::crest_image(parent, kCrestSize);
   lv_obj_set_pos(img, x, kCrestTop);
-  lv_obj_set_size(img, kCrestSize, kCrestSize);
-  // Helper images are square at the requested size; stretch only matters for
-  // the simulator's larger local assets.
-  lv_image_set_inner_align(img, LV_IMAGE_ALIGN_STRETCH);
-  lv_obj_set_style_radius(img, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_bg_color(img, theme().chalk, 0);
-  lv_obj_set_style_bg_opa(img, 24, 0);
   return img;
 }
 
-// The placeholder background goes away once an image is shown.
-void sync_placeholder(lv_obj_t* img) {
-  const lv_opa_t want = lv_image_get_src(img) != nullptr ? LV_OPA_TRANSP : 24;
-  if (lv_obj_get_style_bg_opa(img, 0) != want) lv_obj_set_style_bg_opa(img, want, 0);
-}
-
 void load_image(LiveState* st, lv_obj_t* img, const std::string& path) {
-  // Drop the old picture first so a different team never shows a stale crest.
-  if (lv_image_get_src(img) != nullptr) lv_image_set_src(img, nullptr);
-  if (!path.empty()) image_load_into(img, *st->images, path);
-  sync_placeholder(img);
+  widgets::crest_load(img, *st->images, path);
 }
 
 void pulse_exec(void* obj, int32_t v) {
@@ -275,19 +225,6 @@ void on_score_clicked(lv_event_t* e) {
 
 void on_delete(lv_event_t* e) { delete static_cast<LiveState*>(lv_event_get_user_data(e)); }
 
-// Glyph top offset and cap height of the digits in `font`, for vertical
-// centring independent of the font's line metrics.
-void digit_metrics(const lv_font_t* font, int32_t& top, int32_t& height) {
-  lv_font_glyph_dsc_t g;
-  if (lv_font_get_glyph_dsc(font, &g, '0', 0)) {
-    height = g.box_h;
-    top = font->line_height - font->base_line - g.box_h - g.ofs_y;
-  } else {
-    height = font->line_height;
-    top = 0;
-  }
-}
-
 void set_score_font(LiveParts& p, const lv_font_t* font) {
   if (lv_obj_get_style_text_font(p.scoreHome, 0) == font) return;
   for (lv_obj_t* l : {p.scoreHome, p.scoreSep, p.scoreAway}) {
@@ -295,7 +232,7 @@ void set_score_font(LiveParts& p, const lv_font_t* font) {
   }
   int32_t top = 0;
   int32_t height = 0;
-  digit_metrics(font, top, height);
+  widgets::digit_metrics(font, top, height);
   lv_obj_align(p.score, LV_ALIGN_TOP_MID, 0, kScoreCenterY - height / 2 - top);
 }
 
@@ -319,15 +256,12 @@ const lv_font_t* score_font(const View& v) {
 View compute_view(const Store& store, int64_t now) {
   View v;
   const int tz = store.tz_offset();
-  v.clock = hh_mm(now + tz);
+  v.status = widgets::status_info(store, now);
   if (!store.has_data()) {
     v.mode = Mode::Connecting;
     v.message = "Connecting...";
     return v;
   }
-  v.stale = store.stale(now);
-  if (v.stale) v.staleText = stale_text(now - store.last_success());
-
   const std::string& fav = store.favourite();
   if (const MatchSummary* m = store.live_for(fav)) {
     v.mode = Mode::Live;
@@ -380,12 +314,7 @@ void apply(LiveState* st, const View& v) {
   const bool live = v.mode == Mode::Live;
   const bool next = v.mode == Mode::Next;
 
-  set_text(p.statusLeague, v.league);
-  set_text(p.statusClock, v.clock);
-  show(p.staleDot, v.stale);
-  show(p.staleLabel, v.stale);
-  show(st->freshDot, !v.stale && v.mode != Mode::Connecting);
-  set_text(p.staleLabel, v.staleText);
+  widgets::status_row_apply(st->status, v.league, v.status);
 
   // Background split.
   const bool split = live || next;
@@ -478,23 +407,11 @@ lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
   lv_obj_add_event_cb(p.background, draw_background, LV_EVENT_DRAW_MAIN, st);
 
   // Status row: league left, stale marker and clock right.
-  p.statusLeague = label(root, &hanken_10, pal.dim);
-  lv_obj_set_pos(p.statusLeague, 10, 4);
-  // Fixed-size box with right-aligned children: a content-sized flex row does
-  // not always re-measure when a label's text changes.
-  lv_obj_t* right = plain(root);
-  lv_obj_set_size(right, 150, 13);
-  lv_obj_set_flex_flow(right, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(right, 4, 0);
-  lv_obj_align(right, LV_ALIGN_TOP_RIGHT, -10, 4);
-  p.staleDot = dot(right, 5, pal.amber);
-  p.staleLabel = label(right, &hanken_10, pal.amber);
-  lv_obj_set_style_pad_right(p.staleLabel, 3, 0);
-  p.statusClock = label(right, &hanken_10, pal.dim);
-  // The mockup's "09:42 ●": a quiet dot while data is fresh; when stale the
-  // amber dot before the age takes its place.
-  st->freshDot = dot(right, 4, pal.dim);
+  st->status = widgets::status_row_create(root);
+  p.statusLeague = st->status.left;
+  p.statusClock = st->status.clock;
+  p.staleDot = st->status.staleDot;
+  p.staleLabel = st->status.staleLabel;
 
   p.homeCrest = crest(root, kCrestInset);
   p.awayCrest = crest(root, 240 - kCrestInset - kCrestSize);
@@ -610,7 +527,7 @@ lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
   }
 
   // Initial state: Connecting, nothing else visible until the first refresh.
-  for (lv_obj_t* o : {st->freshDot, p.staleDot, p.staleLabel, p.homeCrest, p.awayCrest, p.countdown,
+  for (lv_obj_t* o : {p.homeCrest, p.awayCrest, p.countdown,
                       p.scoreArea, p.pill, p.score, p.homeName, p.awayName, p.eventStrip}) {
     lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
@@ -620,8 +537,8 @@ lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
 void live_refresh(lv_obj_t* screen, int64_t now) {
   LiveState* st = state_of(screen);
   if (st == nullptr) return;
-  sync_placeholder(st->parts.homeCrest);
-  sync_placeholder(st->parts.awayCrest);
+  widgets::crest_sync(st->parts.homeCrest);
+  widgets::crest_sync(st->parts.awayCrest);
   const View v = compute_view(*st->store, now);
   if (st->everApplied && v == st->shown) return;
   apply(st, v);
