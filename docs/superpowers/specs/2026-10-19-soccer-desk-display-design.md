@@ -11,11 +11,12 @@ The gift-giver (the user) is not a football person. The device must be self-expl
 
 ## Hardware
 
-- ESP32-S3 development board with a 2.8" IPS capacitive touch screen, 240x320 portrait, Wi-Fi + Bluetooth, 16 MB flash. Sold as "SC05 Plus".
-- **Listing (from the user's screenshot):** Alibaba listing titled "ESP32-S3 Development Board 2.8 Inch IPS Display Capacitive Touch Screen 240*320", supplier Shenzhen Dongheng Electronic Technology ("Dongheng Tech" watermark on the product photo), about $16.50 per set, 12-day delivery. The demo photo is a cycling computer UI, so the supplier ships demo firmware. The screenshot does not show the Specification section.
-- **From the listing's board photo:** chip is ESP32-S3R8 (8 MB PSRAM), separate capacitive-touch (CTP) chip with its own connector, display module labelled "ZX2D80CE-C0F" on a ribbon connector, external antenna connector, RS485 port (unused here), USB-C, debug header, reset button, universal extension header. This removes the PSRAM uncertainty. Display controller, bus type (SPI, 8080 parallel or RGB), touch chip model and pin map are still unknown.
-- **Open:** the exact board model is unconfirmed. "SC05 Plus" does not match a board the designer knows. The display controller, touch controller, pin map and PSRAM size must be confirmed from the seller listing or the board itself once it arrives. The firmware keeps the display/touch driver behind one thin layer so this is a small change.
-- The boards have not arrived yet. All UI work happens on a PC simulator first.
+**Target board (decided 2026-10-19):** Waveshare ESP32-S3-Touch-LCD-2.8 (touch version, bought on Amazon, arriving 2026-10-20). 2.8" ST7789 SPI display, 240x320 portrait, 5-point I2C capacitive touch, ESP32-S3R8 (16 MB flash, 8 MB octal PSRAM), Wi-Fi + BLE, USB-C, IMU, RTC, microSD, speaker, LiPo charger. All verified facts, pin table, and open questions are in `docs/superpowers/specs/hardware-waveshare-esp32-s3-touch-lcd-2.8.md`.
+
+- **Two hardware revisions exist:** V1 uses a CST328 touch chip (I2C 0x1A), V2 (shipping since 2026-06-05) uses a CST3530 (I2C 0x58). The firmware must detect the touch chip at start-up and support both. CST3530 has no public datasheet, only vendor demo code.
+- Vendor demos use LVGL 8.3 and Arduino-ESP32 3.x; there is no vendor LVGL 9 code, so the display/touch/LVGL port is written by us behind one thin layer.
+- **Spare board:** the earlier Alibaba board (Dongheng Tech, "SC05 Plus" listing, ESP32-S3R8, display module ZX2D80CE-C0F, RS485) stays a spare; its chips and pins were never confirmed.
+- All UI work happens on a PC simulator first; the board arrives after most of the simulator is built.
 
 ## Goals
 

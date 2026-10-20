@@ -1,0 +1,296 @@
+# Hardware notes: Waveshare ESP32-S3-Touch-LCD-2.8
+
+Research date: 2026-10-19. Board: Waveshare SKU 27690 (touch version, 2.8 inch, 240x320). Not the non-touch ESP32-S3-LCD-2.8 (SKU 30223).
+
+Marker legend:
+
+- **VERIFIED (page quote)**: stated on a fetched web page.
+- **VERIFIED (vendor code)**: read directly from Waveshare demo source or schematic that was downloaded and inspected (files in the Sources section). Strong evidence, but it is firmware behaviour, not a datasheet.
+- **VERIFIED (3rd-party code)**: read from the Adafruit CircuitPython board definition or a community library. Independent confirmation.
+- **INFERRED**: reasoned from the above or from general ESP32-S3/ST7789 knowledge; check before relying on it.
+- **NOT FOUND**: searched, no source.
+
+## Overview
+
+- 2.8 inch IPS-style (the page says "2.8-inch", 240 x 320, 262K colours), SPI display, 5-point I2C capacitive touch, ESP32-S3 with Wi-Fi 4 and BLE 5, onboard IMU, RTC, microSD slot, I2S audio with speaker, LiPo charger, USB-C. VERIFIED (page quote): https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8 and https://www.waveshare.com/esp32-s3-touch-lcd-2.8.htm
+- **Two hardware revisions exist. This is the most important gotcha.** VERIFIED (page quote), https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8: "V1 is discontinued, and shipments switched to V2 as of June 5, 2026." V1 = ST7789 + **CST328** touch; V2 = ST7789 + **CST3530** touch. The version is on a label on the back of the board. A board bought now is most likely V2 (INFERRED from the shipment date). The product page (https://www.waveshare.com/esp32-s3-touch-lcd-2.8.htm) lists CST3530; the CircuitPython page (https://circuitpython.org/board/waveshare_esp32_s3_touch_lcd_2_8/) still lists CST328. Firmware must support both (see Touch).
+- Pin assignments are identical between V1 and V2 in the vendor Arduino demos (only the touch driver and a few LVGL driver lines differ). VERIFIED (vendor code, `diff` of the two demo zips: only `Display_ST7789.h` (adds a CST3530 include), `LVGL_Driver.*`, `Touch_CST328.cpp` differ, plus new `Touch_CST3530.*`).
+- Vendor demos use **LVGL 8.3.10**, not 9. A LVGL 9 UI must use a self-written port (see LVGL port notes).
+
+## Memory and module
+
+| Item | Value | Marker and source |
+|---|---|---|
+| SoC / module | ESP32-S3R8 (a bare SoC with 8 MB co-packaged PSRAM, mounted on the board; not a WROOM module) | VERIFIED (page quote) "MCU: ESP32-S3R8": https://www.waveshare.com/esp32-s3-touch-lcd-2.8.htm; the schematic text also contains `ESP32-S3R8` (V1 schematic PDF) |
+| CPU | Xtensa LX7 dual-core up to 240 MHz | VERIFIED (page quote), same pages |
+| SRAM / ROM | 512 KB / 384 KB | VERIFIED (page quote), same pages |
+| Flash | 16 MB, external chip W25Q128JVSI (128 Mbit SPI NOR) | Size: VERIFIED (page quote). Part number: VERIFIED (vendor schematic text, V1 PDF). Quad-SPI mode (QIO): INFERRED from the Arduino-ESP32 board entry (`flash_mode=qio`, https://github.com/espressif/arduino-esp32/blob/master/boards.txt) |
+| PSRAM | 8 MB, **octal (OPI)**, 80 MHz | Size: VERIFIED (page quote). Octal mode: VERIFIED (vendor code): ESP-IDF demo `sdkconfig.defaults` has `CONFIG_SPIRAM_MODE_OCT=y`, `CONFIG_SPIRAM_SPEED_80M=y`; also Arduino-ESP32 boards.txt `psram_type=opi` and PlatformIO board JSON `memory_type: qio_opi` |
+| Wi-Fi / BT | 2.4 GHz 802.11 b/g/n, Bluetooth 5 LE, ceramic antenna; IPEX connector with a switch resistor (needs resoldering to use) | VERIFIED (page quote) |
+
+Wrong-module warning: the module is not "WROOM-1-N16R8"; "ESP32-S3R8" is the chip part number. PlatformIO setting is `qio_opi` (QIO flash, OPI PSRAM), the same as for N16R8 modules. VERIFIED (3rd-party config): https://raw.githubusercontent.com/platformio/platform-espressif32/v8.0.0/boards/waveshare_esp32_s3_touch_lcd_28.json
+
+## Display
+
+| Item | Value | Marker and source |
+|---|---|---|
+| Controller | ST7789 (datasheet link says ST7789T3; the schematic and vendor ESP-IDF driver name it `st7789t`) | VERIFIED (page quote): product page "ST7789"; datasheet `ST7789T3_SPEC_V1.0.pdf` linked at https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/Resources-And-Documents |
+| Bus | 4-wire SPI (MOSI, SCLK, CS, DC, RST), no MISO | VERIFIED (page quote) "Interface: SPI"; pins VERIFIED (vendor code) `Display_ST7789.h` (MISO = -1) |
+| Resolution / native orientation | 240 x 320, portrait natively. `MADCTL = 0x00` gives 240 wide x 320 tall | VERIFIED (vendor code): `LCD_WIDTH 240`, `LCD_HEIGHT 320`, init writes `0x36` = `0x00` |
+| Colour format | RGB565 (`0x3A` = `0x05` in the Arduino demo, `0x55` in the ESP-IDF demo; both select 16 bit/pixel) | VERIFIED (vendor code) |
+| Colour order | RGB in MADCTL (bit 3 = 0). The ESP-IDF demo declares `LCD_RGB_ENDIAN_BGR` in the panel config but its own init then overrides MADCTL to `0x00`. Net result with vendor code: standard RGB565 | VERIFIED (vendor code) for MADCTL; "net result" INFERRED |
+| Byte order | Vendor init sends `0xB0` params `0x00, 0xE8`. On ST7789, bit 3 of the second param of RAMCTRL (0xB0) selects little-endian RGB565 data. With this, the demo sends LVGL's native little-endian `lv_color_t` memory straight over SPI and has `LV_COLOR_16_SWAP 0`. | Command bytes VERIFIED (vendor code); explanation INFERRED (ST7789 datasheet knowledge). Safe alternatives: keep vendor init and `LV_COLOR_16_SWAP`/byte-swap off, or drop `0xB0` and swap bytes in the flush callback |
+| Inversion | Display inversion ON (`0x21` INVON) is sent in the vendor init (Arduino and CircuitPython). Needed for correct colours | VERIFIED (vendor code, `Display_ST7789.cpp`); VERIFIED (3rd-party code) CircuitPython `board.c` also sends `0x21` |
+| Offsets | `Offset_X = 0`, `Offset_Y = 0` (no gap) | VERIFIED (vendor code) |
+| SPI clock | Vendor Arduino: 80 MHz, mode 0, on `FSPI`. Vendor ESP-IDF: 80 MHz on `SPI3_HOST`. CircuitPython: 40 MHz | VERIFIED (vendor code) / VERIFIED (3rd-party code) |
+| Backlight | GPIO5, active high, driven with LEDC PWM (vendor Arduino: 20 kHz, 10 bit; vendor ESP-IDF: 5 kHz, 13 bit). Direct GPIO, not via an I/O expander (there is no I/O expander on this board) | VERIFIED (vendor code) `Display_ST7789.cpp`, ESP-IDF `ST7789.c` (`EXAMPLE_LCD_BK_LIGHT_ON_LEVEL 1`); VERIFIED (3rd-party code) CircuitPython `backlight_on_high = true`, PWM 50 kHz |
+| Reset | GPIO39, hardware reset pulse (50 ms low) before init | VERIFIED (vendor code) |
+| Panel mirror | The ESP-IDF demo calls `esp_lcd_panel_mirror(true, false)` after its init, while the Arduino demo does not touch mirroring. The two demos may therefore show the image mirrored relative to each other | VERIFIED (vendor code) for the calls; consequence INFERRED. Verify on hardware: the Arduino path (MADCTL 0x00) is the one this project should copy |
+
+Vendor Arduino init sequence (V2, `Display_ST7789.cpp`, abbreviated; full list at the URL in Sources): reset, `0x11` sleep-out (120 ms), `0x36` 0x00, `0x3A` 0x05, `0xB0` 00 E8, `0xB2` 0C 0C 00 33 33, `0xB7` 75, `0xBB` 1A, `0xC0` 2C, `0xC2` 01 FF, `0xC3` 13, `0xC4` 20, `0xC6` 0F, `0xD0` A4 A1, `0xD6` A1, gamma `0xE0`/`0xE1` (14 bytes each), `0x21` INVON, `0x29` DISPON, `0x2C`. VERIFIED (vendor code).
+
+## Touch
+
+| Item | V1 | V2 |
+|---|---|---|
+| Controller | CST328 | CST3530 |
+| I2C address | 0x1A | 0x58 |
+| Marker | VERIFIED (vendor code) `Touch_CST328.h`; CST328 name VERIFIED (page quote) on CircuitPython page and wiki | VERIFIED (vendor code) `Touch_CST3530.h`; CST3530 name VERIFIED (page quote) on wiki and product page |
+
+- Common to both: dedicated I2C bus on **SDA = GPIO1, SCL = GPIO3, INT = GPIO4, RST = GPIO2**, 400 kHz. Vendor code uses `Wire1.begin(1, 3, 400000)`. VERIFIED (vendor code) `Touch_CST328.h/.cpp`; VERIFIED (3rd-party code) CircuitPython `pins.c` (TP_SDA=GPIO1, TP_SCL=GPIO3, TP_RST=GPIO2, TP_INT=GPIO4) and WS_ESP32_Touch28 README.
+- No I/O expander involved. Touch reset is a direct GPIO (GPIO2). VERIFIED (vendor code).
+- Reset sequence is required before any I2C access:
+  - CST328: RST high 50 ms, low 5 ms, high 50 ms. VERIFIED (vendor code) `CST328_Touch_Reset()`.
+  - CST3530: RST low 100 ms, high **500 ms** wait. VERIFIED (vendor code) `CST3530_Touch_Reset()`.
+- Vendor V2 firmware auto-detects: it resets, tries the CST328 identity read (expects `0xCACA` from register 0xD1F4 block), and falls back to probing 0x58 for CST3530. VERIFIED (vendor code) `Touch_CST328.cpp` `Touch_Init()`. Copy this approach so one firmware image runs on V1 and V2.
+- Register scheme: 16-bit register addresses (CST328, e.g. 0xD000 coordinates, 0xD005 touch count, ack by writing 0 to 0xD005) and 32-bit addresses (CST3530, e.g. 0xD0070000 data). VERIFIED (vendor code); the vendor files are the only reference found. No public datasheet found (NOT FOUND).
+- Coordinates: vendor LVGL read callback passes touch X/Y straight to LVGL with no swap or mirror, for a 240 x 320 portrait display. VERIFIED (vendor code) `Lvgl_Touchpad_Read`. Whether the V2 CST3530 needs any transform is not verified separately (see Open questions).
+- Interrupt: INT on GPIO4, vendor attaches a RISING ISR that sets a flag, then reads over I2C in the LVGL read callback. VERIFIED (vendor code).
+
+## Other peripherals
+
+- **IMU QMI8658 (C)**: on the main I2C bus (SDA 11, SCL 10); vendor code uses address 0x6B (`QMI8658_L_SLAVE_ADDRESS`), 0x6A is defined as the alternate. INT1 = GPIO13, INT2 = GPIO12 (from CircuitPython). VERIFIED (vendor code) for address and bus; INT pins VERIFIED (3rd-party code).
+- **RTC PCF85063**: main I2C bus, address 0x51; RTC battery header present; loses time without battery. VERIFIED (vendor code) `RTC_PCF85063.h`; battery header VERIFIED (page quote).
+- **Main I2C bus is shared**: IMU and RTC on SDA 11 / SCL 10; the same two pins are brought out on the I2C header and the 12-pin header. Wiki: "Internally tied to other on-board chips, so only external I2C devices can be added. Pins cannot be remapped." VERIFIED (page quote) https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8
+- **Touch is on a separate I2C bus** (GPIO1/3), so there is no address clash with the main bus. VERIFIED (vendor code).
+- **No I/O expander** on the board. No TCA9554/PCA95xx in the schematic text and all control lines (LCD reset, backlight, touch reset, power control) are direct GPIOs in vendor code. VERIFIED (vendor code) for direct GPIOs; "no expander" INFERRED (absence in the schematic text extraction and in all vendor drivers).
+- **Battery**: MX1.25 2-pin header, 3.7 V LiPo, charger chip ETA6098 (schematic text), LDO ME6217C33M5G (800 mA max). VERIFIED (page quote) for header and LDO; ETA6098 VERIFIED (vendor schematic text).
+  - Voltage measurement: ADC on GPIO8 (`BAT_ADC`). Vendor formula: `analogReadMilliVolts(8) * 3.0 / 1000 / 0.990476` volts (the factor 3.0 implies a 1:3 divider on the pin; INFERRED, check the schematic). VERIFIED (vendor code) `BAT_Driver.cpp`, `Measurement_offset 0.990476`.
+  - Power control: PWR key input on GPIO6 (`Key_BAT`, active low), power hold output GPIO7 (`BAT_Control`/`SYS_EN`). Firmware must drive GPIO7 high to stay powered on battery; driving it low shuts the board off. Long-press logic in vendor code: 10 s sleep, 15 s restart, 20 s shutdown. VERIFIED (vendor code) `PWR_Key.cpp`; FAQ: "Pressing it starts the system from battery, and the board should hold SYS_EN high to stay powered." VERIFIED (page quote) https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/FAQ
+  - On USB power the board runs without GPIO7 being held. INFERRED (the FAQ speaks only of the battery case).
+- **TF (microSD) slot**: up to 16 GB per product page text ("TF card slot, up to 16GB", VERIFIED page quote). Vendor demo uses the Arduino `SD_MMC` driver in **1-bit mode**: CLK = GPIO14, CMD = GPIO17, D0 = GPIO16, D3 = GPIO21 (card CS line, d1/d2 unused). The schematic names the same nets SD_SCLK/SD_MOSI/SD_MISO/SD_CS, and CircuitPython treats the slot as SPI (SCK 14, MOSI 17, MISO 16, CS 21). VERIFIED (vendor code) + VERIFIED (3rd-party code); either SPI or SD_MMC 1-bit works on these pins. Wiki: format FAT32.
+- **Audio**: PCM5101A I2S DAC + amplifier, 8 ohm 2 W 2030 speaker (included), volume knob. I2S: BCLK = GPIO48, LRC/WS = GPIO38, DOUT = GPIO47 (no MCLK). VERIFIED (page quote) for parts; pins VERIFIED (vendor code) `Audio_PCM5101.h` and (3rd-party code) CircuitPython. No buzzer.
+- **Buttons**: BOOT = GPIO0 (also usable as a user button in firmware); RESET (EN); PWR key = GPIO6 (see above). VERIFIED (page quote) for existence; GPIO0 VERIFIED (3rd-party code) CircuitPython `BOOT`/`BUTTON0`. There is no separate user key besides BOOT and PWR (INFERRED from the product page list: "RESET and BOOT buttons, battery power control button, volume knob").
+- **LEDs**: power and charge indicators (hardware, not GPIO controlled as far as the sources show). VERIFIED (page quote) for existence.
+- **Headers**: 12-pin multifunction header (VBUS, D-/D+ = GPIO19/20, 3V3, SCL/SDA = GPIO10/11, TXD/RXD = GPIO43/44, IO18, IO15, GND), I2C header, UART header, speaker header, RTC battery header. VERIFIED (page quote) https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8
+
+## Pin table
+
+| GPIO | Function | Source |
+|---|---|---|
+| 0 | BOOT button (strapping pin; low at reset enters download mode) | CircuitPython pins.c, schematic text (IO0) |
+| 1 | Touch I2C SDA (Wire1) | Vendor `Touch_CST328.h`; CircuitPython |
+| 2 | Touch RST | Vendor `Touch_CST328.h`; CircuitPython |
+| 3 | Touch I2C SCL (Wire1) | Vendor `Touch_CST328.h`; CircuitPython |
+| 4 | Touch INT | Vendor `Touch_CST328.h`; CircuitPython |
+| 5 | LCD backlight (PWM, active high) | Vendor `Display_ST7789.h`; CircuitPython |
+| 6 | PWR key input (`Key_BAT`, active low) | Vendor `PWR_Key.h`; CircuitPython |
+| 7 | Power hold output (`BAT_Control`/SYS_EN, drive high to stay on battery) | Vendor `PWR_Key.h`; CircuitPython |
+| 8 | Battery voltage ADC | Vendor `BAT_Driver.h`; CircuitPython |
+| 10 | Main I2C SCL (IMU, RTC, headers) | Vendor `I2C_Driver.h`; wiki header table; Arduino-ESP32 variant `SCL = 10` |
+| 11 | Main I2C SDA (IMU, RTC, headers) | Vendor `I2C_Driver.h`; wiki header table; Arduino-ESP32 variant `SDA = 11` |
+| 12 | IMU INT2 | CircuitPython pins.c |
+| 13 | IMU INT1 | CircuitPython pins.c |
+| 14 | SD CLK | Vendor `SD_Card.h`; CircuitPython |
+| 15 | Free GPIO on 12-pin header | Wiki header table |
+| 16 | SD D0 / MISO | Vendor `SD_Card.h`; CircuitPython |
+| 17 | SD CMD / MOSI | Vendor `SD_Card.h`; CircuitPython |
+| 18 | Free GPIO on 12-pin header | Wiki header table |
+| 19 | USB D- (header can also use as GPIO) | Wiki header table |
+| 20 | USB D+ (header can also use as GPIO) | Wiki header table |
+| 21 | SD CS / D3 | Vendor `SD_Card.h`; CircuitPython |
+| 38 | I2S LRCK/WS | Vendor `Audio_PCM5101.h`; CircuitPython |
+| 39 | LCD RST | Vendor `Display_ST7789.h`; CircuitPython |
+| 40 | LCD SCLK | Vendor `Display_ST7789.h`; CircuitPython |
+| 41 | LCD DC | Vendor `Display_ST7789.h`; CircuitPython |
+| 42 | LCD CS | Vendor `Display_ST7789.h`; CircuitPython |
+| 43 | UART TXD (header) | Wiki header table |
+| 44 | UART RXD (header) | Wiki header table |
+| 45 | LCD MOSI | Vendor `Display_ST7789.h`; CircuitPython |
+| 46 | CircuitPython lists as LCD MISO; vendor code has MISO = -1 (not used) | CircuitPython pins.c; vendor header |
+| 47 | I2S DOUT | Vendor `Audio_PCM5101.h`; CircuitPython |
+| 48 | I2S BCLK | Vendor `Audio_PCM5101.h`; CircuitPython |
+| 35, 36, 37 | Not available as GPIO: used by the octal PSRAM on ESP32-S3R8 (INFERRED from Espressif ESP32-S3 datasheet knowledge). Note the Arduino-ESP32 variant lists `MOSI = 35`, `MISO = 37`, `SCK = 36`, `SS = 34` as generic SPI defaults. Do not use them on this board. | INFERRED |
+| 9, 33, 34 | Not referenced by any source found. 33/34 are not a problem with octal PSRAM only; confirm in the schematic before use. | NOT FOUND |
+
+## USB and flashing
+
+- **Native USB-C (ESP32-S3 USB Serial/JTAG), no USB-UART bridge.** Page: "USB Type-C (programming and log output, integrated full-speed USB serial)" and D+/D- of the USB connector are GPIO20/GPIO19 on the header. VERIFIED (page quote) https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8. The schematic text has no CH34x/CP210x part (NOT FOUND in an extraction of the V1 schematic text; INFERRED absence). Arduino-ESP32 board entry uses `usb_mode=1` (hardware CDC and JTAG), `cdc_on_boot=0`. VERIFIED (3rd-party config) https://github.com/espressif/arduino-esp32/blob/master/boards.txt
+- USB IDs: Arduino-ESP32 `boards.txt` lists VID 0x303a PID 0x8242 (the Espressif USB Serial/JTAG default; that is what the device will enumerate as), while the variant `pins_arduino.h` defines `USB_PID 0x825E`. The two disagree inside the same upstream core. Treat 303a:1001 (the ROM default) / 303a:8242 as what `lsusb` will show (INFERRED; not verified on hardware).
+- **Entering download mode**:
+  - Vendor wiki (Firmware flashing page): "hold down BOOT and power cycle the device"; no BOOT+RESET step list is given. VERIFIED (page quote) https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/Firmware-Flashing
+  - Vendor FAQ: "fully power off the board, hold the BOOT button, power it on to enter forced download mode, and flash. Power-cycle afterward, since the board doesn't leave download mode on its own." VERIFIED (page quote) https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/FAQ
+  - The standard ESP32-S3 sequence (hold BOOT, tap RESET, release BOOT) also applies because BOOT is GPIO0 and RESET is EN. INFERRED (Espressif standard behaviour).
+  - If the firmware crashes or reconfigures the USB pins (GPIO19/20 used as GPIO), the USB port can vanish; use the BOOT method above.
+- Vendor flashing: Espressif Flash Download Tool, chip ESP32-S3, address 0x0 for the merged demo image (`Firmware/ESP32-S3-Touch-LCD-2.8.bin`), the wiki says to set BAUD to "1152000" (not a standard rate; probably a typo for 115200 or 921600; with PlatformIO use the default 460800 from the board JSON). VERIFIED (page quote) for the instructions.
+- **Linux serial port**: expect `/dev/ttyACM0` (USB CDC from the native USB peripheral; INFERRED from how ESP32-S3 USB Serial/JTAG enumerates; not stated by Waveshare, whose FAQ only says to use `dmesg` or list `/dev/ttyS*`, `/dev/ttyUSB*`). On Arch/Manjaro the device group for serial ports is `uucp` (Debian/Ubuntu use `dialout`): `sudo usermod -aG uucp $USER`, then log out and back in. INFERRED (general Linux knowledge; not from Waveshare). PlatformIO's udev rules (`99-platformio-udev.rules`) also cover Espressif 303a vendor IDs. INFERRED.
+- Brown-out/battery note: flash from USB with the battery disconnected for the first attempt (INFERRED precaution, no source).
+
+## Toolchain and example config
+
+Vendor (VERIFIED, page quote and vendor files):
+
+- Arduino: "ESP32 by Espressif Systems, version **3.0.0 or later**" (https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/Arduino). Libraries: **LVGL v8.3.10** (bundled in demo zip, offline install) and **ESP32-audioI2S-master v2.0.0**. The page warns LVGL and drivers are strongly version dependent and LVGL v8 drivers may not work with v9. The Arduino page gives no board-menu settings (flash size, PSRAM, partition) (NOT FOUND).
+- ESP-IDF: page screenshots use **V5.5.2** (https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/ESP-IDF). The demo's `idf_component.yml` requires `idf >=4.4`, `lvgl/lvgl ~8.3.0`, `chmorgan/esp-audio-player ==1.0.7`, `chmorgan/esp-libhelix-mp3 ==1.0.3`.
+- ESP-IDF demo `sdkconfig.defaults`: `CONFIG_SPIRAM=y`, `CONFIG_SPIRAM_MODE_OCT=y`, `CONFIG_SPIRAM_SPEED_80M=y`, `CONFIG_ESP32S3_DATA_CACHE_LINE_64B=y`, `CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y`, `CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y`, custom partition table (nvs 24K, factory 3M, a 528K FAT partition).
+- No vendor PlatformIO example or Arduino Board Manager entry from Waveshare (NOT FOUND; the Waveshare `ESP32-display-support` repo does not list this board and says PlatformIO is only planned: https://github.com/waveshareteam/ESP32-display-support).
+
+Upstream board definitions found (VERIFIED (3rd-party config)):
+
+- Arduino-ESP32 master `boards.txt`: board `waveshare_esp32_s3_touch_lcd_28` ("Waveshare ESP32-S3-Touch-LCD-2.8"), `flash_size=16MB`, `flash_mode=qio`, `flash_freq=120m`, `psram_type=opi`, `memory_type=qio_opi`, `partitions=default`, `usb_mode=1`, `cdc_on_boot=0`. https://github.com/espressif/arduino-esp32/blob/master/boards.txt and variant https://github.com/espressif/arduino-esp32/tree/master/variants/waveshare_esp32_s3_touch_lcd_28
+- PlatformIO `platform-espressif32` board `waveshare_esp32_s3_touch_lcd_28`, present on `develop` (commit dated 2026-10-17, "Add Waveshare boards") and in **release v8.0.0 (published 2026-10-19)**. It is NOT in v7.1.3 or earlier (404). Its content: `memory_type: qio_opi`, partitions `app3M_fat9M_16MB.csv`, `f_flash 80000000L`, `-DBOARD_HAS_PSRAM`, `-DARDUINO_USB_MODE=1`, `flash_size 16MB`, upload speed 460800, frameworks arduino and espidf. https://raw.githubusercontent.com/platformio/platform-espressif32/v8.0.0/boards/waveshare_esp32_s3_touch_lcd_28.json . Platform v8.0.0 pins `framework-arduinoespressif32 ~4.30312.0` (= Arduino-ESP32 3.3.12) per https://raw.githubusercontent.com/platformio/platform-espressif32/v8.0.0/platform.json . Not built or tested by this research.
+
+Candidate `platformio.ini` (INFERRED: assembled from the verified board JSON and vendor facts; not compiled on hardware):
+
+```ini
+; A) Using the registry board (needs platform-espressif32 >= 8.0.0)
+[env:waveshare_s3_touch_28]
+platform = espressif32@^8.0.0
+board = waveshare_esp32_s3_touch_lcd_28
+framework = arduino
+monitor_speed = 115200
+build_flags =
+    -DARDUINO_USB_CDC_ON_BOOT=1     ; Serial over the native USB port (board JSON only sets USB_MODE=1)
+    -DLV_CONF_INCLUDE_SIMPLE
+    -DBOARD_HAS_PSRAM
+lib_deps =
+    lvgl/lvgl@^9
+```
+
+```ini
+; B) Fallback if the registry board is missing: generic S3 devkit with overrides
+[env:waveshare_s3_touch_28_generic]
+platform = espressif32
+board = esp32-s3-devkitc-1
+framework = arduino
+board_build.arduino.memory_type = qio_opi   ; QIO flash + OPI (octal) PSRAM
+board_build.flash_mode = qio
+board_upload.flash_size = 16MB
+board_build.partitions = default_16MB.csv   ; or app3M_fat9M_16MB.csv
+build_flags =
+    -DBOARD_HAS_PSRAM
+    -DARDUINO_USB_MODE=1
+    -DARDUINO_USB_CDC_ON_BOOT=1
+monitor_speed = 115200
+```
+
+Notes on the ini: the stock `esp32-s3-devkitc-1` entry is 8 MB flash with no PSRAM (https://docs.platformio.org/en/latest/boards/espressif32/esp32-s3-devkitc-1.html), so the overrides in (B) are mandatory. A `lv_conf.h` for LVGL 9 is the author's responsibility; no vendor LVGL 9 config exists.
+
+## LVGL port notes
+
+Where the vendor code lives (all inside the demo zips; no public Git repo hosting them was found, only these zip files):
+
+- V1 zip: https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8-Demo.zip
+- V2 zip: https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8-V2-Demo.zip
+- Arduino sketch `Arduino/examples/LVGL_Arduino/`: `Display_ST7789.cpp/.h` (SPI init, command init, `LCD_addWindow()` blit, `Backlight_Init()`/`Set_Backlight()` with `ledcAttach`), `Touch_CST328.cpp/.h` and `Touch_CST3530.cpp/.h` (touch init, reset, read), `LVGL_Driver.cpp/.h` (LVGL port), `I2C_Driver.*` (main bus), `LVGL_Arduino.ino` (`setup()` order: Flash_test, PWR_Init, BAT_Init, I2C_Init, PCF85063_Init, QMI8658_Init, Backlight_Init, SD_Init, Audio_Init, LCD_Init (which also calls Touch_Init), Lvgl_Init, UI).
+- ESP-IDF project `ESP-IDF/ESP32-S3-Touch-LCD-2.8-Test/main/`: `LCD_Driver/ST7789.c` (uses `esp_lcd` SPI panel IO + custom `Vernon_ST7789T` panel driver), `LVGL_Driver/LVGL_Driver.c`, `Touch_Driver/`, `PWR_Key/`, `BAT_Driver/`.
+
+How the vendor LVGL 8.3 port works (VERIFIED (vendor code), `LVGL_Driver.cpp` and ESP-IDF `LVGL_Driver.c`):
+
+- Draw buffers (Arduino): two static `lv_color_t` arrays in internal RAM, each `240 * 320 / 20` = 3840 pixels (7.5 KB). Arduino demo has a commented-out PSRAM variant. `full_refresh = 1`.
+- Draw buffers (ESP-IDF): two buffers, each `240 * 320 / 10` = 7680 pixels, allocated with `heap_caps_malloc(..., MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)` (PSRAM). SPI bus max transfer is the full frame (`240*320*2`) with `SPI_DMA_CH_AUTO`.
+- Flush callback (Arduino): synchronous. Sets the window with `0x2A`/`0x2B`/`0x2C`, then one `SPI.transferBytes()` of the whole area, then calls `lv_disp_flush_ready()` immediately. No async DMA completion. ESP-IDF version uses an `esp_lcd` transfer-done callback (`example_notify_lvgl_flush_ready`) to call `lv_disp_flush_ready`.
+- Tick: `esp_timer` periodic every 2 ms calling `lv_tick_inc(2)`. Arduino's `lv_conf.h` has `LV_TICK_CUSTOM 0`.
+- Loop: Arduino `loop()` calls `lv_timer_handler()` then `vTaskDelay(5 ms)`; a second FreeRTOS task pinned to core 0 (4 KB stack) polls PWR key, battery, RTC, IMU every 100 ms and also runs Wi-Fi scan. No LVGL mutex is used in the demo; any other task touching LVGL objects must lock.
+- `lv_conf.h` in the vendor Arduino library: `LV_COLOR_DEPTH 16`, `LV_COLOR_16_SWAP 0`, `LV_MEM_CUSTOM 0` with `LV_MEM_SIZE 48 KB` (internal heap), refresh period 30 ms.
+- Touch read: pointer indev read callback polls the driver, reports only the first point.
+
+Suggested port for LVGL 9 (INFERRED, not verified on hardware):
+
+- Create the display with `lv_display_create(240, 320)`, `lv_display_set_color_format(disp, LV_COLOR_FORMAT_RGB565)`, `lv_display_set_buffers(...)` with two partial buffers (for example 240 x 40 px, 19 KB each) allocated with `heap_caps_malloc(MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL)` so the SPI DMA reads from internal RAM; keep PSRAM for `LV_MEM` (use `LV_USE_STDLIB_MALLOC LV_STDLIB_CLIB` or `LV_MEM_SIZE` in PSRAM) and image/decoder buffers. Reason: PSRAM draw buffers with 80 MHz SPI DMA work in the vendor ESP-IDF demo but compete with Wi-Fi and PSRAM cache traffic.
+- Flush callback: `lv_display_flush_ready(disp)` after the transfer (ideally from an SPI DMA done callback). LVGL 9 RGB565 buffers are little-endian in memory, which matches the vendor panel setup (`0xB0` little-endian) so no `lv_draw_sw_rgb565_swap` is needed; if colours look byte-swapped, call `lv_draw_sw_rgb565_swap(px, len)` in flush instead of changing the init.
+- Tick: `lv_tick_set_cb(millis)` (Arduino) or the 2 ms `esp_timer`.
+- Input: `lv_indev_create()` with `LV_INDEV_TYPE_POINTER`, read callback mapping the touch driver output straight to coordinates (vendor does no transform).
+- Existing community LVGL 9 compatible library: WS_ESP32_Touch28 v1.0.2 (MIT, https://github.com/jeffvan302/WS_ESP32_Touch28, listed at https://www.arduinolibraries.info/libraries/ws_esp32_touch28) claims LVGL v9 integration, ST7789 with PSRAM framebuffer and dirty-rect, **CST328 touch only** (CST3530 not mentioned), JPEGDEC/PNGdec image loading. Not evaluated beyond its README; for a V2 board its touch driver would likely not work (INFERRED).
+- PNG/JPEG over HTTPS: use JPEGDEC/PNGdec (Larry Bank) or LVGL's built-in decoders (`LV_USE_LODEPNG`/`LV_USE_TJPGD`), decode into PSRAM. INFERRED (design suggestion, not a hardware fact).
+
+## Known issues
+
+Sourced items:
+
+- Two touch controllers across revisions (see Overview). The vendor Arduino page says "download the example matching your product". A single binary should detect the controller at runtime (vendor V2 code already does). VERIFIED (page quote / vendor code).
+- LVGL v8 vs v9: vendor warns that LVGL v8 drivers may not work with v9. VERIFIED (page quote).
+- LVGL forum report (Jan 2025): with this board, touch coordinates print to serial but LVGL does not react; the poster suspected a pin declaration problem. https://forum.lvgl.io/t/lvgl-with-waveshare-esp32-s3-touch-lcd-2-8/19841 . Another user got a dark screen. VERIFIED (page quote), cause not stated.
+- Flashing when crashed: need forced download mode (hold BOOT while power cycling) and power-cycle after flashing since the board does not leave download mode by itself. VERIFIED (page quote), FAQ.
+- PWR button / SYS_EN: on battery power the firmware must hold GPIO7 high or the board powers off after the button is released. VERIFIED (page quote and vendor code).
+- RTC loses the time without a battery on the RTC header. VERIFIED (page quote).
+- SD card: format FAT32; if not recognised wait and reset. VERIFIED (page quote).
+- Vendor note: "If the compilation succeeds the first time and ... fails during subsequent tests, decompress the folder again and compile the new file." VERIFIED (vendor ReadMe.txt in the demo zips).
+- Arduino-ESP32 variant lists SPI default pins 34/35/36/37, which collide with octal PSRAM lines; irrelevant here because the vendor LCD uses its own pins (INFERRED).
+- USB PID mismatch inside Arduino-ESP32 (0x8242 in `boards.txt`, 0x825E in the variant) (VERIFIED, see USB section). Harmless in most cases.
+
+Not found (searched, nothing located):
+
+- Touch needing a reset sequence before the I2C scan: not documented, but the vendor code shows a mandatory reset with a 500 ms wait for CST3530; treat as required (INFERRED from the code, no wiki statement).
+- Wi-Fi vs SPI/DMA contention: NOT FOUND in any source. The vendor demo runs a Wi-Fi scan in a core-0 task while LVGL runs on the Arduino loop core (core 1), with 80 MHz SPI; no problems are reported.
+- Battery connector polarity: NOT FOUND (wiki and product page say only "MX1.25 2-pin, 3.7 V"). Check the silkscreen and schematic before connecting a cell; many third-party LiPo packs use the opposite polarity.
+- Boot-loop behaviour: NOT FOUND.
+
+## Physical
+
+From the vendor structure drawing (`ESP32-S3-Touch-LCD-2.8_structure.pdf`; VERIFIED (vendor drawing), read from the rendered image; dimensions in mm):
+
+- PCB: 49.90 x 69.00. Overall board with LCD stack thickness 10.00 (parts 6.00 under the board, TP+LCD 3.60, lens 0.70).
+- Four mounting holes at the PCB corners: spacing 41.00 (horizontal) x 60.00 (vertical); the holes sit 4.50 from the PCB edges (4.50 horizontal on the right, 4.50 from the top; the drawing also shows 1.9 and 9.0 offsets near the bottom connectors). Hole diameter: not legible in the drawing (NOT FOUND; typical M2 is INFERRED, verify against the STEP/3D file).
+- Touch glass outline: 50.54 x 73.06 (+/- 0.05), corner radius R2.00; touch viewing area 43.80 x 58.20; LCD active area 43.20 x 57.60; the glass top margin to active area 3.37 (side) and 10.43 (bottom edge of glass to LCD AA).
+- USB-C at the bottom edge, with the speaker and battery connectors either side (offsets 9.00, 11.60 and 11.40 from the drawing); microSD slot on the left edge; three side buttons (BOOT/RESET/PWR) on the left edge at 7.84, 7.82, 7.82 mm pitch; volume knob top-right of the PCB (position from drawing).
+- Connectors: battery MX1.25 2-pin, RTC battery header, speaker header, 12-pin multifunction header, I2C header, UART header, IPEX antenna connector. VERIFIED (page quote). Pitch of the I2C/UART headers is not stated (NOT FOUND; typical 1.0 or 1.25 mm is INFERRED, do not rely on it).
+- 3D-printable case: Waveshare provides a **3D model (STEP-type ZIP)** of the board, not an enclosure: https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8_3D.zip (VERIFIED, listed at the Resources page; contents not opened). No printable case file from the vendor was found (NOT FOUND). The FAQ says bulk casing customisation is available through sales.
+
+## Open questions
+
+1. Hardware revision of the board in hand (V1 CST328 or V2 CST3530): read the label on the back. Firmware should probe both (0x1A then 0x58).
+2. CST3530 specifics: no datasheet found. Does it need the same coordinate mapping as the CST328 in portrait? Vendor code applies none, but that was not exercised on hardware.
+3. Is the Arduino-core 3.3.x USB CDC behaviour right with `ARDUINO_USB_CDC_ON_BOOT=1` on this board (the board JSON sets only `USB_MODE=1`)? Verify the first flash and serial monitor, and what `/dev/ttyACM*` appears on Manjaro.
+4. Is PlatformIO platform-espressif32 8.0.0 (released the same day as this research) stable enough? Fallback (B) above avoids depending on it.
+5. Actual USB VID:PID the board enumerates (0x8242 vs 0x825E vs ROM 0x1001).
+6. Exact mounting hole diameter and the header pitches (I2C, UART, battery) for the enclosure; inspect the 3D ZIP.
+7. Battery connector polarity relative to common LiPo packs; check the schematic (net names around the MX1.25 and ETA6098).
+8. Whether GPIO9, 33 and 34 are free and where the three left-edge buttons are wired besides BOOT (GPIO0) and PWR (GPIO6): not in any source read.
+9. Safe max SPI clock: vendor Arduino and ESP-IDF run 80 MHz; CircuitPython 40 MHz. 80 MHz was not tested together with Wi-Fi and PSRAM load.
+10. Whether the vendor `0xB0` 0xE8 byte-order setting should be kept for LVGL 9 (see Display); confirm colours on first boot.
+11. Flash and PSRAM speeds: Arduino-ESP32 uses `flash_freq=120m` and PlatformIO JSON uses 80 MHz; 80 MHz is the safe choice.
+
+## Sources
+
+Vendor pages and files (fetched or downloaded and inspected 2026-10-19):
+
+- Product page: https://www.waveshare.com/esp32-s3-touch-lcd-2.8.htm
+- Wiki home: https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8
+- Resources: https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/Resources-And-Documents
+- Arduino page: https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/Arduino
+- ESP-IDF page: https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/ESP-IDF
+- Firmware flashing: https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/Firmware-Flashing
+- FAQ: https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/FAQ
+- Technical support (no technical content): https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/Technical-Support
+- Schematic PDF (V1): https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8.pdf
+- Structure (dimension) drawing: https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8_structure.pdf
+- 3D model ZIP (not opened): https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8_3D.zip
+- Demo V1 (CST328): https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8-Demo.zip
+- Demo V2 (CST3530): https://files.waveshare.com/wiki/ESP32-S3-Touch-LCD-2.8/ESP32-S3-Touch-LCD-2.8-V2-Demo.zip
+- ST7789T3 datasheet (not read): https://files.waveshare.com/wiki/common/ST7789T3_SPEC_V1.0.pdf
+- QMI8658 datasheet (not read): https://files.waveshare.com/wiki/common/QMI8658C.pdf
+- Waveshare display repo (no entry for this board): https://github.com/waveshareteam/ESP32-display-support
+
+Third-party:
+
+- CircuitPython board page: https://circuitpython.org/board/waveshare_esp32_s3_touch_lcd_2_8/
+- CircuitPython `pins.c`: https://raw.githubusercontent.com/adafruit/circuitpython/main/ports/espressif/boards/waveshare_esp32_s3_touch_lcd_2_8/pins.c
+- CircuitPython `board.c` (display init, 40 MHz SPI, backlight on high): https://raw.githubusercontent.com/adafruit/circuitpython/main/ports/espressif/boards/waveshare_esp32_s3_touch_lcd_2_8/board.c
+- Arduino-ESP32 `boards.txt`: https://raw.githubusercontent.com/espressif/arduino-esp32/master/boards.txt
+- Arduino-ESP32 variant `pins_arduino.h`: https://raw.githubusercontent.com/espressif/arduino-esp32/master/variants/waveshare_esp32_s3_touch_lcd_28/pins_arduino.h
+- PlatformIO board JSON (v8.0.0): https://raw.githubusercontent.com/platformio/platform-espressif32/v8.0.0/boards/waveshare_esp32_s3_touch_lcd_28.json
+- PlatformIO platform manifest (v8.0.0): https://raw.githubusercontent.com/platformio/platform-espressif32/v8.0.0/platform.json
+- PlatformIO esp32-s3-devkitc-1 board doc: https://docs.platformio.org/en/latest/boards/espressif32/esp32-s3-devkitc-1.html
+- WS_ESP32_Touch28 community library: https://github.com/jeffvan302/WS_ESP32_Touch28 and https://www.arduinolibraries.info/libraries/ws_esp32_touch28
+- LVGL forum thread: https://forum.lvgl.io/t/lvgl-with-waveshare-esp32-s3-touch-lcd-2-8/19841
