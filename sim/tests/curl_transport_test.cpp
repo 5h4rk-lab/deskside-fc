@@ -287,3 +287,47 @@ TEST_CASE("curl transport: destroying it with requests outstanding is quick and 
   CHECK(calls == 0);
   CHECK(Clock::now() - start < std::chrono::milliseconds(500));
 }
+
+TEST_CASE("curl transport: several workers answer every request exactly once, on the polling thread") {
+  TinyServer server;
+  for (unsigned workers : {2u, 0u, 100u}) {  // 0 and 100 are clamped
+    CurlTransport t(workers);
+    std::vector<int> statuses;
+    bool onMain = true;
+    const std::thread::id mainThread = std::this_thread::get_id();
+    for (int i = 0; i < 6; ++i) {
+      t.get(server.url(i % 2 ? "/ok" : "/401"), "t", 2000, [&](HttpResult r) {
+        onMain = onMain && std::this_thread::get_id() == mainThread;
+        statuses.push_back(r.status);
+      });
+    }
+    const auto end = Clock::now() + std::chrono::seconds(5);
+    while (statuses.size() < 6 && Clock::now() < end) {
+      t.poll();
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    t.poll();
+    CHECK(statuses.size() == 6);
+    CHECK(onMain);
+    int ok = 0, denied = 0;
+    for (int s : statuses) {
+      if (s == 200) ++ok;
+      if (s == 401) ++denied;
+    }
+    CHECK(ok == 3);
+    CHECK(denied == 3);
+  }
+}
+
+TEST_CASE("curl transport: destroying a multi-worker transport with requests outstanding calls nothing") {
+  TinyServer server;
+  int calls = 0;
+  const auto start = Clock::now();
+  {
+    CurlTransport t(2);
+    for (int i = 0; i < 4; ++i) t.get(server.url("/slow"), "t", 5000, [&](HttpResult) { ++calls; });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+  }
+  CHECK(calls == 0);
+  CHECK(Clock::now() - start < std::chrono::milliseconds(500));
+}

@@ -37,9 +37,11 @@ constexpr int kStopCheckMs = 20;
 
 }  // namespace
 
-CurlTransport::CurlTransport() {
+CurlTransport::CurlTransport(unsigned workers) {
   global_init();
-  worker_ = std::thread([this] { run(); });
+  if (workers < 1) workers = 1;
+  if (workers > kMaxWorkers) workers = kMaxWorkers;
+  for (unsigned i = 0; i < workers; ++i) workers_.emplace_back([this] { run(); });
 }
 
 CurlTransport::~CurlTransport() {
@@ -49,7 +51,7 @@ CurlTransport::~CurlTransport() {
     jobs_.clear();
   }
   cv_.notify_all();
-  worker_.join();
+  for (std::thread& t : workers_) t.join();
   completed_.clear();
 }
 

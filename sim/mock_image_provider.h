@@ -1,11 +1,13 @@
 // ImageProvider for the simulator: serves images from a local asset directory
-// (sim/assets, filled by `node sim/assets/fetch.mjs`). Callbacks run
-// synchronously. Decoded images are cached in a byte-budget LRU.
+// (sim/assets, filled by `node sim/assets/fetch.mjs`) and decodes them with the
+// ImageDecoder it is given. Callbacks run synchronously. Decoded images are
+// cached in a byte-budget LRU.
 #pragma once
 
 #include <cstddef>
 #include <string>
 
+#include "image_decoder.h"
 #include "image_provider.h"
 #include "lru_bytes.h"
 
@@ -22,15 +24,16 @@ class MockImageProvider : public ImageProvider {
  public:
   static constexpr size_t kDefaultBudget = 2 * 1024 * 1024;
 
-  explicit MockImageProvider(std::string assetDir, size_t cacheBudget = kDefaultBudget);
+  // `decoder` must outlive the provider.
+  MockImageProvider(ImageDecoder& decoder, std::string assetDir, size_t cacheBudget = kDefaultBudget);
 
-  // Needs LVGL initialised (uses its PNG decoder). Delivers nullptr when the
-  // file is missing or cannot be decoded.
+  // Delivers nullptr when the file is missing or cannot be decoded.
   void request(const std::string& path, std::function<void(ImagePtr)> done) override;
 
  private:
   ImagePtr load(const std::string& name) const;
 
+  ImageDecoder& decoder_;
   std::string dir_;
   LruBytes<ImagePtr> cache_;
 };

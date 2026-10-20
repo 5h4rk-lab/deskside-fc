@@ -1,7 +1,8 @@
-// HttpTransport for the simulator: libcurl easy handles on one worker thread.
-// Requests run one at a time in the order they were made; their results wait
-// in a completed queue until poll() delivers them on the calling (UI) thread.
-// See http_transport.h for the contract.
+// HttpTransport for the simulator: libcurl easy handles on worker threads (one
+// by default). Each worker runs one request at a time; requests start in the
+// order they were made, and with several workers they may finish in any order.
+// Results wait in a completed queue until poll() delivers them on the calling
+// (UI) thread. See http_transport.h for the contract.
 //
 // - Connect timeout 5 s, whole-request timeout from get(); no redirects are
 //   followed; TLS peers and host names are verified; http and https only.
@@ -9,7 +10,7 @@
 //   User-Agent: soccer-display-sim/0.1.
 // - Bodies over kMaxBodyBytes are aborted and reported as transport errors.
 // - The destructor aborts the request in flight, drops the queued and the
-//   undelivered ones (their callbacks are never called) and joins the worker.
+//   undelivered ones (their callbacks are never called) and joins the workers.
 #pragma once
 
 #include <stddef.h>
@@ -21,6 +22,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include "http_transport.h"
 
@@ -29,7 +31,10 @@ class CurlTransport : public HttpTransport {
   static constexpr size_t kMaxBodyBytes = 4 * 1024 * 1024;
   static constexpr long kConnectTimeoutMs = 5000;
 
-  CurlTransport();
+  static constexpr unsigned kMaxWorkers = 8;
+
+  // `workers` (clamped to 1..kMaxWorkers) is how many requests run at once.
+  explicit CurlTransport(unsigned workers = 1);
   ~CurlTransport() override;
   CurlTransport(const CurlTransport&) = delete;
   CurlTransport& operator=(const CurlTransport&) = delete;
@@ -60,5 +65,5 @@ class CurlTransport : public HttpTransport {
   std::deque<Job> jobs_;
   std::deque<Done> completed_;
   std::atomic<bool> stop_{false};
-  std::thread worker_;
+  std::vector<std::thread> workers_;
 };

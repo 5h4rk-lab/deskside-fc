@@ -9,6 +9,7 @@
 #include <string>
 
 #include "image_provider.h"
+#include "lvgl_image_decoder.h"
 #include "mock_image_provider.h"
 #include "test_display.h"
 #include "test_images.h"
@@ -113,7 +114,8 @@ TEST_CASE("MockImageProvider decodes a PNG and caches it") {
   {
     TempDir dir;
     dir.write("crest-57.png", test_images::kPng4x4, sizeof(test_images::kPng4x4));
-    MockImageProvider provider(dir.str());
+    LvglImageDecoder decoder;
+    MockImageProvider provider(decoder, dir.str());
 
     int calls = 0;
     ImagePtr first;
@@ -156,7 +158,8 @@ TEST_CASE("MockImageProvider decodes a JPEG") {
   {
     TempDir dir;
     dir.write("img-photo.jpg", test_images::kJpeg16x8, sizeof(test_images::kJpeg16x8));
-    MockImageProvider provider(dir.str());
+    LvglImageDecoder decoder;
+    MockImageProvider provider(decoder, dir.str());
     ImagePtr img;
     provider.request("/api/img?u=https%3A%2F%2Fexample.com%2Fphotos%2Fphoto.jpg&fit=cover&w=240&h=135",
                      [&](ImagePtr i) { img = i; });
@@ -180,7 +183,8 @@ TEST_CASE("MockImageProvider delivers nullptr for missing, unknown or undecodabl
     TempDir dir;
     dir.write_text("crest-61.png", "this is not a png");
     dir.write("crest-64.png", test_images::kPng4x4, 20);  // truncated PNG
-    MockImageProvider provider(dir.str());
+    LvglImageDecoder decoder;
+    MockImageProvider provider(decoder, dir.str());
 
     auto expect_null = [&](const std::string& path) {
       int calls = 0;
@@ -208,7 +212,8 @@ TEST_CASE("MockImageProvider evicts under a tiny budget without invalidating hel
     dir.write("crest-57.png", test_images::kPng4x4, sizeof(test_images::kPng4x4));
     dir.write("crest-61.png", test_images::kPng4x4, sizeof(test_images::kPng4x4));
     // One 4x4 ARGB8888 image is 64 bytes; this budget holds exactly one.
-    MockImageProvider provider(dir.str(), 100);
+    LvglImageDecoder decoder;
+    MockImageProvider provider(decoder, dir.str(), 100);
 
     ImagePtr a;
     provider.request(kCrest57, [&](ImagePtr i) { a = i; });
@@ -241,7 +246,8 @@ TEST_CASE("MockImageProvider does not cache images larger than its budget") {
   {
     TempDir dir;
     dir.write("crest-57.png", test_images::kPng4x4, sizeof(test_images::kPng4x4));
-    MockImageProvider provider(dir.str(), 10);
+    LvglImageDecoder decoder;
+    MockImageProvider provider(decoder, dir.str(), 10);
     ImagePtr a;
     provider.request(kCrest57, [&](ImagePtr i) { a = i; });
     REQUIRE(a);  // still delivered
@@ -261,7 +267,8 @@ TEST_CASE("image_load_into sets the widget source and keeps the image alive past
     dir.write("crest-57.png", test_images::kPng4x4, sizeof(test_images::kPng4x4));
     lv_obj_t* img = lv_image_create(lv_screen_active());
     {
-      MockImageProvider provider(dir.str(), 100);
+      LvglImageDecoder decoder;
+      MockImageProvider provider(decoder, dir.str(), 100);
       image_load_into(img, provider, kCrest57);
       const void* src = lv_image_get_src(img);
       REQUIRE(src != nullptr);
@@ -289,7 +296,8 @@ TEST_CASE("image_load_into leaves the placeholder when the image is unavailable"
   init_test_display();
   {
     TempDir dir;
-    MockImageProvider provider(dir.str());
+    LvglImageDecoder decoder;
+    MockImageProvider provider(decoder, dir.str());
     lv_obj_t* img = lv_image_create(lv_screen_active());
     image_load_into(img, provider, kCrest57);
     CHECK(lv_image_get_src(img) == nullptr);

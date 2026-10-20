@@ -3,6 +3,7 @@
 // order. Never touches the network.
 #pragma once
 
+#include <cstddef>
 #include <deque>
 #include <functional>
 #include <string>
@@ -44,6 +45,21 @@ class FakeTransport : public HttpTransport {
     return true;
   }
 
+  // Answers the pending request at `index` (0 = oldest) with the given result,
+  // ignoring the script. False when there is no such request.
+  bool deliver_at(size_t index, int status, std::string body) {
+    if (index >= pending_.size()) return false;
+    HttpResult r;
+    r.status = status;
+    r.body = std::move(body);
+    return complete_at(index, std::move(r));
+  }
+  bool deliver_error_at(size_t index) {
+    HttpResult r;
+    r.transportError = true;
+    return complete_at(index, std::move(r));
+  }
+
   // Answers pending requests (including ones made by the callbacks) while
   // there are scripted answers left. Returns how many were answered.
   int flush() {
@@ -55,6 +71,14 @@ class FakeTransport : public HttpTransport {
   std::vector<Request> requests;
 
  private:
+  bool complete_at(size_t index, HttpResult r) {
+    if (index >= pending_.size()) return false;
+    std::function<void(HttpResult)> done = std::move(pending_[index]);
+    pending_.erase(pending_.begin() + static_cast<std::ptrdiff_t>(index));
+    done(std::move(r));  // may issue new requests
+    return true;
+  }
+
   std::deque<std::function<void(HttpResult)>> pending_;
   std::deque<HttpResult> script_;
 };

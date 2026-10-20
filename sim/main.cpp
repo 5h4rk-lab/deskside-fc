@@ -40,7 +40,11 @@
 //   --helper URL     fetch real data from the helper at URL (also the
 //                    HELPER_URL environment variable) instead of the demo
 //   --token T        the helper's access token (also HELPER_TOKEN); never
-//                    printed
+//                    printed. With --helper, crests, photos and cutouts are
+//                    downloaded through the helper too (a second connection,
+//                    so pictures never queue behind data polls); without it
+//                    they come from --assets. Control characters in the URL or
+//                    token are refused at startup.
 //   --offline-test   the demo source is down most of the time (only every
 //                    5th match poll succeeds), to see the stale marker and the
 //                    Settings data line
@@ -79,6 +83,8 @@
 #include "screens/team_picker.h"
 #include "screens/wifi.h"
 #include "sim_backlight.h"
+#include "http_image_provider.h"
+#include "lvgl_image_decoder.h"
 #include "snapshot.h"
 #include "store.h"
 #include "timezone.h"
@@ -90,6 +96,8 @@ constexpr int kHeight = 320;
 constexpr int kDefaultScale = 2;
 constexpr int kOfflineTestCycle = 5;      // --offline-test: 1 good poll in 5
 constexpr int64_t kHelperSnapshotMs = 10000;  // headless with --helper: wait for data
+constexpr int64_t kImageSnapshotMs = 8000;    // ... and then for the pictures
+constexpr unsigned kImageWorkers = 2;         // simultaneous picture downloads
 constexpr uint32_t kDefaultAtMs = 900;
 constexpr uint32_t kDemoGoalMs = 6000;
 constexpr uint32_t kSnapshotStepMs = 10;
@@ -154,6 +162,14 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
       "env: HELPER_URL, HELPER_TOKEN (when the flags are absent)\n"
       "keys: g = favourite scores, w = favourite wins at full time (demo data)\n");
   std::exit(code);
+}
+
+bool has_control_chars(const std::string& s) {
+  for (char ch : s) {
+    const unsigned char c = static_cast<unsigned char>(ch);
+    if (c < 0x20 || c == 0x7F) return true;
+  }
+  return false;
 }
 
 Options parse_args(int argc, char** argv) {
@@ -255,6 +271,15 @@ Options parse_args(int argc, char** argv) {
   }
   if (!o.helper.empty() && o.token.empty()) {
     std::fprintf(stderr, "--helper needs a token: --token T or HELPER_TOKEN\n");
+    std::exit(2);
+  }
+  // A CR or LF in either would let it add headers to every request.
+  if (has_control_chars(o.helper)) {
+    std::fprintf(stderr, "invalid --helper: control characters are not allowed in the URL\n");
+    std::exit(2);
+  }
+  if (has_control_chars(o.token)) {
+    std::fprintf(stderr, "invalid token: control characters are not allowed (check HELPER_TOKEN)\n");
     std::exit(2);
   }
   if (!o.helper.empty() && o.offlineTest) {
@@ -491,7 +516,6 @@ int main(int argc, char** argv) {
   }
 
   Store store;
-  MockImageProvider images(opt.assets);
   SimBacklight backlight;
 
   // Data: the real helper (--helper), or the demo data / contract fixtures in
@@ -512,6 +536,24 @@ int main(int argc, char** argv) {
     source = &flaky;
   }
   const bool demoData = opt.helper.empty();
+
+  // Pictures: downloaded through the helper over their own connections (they
+  // must not queue behind data polls), or read from --assets. Declared after
+  // the data transport and before the app, so the provider is destroyed before
+  // its transport.
+  LvglImageDecoder decoder;
+  std::unique_ptr<CurlTransport> imageTransport;
+  std::unique_ptr<ImageProvider> images;
+  HttpImageProvider* httpImages = nullptr;
+  if (!opt.helper.empty()) {
+    imageTransport = std::make_unique<CurlTransport>(kImageWorkers);
+    auto provider = std::make_unique<HttpImageProvider>(*imageTransport, decoder, opt.helper, opt.token);
+    httpImages = provider.get();
+    httpImages->tick(monotonic_ms());
+    images = std::move(provider);
+  } else {
+    images = std::make_unique<MockImageProvider>(decoder, opt.assets);
+  }
 
   // Wi-Fi: the demo networks. In the window results take a moment (spinners
   // show); snapshots are synchronous, except the joining one which never
@@ -538,11 +580,13 @@ int main(int argc, char** argv) {
   // One step of the data path: deliver finished requests, then schedule.
   auto pump = [&](int64_t now) {
     if (transport) transport->poll();
+    if (imageTransport) imageTransport->poll();
+    if (httpImages) httpImages->tick(monotonic_ms());
     poller.set_detail_watch(detail_watch());
     poller.tick(monotonic_ms(), now);
   };
 
-  AppDeps deps{store, images, *source,
+  AppDeps deps{store, *images, *source,
                [](const std::string& id) {
                  std::printf("open match %s\n", id.c_str());
                  std::fflush(stdout);
@@ -629,6 +673,21 @@ int main(int argc, char** argv) {
     if (opt.screen == "summary") detail_select_tab(view, DetailTab::Summary, false);
     if (opt.screen == "pitch") detail_select_tab(view, DetailTab::Pitch, false);
     if (opt.screen == "stats") detail_select_tab(view, DetailTab::Stats, false);
+  }
+
+  if (headless && httpImages) {
+    // A snapshot of real data: wait (a bounded time) for the pictures the
+    // screen asked for. More data may arrive meanwhile and ask for more.
+    const int64_t until = monotonic_ms() + kImageSnapshotMs;
+    while (monotonic_ms() < until && httpImages->pending() > 0) {
+      pump(start);
+      if (matchesChanged) {
+        app_refresh(app, start);
+        matchesChanged = false;
+      }
+      SDL_Delay(10);
+    }
+    pump(start);
   }
 
   if (headless) {
