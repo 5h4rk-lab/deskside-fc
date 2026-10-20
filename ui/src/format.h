@@ -10,6 +10,10 @@
 // Division rounding towards negative infinity (b > 0 or b < 0).
 int64_t floor_div(int64_t a, int64_t b);
 
+// Hour of day (0..23) at UTC instant `utc` shifted by `offsetSeconds`. Correct
+// for negative offsets and instants before the epoch.
+int local_hour(int64_t utc, int offsetSeconds);
+
 // "HH:MM" of a local time.
 std::string hh_mm(int64_t local);
 

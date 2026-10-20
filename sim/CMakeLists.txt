@@ -57,6 +57,7 @@ add_library(ui STATIC "${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp"
   "${UI_DIR}/src/screens/live.cpp" "${UI_DIR}/src/format.cpp" "${UI_DIR}/src/screens/detail.cpp"
   "${UI_DIR}/src/screens/widgets.cpp" "${UI_DIR}/src/screens/matches.cpp" "${UI_DIR}/src/screens/news.cpp"
   "${UI_DIR}/src/screens/goal.cpp"
+  "${UI_DIR}/src/prefs.cpp" "${UI_DIR}/src/settings.cpp" "${UI_DIR}/src/timezone.cpp" "${UI_DIR}/src/dim_schedule.cpp"
   ${UI_FONT_SOURCES})
 target_include_directories(ui PUBLIC "${UI_DIR}/src" "${UI_DIR}/fonts")
 target_link_libraries(ui PUBLIC lvgl ArduinoJson)
@@ -64,7 +65,8 @@ set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" "$
   "${UI_DIR}/src/store.cpp" "${UI_DIR}/src/goal_detector.cpp" "${UI_DIR}/src/image_provider.cpp"
   "${UI_DIR}/src/screens/live.cpp" "${UI_DIR}/src/format.cpp" "${UI_DIR}/src/screens/detail.cpp"
   "${UI_DIR}/src/screens/widgets.cpp" "${UI_DIR}/src/screens/matches.cpp" "${UI_DIR}/src/screens/news.cpp"
-  "${UI_DIR}/src/screens/goal.cpp" PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
+  "${UI_DIR}/src/screens/goal.cpp" "${UI_DIR}/src/prefs.cpp" "${UI_DIR}/src/settings.cpp"
+  "${UI_DIR}/src/timezone.cpp" "${UI_DIR}/src/dim_schedule.cpp" PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # --- Simulator executable ----------------------------------------------------
 add_executable(sim main.cpp mock_source.cpp mock_image_provider.cpp demo_data.cpp snapshot.cpp)
@@ -81,7 +83,7 @@ add_executable(sim_tests tests/test_main.cpp tests/smoke_test.cpp tests/theme_te
   tests/goal_test.cpp tests/store_test.cpp tests/mock_source_test.cpp mock_source.cpp
   tests/lru_test.cpp tests/image_provider_test.cpp mock_image_provider.cpp
   tests/live_test.cpp demo_data.cpp snapshot.cpp tests/format_test.cpp tests/detail_test.cpp tests/matches_test.cpp tests/news_test.cpp
-  tests/goal_screen_test.cpp)
+  tests/goal_screen_test.cpp tests/prefs_test.cpp tests/settings_test.cpp tests/timezone_test.cpp tests/dim_test.cpp)
 target_include_directories(sim_tests PRIVATE tests "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(sim_tests PRIVATE
   CONTRACT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../contract/fixtures")

@@ -213,3 +213,16 @@ TEST_CASE("day_month is a short date without the weekday") {
   CHECK(day_month(kTue2000 + 12 * 86400) == "1 Nov");
   CHECK(day_month(-86400) == "31 Dec");
 }
+
+TEST_CASE("local_hour applies the offset and wraps correctly") {
+  CHECK(local_hour(kTue2000, 0) == 20);
+  CHECK(local_hour(kTue2000, 3600) == 21);
+  CHECK(local_hour(kTue2000, 4 * 3600) == 0);  // past midnight
+  CHECK(local_hour(kTue2000, kIndia) == 1);
+  CHECK(local_hour(kTue2000, -21 * 3600) == 23);  // back across midnight
+  CHECK(local_hour(0, 0) == 0);
+  CHECK(local_hour(0, -3600) == 23);
+  CHECK(local_hour(-1, 0) == 23);  // before the epoch
+  CHECK(local_hour(-86400 * 400 + 5 * 3600, 0) == 5);
+  CHECK(local_hour(-3600, -5 * 3600) == 18);
+}

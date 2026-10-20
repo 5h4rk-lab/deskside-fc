@@ -22,6 +22,12 @@ int64_t floor_div(int64_t a, int64_t b) {
   return q;
 }
 
+int local_hour(int64_t utc, int offsetSeconds) {
+  const int64_t local = utc + offsetSeconds;
+  const int64_t secs = local - floor_div(local, 86400) * 86400;
+  return static_cast<int>(secs / 3600);
+}
+
 std::string hh_mm(int64_t local) {
   const int64_t secs = local - floor_div(local, 86400) * 86400;
   return two_digits(static_cast<int>(secs / 3600)) + ":" +
