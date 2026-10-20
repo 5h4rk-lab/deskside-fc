@@ -29,6 +29,14 @@
 //                    choice in Settings. Without a saved zone the window
 //                    picks the zone matching the computer's current offset.
 //   --now EPOCH      pretend the clock started at EPOCH (seconds, UTC)
+//   --wifi none|demo Wi-Fi: none (no Wi-Fi row, no setup) or a mock with demo
+//                    networks (default; results arrive after a short delay)
+//   --wifi-saved none
+//                    start with no saved network: the guided setup opens
+//   --screen wifi|wifi-first|wifi-password|wifi-failed|wifi-connecting
+//                    the network list, the first-start setup, the password
+//                    page (a few characters typed), after a wrong password,
+//                    and while joining
 // Keys in the window: g = the favourite scores in its live match, w = that
 // match ends with the favourite ahead (full-time win).
 #include <SDL2/SDL.h>
@@ -52,10 +60,12 @@
 #include "file_prefs.h"
 #include "mock_image_provider.h"
 #include "mock_source.h"
+#include "mock_wifi.h"
 #include "prefs.h"
 #include "screens/detail.h"
 #include "screens/goal.h"
 #include "screens/team_picker.h"
+#include "screens/wifi.h"
 #include "sim_backlight.h"
 #include "snapshot.h"
 #include "store.h"
@@ -86,9 +96,34 @@ struct Options {
   std::string tz;
   bool hasNow = false;
   int64_t now = 0;
+  bool wifi = true;
+  bool wifiSaved = true;
 };
 
 bool goal_screen(const std::string& screen) { return screen == "goal" || screen == "goal-win"; }
+bool wifi_screen(const std::string& screen) { return screen.rfind("wifi", 0) == 0; }
+
+// The demo networks. The saved ones join with their stored password; typing
+// "homehome1" joins HomeNet-5G and "netgear123" joins NETGEAR-4F.
+void load_demo_wifi(MockWifi& wifi, bool saved) {
+  wifi.set_networks({
+      {"HomeNet-5G", -48, false},
+      {"Lab-Guest", -62, false},
+      {"Cafe Open Wi-Fi", -70, true},
+      {"NETGEAR-4F", -74, false},
+      {"Stadium-Fan-Zone-WiFi-Network-32", -66, false},
+      {"Neighbour", -88, false},
+      {"NETGEAR-4F", -81, false},  // a second access point: listed once
+      {"", -60, false},            // a hidden network: not listed
+  });
+  wifi.set_password("HomeNet-5G", "homehome1");
+  wifi.set_password("Lab-Guest", "lab-guest-24");
+  wifi.set_password("NETGEAR-4F", "netgear123");
+  if (saved) {
+    wifi.set_saved({"HomeNet-5G", "Lab-Guest"});
+    wifi.auto_join();
+  }
+}
 
 [[noreturn]] void usage(int code) {
   std::printf(
@@ -97,6 +132,8 @@ bool goal_screen(const std::string& screen) { return screen == "goal" || screen 
       "           [--match ID] [--at-ms N] [--reduced-motion] [--demo-goal]\n"
       "           [--screen settings|zone|picker|picker-search]\n"
       "           [--prefs FILE|memory] [--reset-prefs] [--tz ZONE] [--now EPOCH]\n"
+      "           [--wifi none|demo] [--wifi-saved none]\n"
+      "           [--screen wifi|wifi-first|wifi-password|wifi-failed|wifi-connecting]\n"
       "keys: g = favourite scores, w = favourite wins at full time\n");
   std::exit(code);
 }
@@ -120,7 +157,8 @@ Options parse_args(int argc, char** argv) {
       const char* const kScreens[] = {"live",     "matches",  "news",   "detail",
                                       "summary",  "pitch",    "stats",  "goal",
                                       "goal-win", "settings", "zone",   "picker",
-                                      "picker-search"};
+                                      "picker-search", "wifi", "wifi-first", "wifi-password",
+                                      "wifi-failed", "wifi-connecting"};
       bool known = false;
       for (const char* k : kScreens) known = known || o.screen == k;
       if (!known) {
@@ -158,6 +196,20 @@ Options parse_args(int argc, char** argv) {
         std::fprintf(stderr, "invalid --now '%s'\n", argv[i]);
         std::exit(2);
       }
+    } else if (std::strcmp(argv[i], "--wifi") == 0 && hasValue) {
+      const std::string v = argv[++i];
+      if (v != "none" && v != "demo") {
+        std::fprintf(stderr, "invalid --wifi '%s' (none or demo)\n", v.c_str());
+        std::exit(2);
+      }
+      o.wifi = v == "demo";
+    } else if (std::strcmp(argv[i], "--wifi-saved") == 0 && hasValue) {
+      const std::string v = argv[++i];
+      if (v != "none") {
+        std::fprintf(stderr, "invalid --wifi-saved '%s' (none)\n", v.c_str());
+        std::exit(2);
+      }
+      o.wifiSaved = false;
     } else if (std::strcmp(argv[i], "--fixtures") == 0) {
       o.fixtures = true;
     } else if (std::strcmp(argv[i], "--help") == 0) {
@@ -354,7 +406,7 @@ int main(int argc, char** argv) {
   const bool headless = !opt.snapshot.empty();
 
   lv_init();
-  if (headless && goal_screen(opt.screen)) {
+  if (headless && (goal_screen(opt.screen) || wifi_screen(opt.screen))) {
     lv_tick_set_cb(fake_ms);
   } else {
     lv_tick_set_cb(headless ? steady_ms : sdl_ticks);
@@ -413,12 +465,19 @@ int main(int argc, char** argv) {
   Feed feed(store, opt.fixtures, start);
   SimBacklight backlight;
 
+  // Wi-Fi: the demo networks. In the window results take a moment (spinners
+  // show); snapshots are synchronous, except the joining one which never
+  // completes. wifi-first starts with nothing saved.
+  MockWifi wifi;
+  load_demo_wifi(wifi, opt.wifiSaved && opt.screen != "wifi-first");
+  wifi.set_async(!headless || opt.screen == "wifi-connecting");
+
   AppDeps deps{store, images, feed.source(),
                [](const std::string& id) {
                  std::printf("open match %s\n", id.c_str());
                  std::fflush(stdout);
                },
-               *prefs, &backlight, nullptr};
+               *prefs, &backlight, opt.wifi ? &wifi : nullptr};
   lv_obj_t* app = app_create(lv_screen_active(), deps);
   // A session-only override of the saved setting.
   if (opt.reducedMotion) goal_set_reduced_motion(true);
@@ -461,6 +520,25 @@ int main(int argc, char** argv) {
       team_picker_set_query(picker, "ars");
       team_picker_show_keyboard(picker, true);
     }
+  } else if (wifi_screen(opt.screen)) {
+    if (opt.screen != "wifi-first") {
+      app_open_settings(app);
+      app_open_wifi(app);
+    }
+    lv_obj_t* view = app_wifi_view(app);
+    if (opt.screen == "wifi-connecting") wifi.poll(MockWifi::kDefaultScanMs);  // the list is in
+    if (view != nullptr && opt.screen != "wifi" && opt.screen != "wifi-first") {
+      wifi_open_password(view, "NETGEAR-4F");
+      const WifiPasswordParts* p = wifi_password_parts(view);
+      if (p != nullptr) {
+        // Too short to join, a wrong password, the right one.
+        const char* typed = opt.screen == "wifi-password" ? "netg"
+                            : opt.screen == "wifi-failed" ? "netgear12"
+                                                          : "netgear123";
+        lv_textarea_set_text(p->field, typed);
+        if (opt.screen != "wifi-password") lv_obj_send_event(p->connect, LV_EVENT_CLICKED, nullptr);
+      }
+    }
   } else if (opt.screen != "live") {
     app_open_match(app, opt.match);
     lv_obj_t* view = app_detail_view(app);
@@ -478,6 +556,13 @@ int main(int argc, char** argv) {
         lv_timer_handler();
       }
       if (const GoalParts* p = goal_parts()) target = p->overlay;
+    } else if (wifi_screen(opt.screen)) {
+      // Fixed animation time: the spinner is always drawn at the same angle,
+      // and the last typed character is already masked.
+      for (uint32_t t = 0; t < 2000; t += kSnapshotStepMs) {
+        g_fakeMs += kSnapshotStepMs;
+        lv_timer_handler();
+      }
     } else {
       for (int i = 0; i < 10; ++i) lv_timer_handler();
     }
@@ -492,8 +577,12 @@ int main(int argc, char** argv) {
   bool demoGoalDone = !opt.demoGoal;
   int64_t lastRefresh = start;
   int64_t lastPoll = start;
+  uint32_t lastWifiMs = SDL_GetTicks();
   for (;;) {
     lv_timer_handler();
+    const uint32_t ms = SDL_GetTicks();
+    wifi.poll(static_cast<int64_t>(ms - lastWifiMs));
+    lastWifiMs = ms;
     if (keys.goal || (!demoGoalDone && SDL_GetTicks() >= kDemoGoalMs)) {
       keys.goal = false;
       demoGoalDone = true;

@@ -8,11 +8,13 @@
 
 #include "app.h"
 #include "backlight.h"
+#include "mock_wifi.h"
 #include "prefs.h"
 #include "screens/goal.h"
 #include "screens/live.h"
 #include "screens/settings.h"
 #include "screens/team_picker.h"
+#include "screens/wifi.h"
 #include "screens/zone_list.h"
 #include "settings.h"
 #include "test_display.h"
@@ -119,8 +121,7 @@ struct Host {
   TeamsSource source;
   CountingPrefs prefs;
   FakeBacklight backlight;
-  std::function<void()> wifi;
-  int wifiCalls = 0;
+  WifiService* wifi = nullptr;
   lv_obj_t* app = nullptr;
 
   explicit Host(bool create = true) {
@@ -262,20 +263,41 @@ TEST_CASE("app: picking a tab closes Settings") {
   CHECK(app_settings_view(h.app) == nullptr);
 }
 
-TEST_CASE("app: the Wi-Fi row only exists when the host can open Wi-Fi") {
+TEST_CASE("app: the Wi-Fi row only exists with a Wi-Fi service, shows its state and opens Wi-Fi") {
   {
     Host h;
     app_open_settings(h.app);
     CHECK(h.settings()->wifiRow == nullptr);
+    CHECK(h.settings()->wifiStatus == nullptr);
   }
   {
+    MockWifi wifi;
+    wifi.set_networks({{"Home", -50, false}});
+    wifi.set_password("Home", "homehome1");
+    wifi.set_saved({"Home"});
     Host h(false);
-    h.wifi = [&h] { ++h.wifiCalls; };
+    h.wifi = &wifi;
     h.make();
+    CHECK(app_wifi_view(h.app) == nullptr);  // something is saved: no first setup
     app_open_settings(h.app);
+    h.settle();  // one-line labels are cut to their laid-out width
     REQUIRE(h.settings()->wifiRow != nullptr);
+    CHECK(text(h.settings()->wifiStatus) == "Not connected");
+    wifi.auto_join();
+    app_refresh(h.app, kSummer);
+    h.settle();
+    CHECK(text(h.settings()->wifiStatus) == "Connected to Home");
     h.click(h.settings()->wifiRow);
-    CHECK(h.wifiCalls == 1);
+    h.settle();
+    lv_obj_t* view = app_wifi_view(h.app);
+    REQUIRE(view != nullptr);
+    REQUIRE(wifi_parts(view) != nullptr);
+    CHECK(text(wifi_parts(view)->title) == "Wi-Fi");
+    // Back returns to Settings.
+    h.click(wifi_parts(view)->back);
+    h.settle();
+    CHECK(app_wifi_view(h.app) == nullptr);
+    CHECK(app_settings_view(h.app) != nullptr);
   }
 }
 
@@ -671,4 +693,150 @@ TEST_CASE("app: picking a team in the picker applies it and returns to Settings"
   REQUIRE(app_settings_view(h.app) != nullptr);
   CHECK(text(h.settings()->teamName) == "Liverpool");
   CHECK(pref(h.prefs, "fav.id") == "364");
+}
+
+// ------------------------------------------------------------ Wi-Fi
+
+namespace {
+
+class ConnectedWifi : public MockWifi {
+ public:
+  WifiStatus status() override {
+    WifiStatus s;
+    s.connected = true;
+    s.ssid = "Lab";
+    s.ip = "10.0.0.7";
+    return s;
+  }
+};
+
+MockWifi demo_wifi() {
+  MockWifi w;
+  w.set_networks({{"Home", -50, false}, {"Cafe", -70, true}});
+  w.set_password("Home", "homehome1");
+  return w;
+}
+
+}  // namespace
+
+TEST_CASE("app: first start without a saved network opens the guided Wi-Fi setup") {
+  MockWifi wifi = demo_wifi();
+  Host h(false);
+  h.wifi = &wifi;
+  h.make();
+  lv_obj_t* view = app_wifi_view(h.app);
+  REQUIRE(view != nullptr);
+  const WifiParts* p = wifi_parts(view);
+  REQUIRE(p != nullptr);
+  CHECK(text(p->title) == "Connect to Wi-Fi");
+  CHECK(visible(p->help));
+  CHECK(text(p->help) == "Pick your network to get live scores.");
+  // Full screen, above the tab view.
+  lv_obj_t* overlay = lv_obj_get_parent(view);
+  CHECK(lv_obj_get_height(overlay) == 320);
+  CHECK(lv_obj_get_index(overlay) > lv_obj_get_index(h.app));
+
+  // Joining closes the setup after the "Connected" pause.
+  wifi_open_password(view, "Home");
+  lv_textarea_set_text(wifi_password_parts(view)->field, "homehome1");
+  h.click(wifi_password_parts(view)->connect);
+  h.settle();
+  CHECK(app_wifi_view(h.app) != nullptr);
+  test_advance(kWifiConnectedHoldMs + 50);
+  h.settle();
+  CHECK(app_wifi_view(h.app) == nullptr);
+  CHECK(wifi.status().connected);
+}
+
+TEST_CASE("app: Back leaves the guided setup") {
+  MockWifi wifi = demo_wifi();
+  Host h(false);
+  h.wifi = &wifi;
+  h.make();
+  REQUIRE(app_wifi_view(h.app) != nullptr);
+  h.click(wifi_parts(app_wifi_view(h.app))->back);
+  h.settle();
+  CHECK(app_wifi_view(h.app) == nullptr);
+}
+
+TEST_CASE("app: no guided setup with a saved network, when connected, or without Wi-Fi") {
+  {
+    MockWifi wifi = demo_wifi();
+    wifi.set_saved({"Somewhere"});
+    Host h(false);
+    h.wifi = &wifi;
+    h.make();
+    CHECK(app_wifi_view(h.app) == nullptr);
+  }
+  {
+    // Connected (for example by the firmware) though nothing is saved.
+    ConnectedWifi wifi;
+    REQUIRE(wifi.saved().empty());
+    Host h(false);
+    h.wifi = &wifi;
+    h.make();
+    CHECK(app_wifi_view(h.app) == nullptr);
+  }
+  {
+    Host h;
+    CHECK(app_wifi_view(h.app) == nullptr);
+    app_open_wifi(h.app);
+    CHECK(app_wifi_view(h.app) == nullptr);
+  }
+}
+
+TEST_CASE("app: joining from Settings keeps Wi-Fi open and updates the Settings row") {
+  MockWifi wifi = demo_wifi();
+  wifi.set_saved({"Home"});
+  Host h(false);
+  h.wifi = &wifi;
+  h.make();
+  app_open_settings(h.app);
+  app_open_wifi(h.app);
+  lv_obj_t* view = app_wifi_view(h.app);
+  REQUIRE(view != nullptr);
+  CHECK(text(wifi_parts(view)->title) == "Wi-Fi");
+  std::vector<WifiSavedRow> rows = wifi_saved_rows(view);
+  REQUIRE(rows.size() == 1);
+  h.click(rows[0].row);
+  h.settle();
+  CHECK(app_wifi_view(h.app) == view);
+  h.settle();
+  CHECK(text(h.settings()->wifiStatus) == "Connected to Home");
+  app_close_wifi(h.app);
+  CHECK(app_wifi_view(h.app) == nullptr);
+  CHECK(app_settings_view(h.app) != nullptr);
+}
+
+TEST_CASE("app: Wi-Fi results after the overlay closed or the app is gone do nothing") {
+  {
+    MockWifi wifi = demo_wifi();
+    wifi.set_async(true);
+    Host h(false);
+    h.wifi = &wifi;
+    h.make();
+    REQUIRE(app_wifi_view(h.app) != nullptr);
+    app_close_wifi(h.app);
+    wifi.poll(MockWifi::kDefaultScanMs);
+    h.settle();
+    CHECK(app_wifi_view(h.app) == nullptr);
+  }
+  {
+    MockWifi wifi = demo_wifi();
+    wifi.set_async(true);
+    Host h(false);
+    h.wifi = &wifi;
+    h.make();
+    lv_obj_t* view = app_wifi_view(h.app);
+    wifi.poll(MockWifi::kDefaultScanMs);
+    std::vector<WifiNearbyRow> rows = wifi_nearby_rows(view);
+    REQUIRE(rows.size() == 2);
+    h.click(rows[1].row);  // Cafe, open: joins at once
+    CHECK(wifi.pending() == 1);
+    lv_obj_clean(lv_screen_active());
+    h.settle();
+    wifi.poll(MockWifi::kDefaultConnectMs);
+    h.settle();
+    CHECK(wifi.status().connected);
+  }
 }

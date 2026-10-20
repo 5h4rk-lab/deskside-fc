@@ -355,12 +355,15 @@ void build(SettingsState* st, lv_obj_t* root) {
 
   // Wi-Fi, when the host supports it.
   if (st->cb.onWifi) {
-    p.wifiRow = widgets::card(p.list, true);
-    lv_obj_set_size(p.wifiRow, LV_PCT(100), 44);
+    // "Wi-Fi" over the connection state, like the time zone row.
+    p.wifiRow = column_card(p.list, true);
+    lv_obj_set_style_pad_row(p.wifiRow, 2, 0);
     lv_obj_add_event_cb(p.wifiRow, on_wifi, LV_EVENT_CLICKED, st);
-    lv_obj_t* l = text_label(p.wifiRow, &hanken_14, pal.chalk, "Wi-Fi");
-    lv_obj_align(l, LV_ALIGN_LEFT_MID, kCardPad, 0);
-    chevron(p.wifiRow, -kCardPad);
+    text_label(p.wifiRow, &hanken_14, pal.chalk, "Wi-Fi");
+    p.wifiStatus = label(p.wifiRow, &hanken_10, pal.dim);
+    lv_label_set_long_mode(p.wifiStatus, LV_LABEL_LONG_DOT);
+    lv_obj_set_size(p.wifiStatus, 180, hanken_10.line_height);
+    chevron(p.wifiRow, 0);
   }
 
   // About.
@@ -448,6 +451,11 @@ void settings_refresh(lv_obj_t* screen, const Settings& settings, int64_t now) {
   st->s = settings;
   if (dragging) st->s.dayBrightness = inProgress;
   apply(st, now);
+}
+
+void settings_set_wifi_status(lv_obj_t* screen, const std::string& text) {
+  SettingsState* st = settings_state(screen);
+  if (st != nullptr && st->parts.wifiStatus != nullptr) set_text(st->parts.wifiStatus, text);
 }
 
 const Settings* settings_current(lv_obj_t* screen) {

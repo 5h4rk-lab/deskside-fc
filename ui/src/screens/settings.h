@@ -50,6 +50,10 @@ lv_obj_t* settings_create(lv_obj_t* parent, const Settings& settings, ImageProvi
 // not rebuild anything.
 void settings_refresh(lv_obj_t* screen, const Settings& settings, int64_t now);
 
+// The dim line under "Wi-Fi" (the host passes wifi_status_text()). Does
+// nothing without a Wi-Fi row.
+void settings_set_wifi_status(lv_obj_t* screen, const std::string& text);
+
 // The settings the screen currently shows (its copy).
 const Settings* settings_current(lv_obj_t* screen);
 
@@ -87,7 +91,8 @@ struct SettingsParts {
   lv_obj_t* motionSwitch = nullptr;
   lv_obj_t* motionHelp = nullptr;
 
-  lv_obj_t* wifiRow = nullptr;  // nullptr when there is no Wi-Fi row
+  lv_obj_t* wifiRow = nullptr;     // nullptr when there is no Wi-Fi row
+  lv_obj_t* wifiStatus = nullptr;  // "Connected to <ssid>" / "Not connected", one line
   lv_obj_t* about = nullptr;    // "Soccer display 0.1"
 };
 

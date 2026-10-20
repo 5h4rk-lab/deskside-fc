@@ -17,6 +17,7 @@
 #include "screens/news.h"
 #include "screens/settings.h"
 #include "screens/team_picker.h"
+#include "screens/wifi.h"
 #include "screens/zone_list.h"
 #include "theme.h"
 #include "timezone.h"
@@ -24,7 +25,7 @@
 namespace {
 
 enum class Shown { None, Loading, Error, Detail };
-enum class OverlayKind { Detail, Settings, Picker };
+enum class OverlayKind { Detail, Settings, Picker, Wifi };
 enum class TeamsLoad { Idle, Loading, Failed };
 
 constexpr uint32_t kOpponentHex = 0x034694;  // Chelsea blue, the default opponent colour
@@ -38,7 +39,7 @@ struct AppState {
   std::function<void(const std::string&)> onOpenMatch;
   Prefs* prefs = nullptr;
   Backlight* backlight = nullptr;
-  std::function<void()> onOpenWifi;
+  WifiService* wifi = nullptr;
   std::function<void(std::string)> openMatch;  // what the screens call to open a match
   lv_obj_t* tabview = nullptr;
   lv_obj_t* pages[kTabCount] = {nullptr, nullptr, nullptr};  // tab pages, kept across rebuilds
@@ -64,6 +65,10 @@ struct AppState {
   bool pickerFailed = false;
   TeamsLoad teamsLoad = TeamsLoad::Idle;
   uint32_t teamsRequest = 0;
+
+  // Wi-Fi overlay (the whole screen: the password page needs the keyboard).
+  lv_obj_t* wifiOverlay = nullptr;
+  lv_obj_t* wifiView = nullptr;
 
   // Detail overlay: a sibling above the tab view, covering the tab content.
   lv_obj_t* overlay = nullptr;
@@ -195,6 +200,9 @@ void on_overlay_delete(lv_event_t* e) {
     } else if (link->kind == OverlayKind::Picker && st->pickerOverlay == obj) {
       st->pickerOverlay = nullptr;
       st->picker = nullptr;
+    } else if (link->kind == OverlayKind::Wifi && st->wifiOverlay == obj) {
+      st->wifiOverlay = nullptr;
+      st->wifiView = nullptr;
     }
   }
   delete link;
@@ -266,6 +274,14 @@ void close_picker(AppState* st, bool fromInside) {
   discard(overlay, fromInside);
 }
 
+void close_wifi(AppState* st, bool fromInside) {
+  lv_obj_t* overlay = st->wifiOverlay;
+  if (overlay == nullptr) return;
+  st->wifiOverlay = nullptr;
+  st->wifiView = nullptr;
+  discard(overlay, fromInside);
+}
+
 // ---------------------------------------------------------------- backlight
 
 // Day brightness, or the night level inside the night window unless the
@@ -301,6 +317,13 @@ void preview_brightness(AppState* st, int percent) {
 void open_settings(AppState* st);
 void open_zones(AppState* st);
 void open_picker(AppState* st);
+void open_wifi(AppState* st, WifiMode mode);
+
+// The Settings Wi-Fi row's state line.
+void sync_settings_wifi(AppState* st) {
+  if (st->settingsView == nullptr || st->wifi == nullptr) return;
+  settings_set_wifi_status(st->settingsView, wifi_status_text(st->wifi->status()));
+}
 
 void save(AppState* st) {
   save_settings(*st->prefs, st->settings);
@@ -343,11 +366,9 @@ SettingsCallbacks settings_callbacks(AppState* st) {
   cb.onZone = [st, alive] {
     if (*alive) open_zones(st);
   };
-  if (st->onOpenWifi) {
+  if (st->wifi != nullptr) {
     cb.onWifi = [st, alive] {
-      if (!*alive) return;
-      const std::function<void()> f = st->onOpenWifi;
-      if (f) f();
+      if (*alive) open_wifi(st, WifiMode::Normal);
     };
   }
   cb.onBrightnessPreview = [st, alive](int percent) {
@@ -365,6 +386,31 @@ void open_settings(AppState* st) {
   st->settingsOverlay = make_overlay(st, OverlayKind::Settings, false);
   st->settingsView = settings_create(st->settingsOverlay, st->settings, *st->images,
                                      settings_callbacks(st), st->now);
+  sync_settings_wifi(st);
+}
+
+// ---------------------------------------------------------------- wifi
+
+// A join made on the Wi-Fi pages succeeded. First setup ends there.
+void wifi_joined(AppState* st, WifiMode mode) {
+  sync_settings_wifi(st);
+  if (mode != WifiMode::FirstSetup) return;
+  close_wifi(st, true);  // called from inside the Wi-Fi screen
+  app_refresh(st->tabview, st->now);
+}
+
+void open_wifi(AppState* st, WifiMode mode) {
+  if (st->wifi == nullptr || st->wifiOverlay != nullptr) return;
+  std::shared_ptr<bool> alive = st->alive;
+  WifiCallbacks cb;
+  cb.onBack = [st, alive] {
+    if (*alive) close_wifi(st, true);
+  };
+  cb.onConnected = [st, alive, mode] {
+    if (*alive) wifi_joined(st, mode);
+  };
+  st->wifiOverlay = make_overlay(st, OverlayKind::Wifi, true);
+  st->wifiView = wifi_create(st->wifiOverlay, *st->wifi, mode, cb);
 }
 
 void pick_zone(AppState* st, const std::string& zoneId) {
@@ -568,7 +614,7 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   st->onOpenMatch = deps.onOpenMatch;
   st->prefs = &deps.prefs;
   st->backlight = deps.backlight;
-  st->onOpenWifi = deps.onOpenWifi;
+  st->wifi = deps.wifi;
 
   // Saved settings first: the screens capture the accent colour as they are built.
   st->settings = load_settings(deps.prefs);
@@ -628,6 +674,11 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
 
   lv_tabview_set_active(tabview, 0, LV_ANIM_OFF);
   refresh_icons(tabview);
+
+  // First start (nothing saved, not connected): the guided Wi-Fi setup.
+  if (st->wifi != nullptr && st->wifi->saved().empty() && !st->wifi->status().connected) {
+    open_wifi(st, WifiMode::FirstSetup);
+  }
   return tabview;
 }
 
@@ -645,6 +696,8 @@ void app_refresh(lv_obj_t* appRoot, int64_t now) {
   // clock from the match list. Unchanged data touches nothing.
   if (st->overlay != nullptr) show_detail(st);
   if (st->settingsView != nullptr) settings_refresh(st->settingsView, st->settings, now);
+  sync_settings_wifi(st);
+  if (st->wifiView != nullptr) wifi_refresh(st->wifiView);
   sync_picker(st);
 }
 
@@ -688,6 +741,21 @@ lv_obj_t* app_team_picker_view(lv_obj_t* appRoot) {
   return st != nullptr ? st->picker : nullptr;
 }
 
+void app_open_wifi(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  if (st != nullptr) open_wifi(st, WifiMode::Normal);
+}
+
+void app_close_wifi(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  if (st != nullptr) close_wifi(st, false);
+}
+
+lv_obj_t* app_wifi_view(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->wifiView : nullptr;
+}
+
 void app_apply_team(lv_obj_t* appRoot, const Team& team) {
   AppState* st = app_state(appRoot);
   if (st == nullptr) return;
@@ -706,6 +774,7 @@ void app_apply_team(lv_obj_t* appRoot, const Team& team) {
     st->settingsView = settings_create(st->settingsOverlay, st->settings, *st->images,
                                        settings_callbacks(st), st->now);
     lv_obj_move_to_index(st->settingsView, 0);
+    sync_settings_wifi(st);
   }
   app_refresh(appRoot, st->now);
 }

@@ -67,6 +67,13 @@ lv_obj_t* scroll_column(lv_obj_t* parent);
 // panels whatever the accent (see accent_mark()).
 lv_obj_t* tick(lv_obj_t* parent);
 
+// A one-line text field (lv_textarea) on a panel-coloured rounded box,
+// `height` px tall, Hanken 14 text, dim placeholder and an accent cursor
+// shown only while the field is focused. The caller sizes and places it.
+void style_text_field(lv_obj_t* ta, int32_t height);
+// The on-screen keyboard in the dark palette (team picker, Wi-Fi password).
+void style_keyboard(lv_obj_t* kb);
+
 // What the status row shows besides its left text.
 struct StatusInfo {
   std::string clock;      // local HH:MM

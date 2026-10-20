@@ -181,6 +181,15 @@ TEST_CASE("settings: the Wi-Fi row exists only with onWifi, and calls it") {
     REQUIRE(s.parts()->wifiRow != nullptr);
     s.click(s.parts()->wifiRow);
     CHECK(s.wifis == 1);
+    // The state line under the title, set by the host.
+    REQUIRE(s.parts()->wifiStatus != nullptr);
+    settings_set_wifi_status(s.obj, "Connected to Home");
+    CHECK(text(s.parts()->wifiStatus) == "Connected to Home");
+    // A long name ends in dots on one line inside the card.
+    settings_set_wifi_status(s.obj, "Connected to Stadium-Fan-Zone-WiFi-Network-32");
+    lv_obj_update_layout(s.obj);
+    CHECK(lv_label_get_long_mode(s.parts()->wifiStatus) == LV_LABEL_LONG_DOT);
+    CHECK(lv_obj_get_height(s.parts()->wifiStatus) == hanken_10.line_height);
   }
 }
 

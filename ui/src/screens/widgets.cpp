@@ -163,6 +163,63 @@ lv_obj_t* tick(lv_obj_t* parent) {
   return t;
 }
 
+void style_text_field(lv_obj_t* ta, int32_t height) {
+  const Palette& pal = theme();
+  lv_obj_remove_style_all(ta);
+  lv_obj_set_style_bg_color(ta, pal.panel, 0);
+  lv_obj_set_style_bg_opa(ta, LV_OPA_COVER, 0);
+  lv_obj_set_style_radius(ta, kCardRadius, 0);
+  lv_obj_set_style_border_color(ta, pal.line, 0);
+  lv_obj_set_style_border_width(ta, 1, 0);
+  lv_obj_set_style_border_color(ta, mix(pal.line, pal.chalk, 70), LV_STATE_FOCUSED);
+  lv_obj_set_style_pad_hor(ta, 12, 0);
+  lv_obj_set_style_pad_top(ta, (height - 2 - hanken_14.line_height) / 2, 0);
+  lv_obj_set_style_pad_bottom(ta, 0, 0);
+  lv_obj_set_style_text_font(ta, &hanken_14, 0);
+  lv_obj_set_style_text_color(ta, pal.chalk, 0);
+  lv_obj_set_style_text_color(ta, pal.dim, LV_PART_TEXTAREA_PLACEHOLDER);
+  // Cursor: a thin chalk bar, only while the field has the keyboard.
+  lv_obj_set_style_border_side(ta, LV_BORDER_SIDE_LEFT, LV_PART_CURSOR);
+  lv_obj_set_style_border_width(ta, 2, LV_PART_CURSOR);
+  lv_obj_set_style_border_color(ta, accent_mark(pal.accent), LV_PART_CURSOR);
+  lv_obj_set_style_border_opa(ta, LV_OPA_TRANSP, LV_PART_CURSOR);
+  lv_obj_set_style_border_opa(ta, LV_OPA_COVER,
+                              static_cast<lv_style_selector_t>(LV_PART_CURSOR) | LV_STATE_FOCUSED);
+  lv_obj_set_style_anim_duration(ta, 500, LV_PART_CURSOR);
+}
+
+void style_keyboard(lv_obj_t* kb) {
+  const Palette& pal = theme();
+  const lv_color_t key = mix(pal.panel, pal.chalk, 22);
+  const lv_color_t special = pal.line;
+  lv_obj_set_style_bg_color(kb, pal.tabBar, 0);
+  lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_width(kb, 1, 0);
+  lv_obj_set_style_border_side(kb, LV_BORDER_SIDE_TOP, 0);
+  lv_obj_set_style_border_color(kb, pal.line, 0);
+  lv_obj_set_style_radius(kb, 0, 0);
+  lv_obj_set_style_pad_all(kb, 4, 0);
+  lv_obj_set_style_pad_gap(kb, 4, 0);
+
+  const lv_state_t kStates[] = {LV_STATE_DEFAULT, LV_STATE_PRESSED, LV_STATE_CHECKED,
+                                LV_STATE_CHECKED | LV_STATE_PRESSED, LV_STATE_FOCUSED,
+                                LV_STATE_FOCUS_KEY, LV_STATE_CHECKED | LV_STATE_FOCUSED};
+  for (lv_state_t s : kStates) {
+    const lv_style_selector_t sel = static_cast<lv_style_selector_t>(LV_PART_ITEMS) | s;
+    const bool pressed = (s & LV_STATE_PRESSED) != 0;
+    const bool checked = (s & LV_STATE_CHECKED) != 0;
+    const lv_color_t base = checked ? special : key;
+    lv_obj_set_style_bg_color(kb, pressed ? mix(base, pal.chalk, 70) : base, sel);
+    lv_obj_set_style_bg_opa(kb, LV_OPA_COVER, sel);
+    lv_obj_set_style_text_color(kb, pal.chalk, sel);
+    lv_obj_set_style_border_width(kb, 0, sel);
+    lv_obj_set_style_outline_width(kb, 0, sel);
+    lv_obj_set_style_shadow_width(kb, 0, sel);
+  }
+  lv_obj_set_style_radius(kb, 6, LV_PART_ITEMS);
+  lv_obj_set_style_text_font(kb, &lv_font_montserrat_14, LV_PART_ITEMS);
+}
+
 StatusInfo status_info(const Store& store, int64_t now) {
   StatusInfo s;
   s.clock = hh_mm(now + store.tz_offset());

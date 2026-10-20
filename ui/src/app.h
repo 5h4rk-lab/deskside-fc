@@ -15,6 +15,7 @@
 #include "prefs.h"
 #include "settings.h"
 #include "store.h"
+#include "wifi_service.h"
 
 // What the UI needs from its host. All references must outlive the UI.
 struct AppDeps {
@@ -31,8 +32,10 @@ struct AppDeps {
   Prefs& prefs;
   // Optional: driven from app_refresh() (brightness and night dimming).
   Backlight* backlight = nullptr;
-  // Optional: opens the Wi-Fi setup. Without it Settings has no Wi-Fi row.
-  std::function<void()> onOpenWifi = nullptr;
+  // Optional: the Wi-Fi hardware. Without it Settings has no Wi-Fi row and
+  // there is no guided setup. With it, app_create() opens the guided setup
+  // when nothing is saved and the device is not connected.
+  WifiService* wifi = nullptr;
 };
 
 // Night dimming lifts for this long after the last touch.
@@ -73,6 +76,14 @@ lv_obj_t* app_zone_view(lv_obj_t* appRoot);
 void app_open_team_picker(lv_obj_t* appRoot);
 // The picker, or nullptr when it is closed.
 lv_obj_t* app_team_picker_view(lv_obj_t* appRoot);
+
+// Opens the Wi-Fi pages (network list, password page) as a full-screen
+// overlay: from the Settings Wi-Fi row, or by app_create() in first-setup
+// mode. Back closes it. Does nothing without a Wi-Fi service.
+void app_open_wifi(lv_obj_t* appRoot);
+void app_close_wifi(lv_obj_t* appRoot);
+// The Wi-Fi screen (see screens/wifi.h), or nullptr when it is closed.
+lv_obj_t* app_wifi_view(lv_obj_t* appRoot);
 
 // Makes `team` the favourite: saves it, sets the Store's favourite and the
 // accent colour, rebuilds the three tab screens and the tab bar icons (and an
