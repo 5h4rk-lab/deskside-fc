@@ -13,6 +13,7 @@ LV_FONT_DECLARE(bigshoulders_22)
 LV_FONT_DECLARE(bigshoulders_28)
 LV_FONT_DECLARE(bigshoulders_40)
 LV_FONT_DECLARE(bigshoulders_56)  // digits and : - ' % / only
+LV_FONT_DECLARE(bigshoulders_72)  // space, A-Z and ! only ("GOAL!", "WIN!")
 LV_FONT_DECLARE(bigshoulders_96)  // digits and : - ' % / only
 LV_FONT_DECLARE(hanken_10)
 LV_FONT_DECLARE(hanken_12)

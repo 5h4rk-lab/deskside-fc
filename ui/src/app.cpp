@@ -1,10 +1,13 @@
 #include "app.h"
 
 #include <memory>
+#include <optional>
 #include <utility>
 
 #include "fonts.h"
+#include "goal_detector.h"
 #include "screens/detail.h"
+#include "screens/goal.h"
 #include "screens/live.h"
 #include "screens/matches.h"
 #include "screens/news.h"
@@ -31,6 +34,9 @@ struct AppState {
   Shown shown = Shown::None;
   std::string matchId;
   uint32_t request = 0;  // id of the latest fetch; older results are only stored
+
+  // Goal celebration: fed by app_matches_changed().
+  GoalDetector detector;
 
   // Cleared when the tab view is deleted, for callbacks that outlive it.
   std::shared_ptr<bool> alive = std::make_shared<bool>(true);
@@ -367,4 +373,24 @@ void app_close_detail(lv_obj_t* appRoot) {
 lv_obj_t* app_detail_view(lv_obj_t* appRoot) {
   AppState* st = app_state(appRoot);
   return st != nullptr && st->overlay != nullptr ? st->view : nullptr;
+}
+
+void app_matches_changed(lv_obj_t* appRoot, int64_t now) {
+  AppState* st = app_state(appRoot);
+  if (st == nullptr) return;
+  const std::optional<GoalEvent> event =
+      st->detector.update(st->store->matches(), st->store->favourite());
+  if (!event) return;
+  if (event->favourite) goal_celebrate(*event, *st->images);
+
+  // The detail names the scorer and feeds the Live strip, for either team.
+  std::shared_ptr<bool> alive = st->alive;
+  const GoalEvent ev = *event;
+  st->source->fetch_detail(ev.matchId, [st, alive, ev, now](bool ok, MatchDetail detail) {
+    if (!*alive || !ok) return;
+    const std::optional<Scorer> scorer = latest_scorer(detail, ev.side);
+    st->store->set_detail(std::move(detail));
+    if (ev.favourite && scorer) goal_set_scorer(ev.matchId, scorer->name, scorer->photo);
+    app_refresh(st->tabview, now);
+  });
 }

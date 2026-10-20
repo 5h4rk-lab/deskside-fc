@@ -12,6 +12,8 @@
 #       sizes 16 22 28 40: ASCII 0x20-0x7E, Latin-1 Supplement 0xA0-0xFF,
 #                          Latin Extended-A 0x100-0x17F (player/club names)
 #       sizes 56 96:       digits and  space : - ' % /  only (scores, clocks)
+#       size 72:           space, A-Z and ! only (the goal celebration's
+#                          "GOAL!" and "WIN!")
 #   hanken_<size>.c        Hanken Grotesk, wght 400, sizes 10 12 14,
 #                          same ranges as the full Big Shoulders sizes
 #
@@ -28,6 +30,7 @@ LV_FONT_CONV_VERSION=1.5.3
 
 FULL_RANGE="0x20-0x7E,0xA0-0xFF,0x100-0x17F"
 DIGIT_RANGE="0x20,0x25,0x27,0x2D,0x2F,0x30-0x3A"
+STAMP_RANGE="0x20,0x21,0x41-0x5A"
 
 mkdir -p "$WORK/src"
 cd "$WORK"
@@ -64,6 +67,7 @@ conv() { # fontfile name size range
 
 for s in 16 22 28 40; do conv src/BigShouldersDisplay-800.ttf bigshoulders "$s" "$FULL_RANGE"; done
 for s in 56 96;        do conv src/BigShouldersDisplay-800.ttf bigshoulders "$s" "$DIGIT_RANGE"; done
+conv src/BigShouldersDisplay-800.ttf bigshoulders 72 "$STAMP_RANGE"
 for s in 10 12 14;     do conv src/HankenGrotesk-400.ttf hanken "$s" "$FULL_RANGE"; done
 
 {

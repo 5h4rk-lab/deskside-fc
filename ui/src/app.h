@@ -45,3 +45,11 @@ void app_close_detail(lv_obj_t* appRoot);
 // The detail (or loading/error placeholder) shown in the overlay, or nullptr
 // when no detail is open. For tests and screenshots.
 lv_obj_t* app_detail_view(lv_obj_t* appRoot);
+
+// Call after every Store::set_matches(). Runs the goal detector on the new
+// match list; for any goal or full-time event it fetches that match's detail
+// into the Store (the Live strip shows the new event) and, for the favourite's
+// goals and wins, starts the goal celebration and then fills in the scorer
+// from the detail. The first call never celebrates (first sight of a match).
+// `now` is epoch seconds, used to refresh the screens when the detail arrives.
+void app_matches_changed(lv_obj_t* appRoot, int64_t now);
