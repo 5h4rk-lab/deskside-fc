@@ -182,4 +182,3 @@ address, signal strength, and `[wifi] HTTPS status=200 bytes=...`.
 - `src/touch.*`: CST328 / CST3530 detection and reading, I2C scans.
 - `src/wifi_scan.*`: Wi-Fi scan, optional connect and HTTPS GET.
 - `src/bringup_log.*`: serial logging with the replayable boot log.
-- `REPORT.md`: build results and open concerns.
