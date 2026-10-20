@@ -193,6 +193,56 @@ TEST_CASE("mock wifi: async results arrive on poll after their latency") {
   CHECK(w.pending() == 0);
 }
 
+TEST_CASE("mock wifi: a new join replaces a pending one, which fails at once and saves nothing") {
+  MockWifi w;
+  w.set_networks({net("A", -50), net("B", -60, true), net("C", -55)});
+  w.set_password("A", "aaaaaaaa");
+  w.set_password("C", "cccccccc");
+  w.set_async(true);
+  std::vector<std::string> answers;
+  w.connect("A", "aaaaaaaa", [&](bool ok) { answers.push_back(std::string("A") + (ok ? "+" : "-")); });
+  CHECK(answers.empty());
+  w.connect("B", "", [&](bool ok) { answers.push_back(std::string("B") + (ok ? "+" : "-")); });
+  // A is answered false at the moment of replacement.
+  CHECK(answers == std::vector<std::string>{"A-"});
+  CHECK(w.pending() == 1);
+  w.poll(MockWifi::kDefaultConnectMs * 2);
+  CHECK(answers == std::vector<std::string>{"A-", "B+"});
+  CHECK(w.saved() == std::vector<std::string>{"B"});
+  CHECK(w.status().ssid == "B");
+
+  // connect_saved replaces a pending connect too; scans are untouched.
+  int scans = 0;
+  w.scan([&](std::vector<WifiNetwork>) { ++scans; });
+  w.connect("C", "cccccccc", [&](bool ok) { answers.push_back(std::string("C") + (ok ? "+" : "-")); });
+  w.connect_saved("B", [&](bool ok) { answers.push_back(std::string("b") + (ok ? "+" : "-")); });
+  CHECK(answers.back() == "C-");
+  w.poll(MockWifi::kDefaultConnectMs * 2);
+  CHECK(scans == 1);
+  CHECK(answers == std::vector<std::string>{"A-", "B+", "C-", "b+"});
+  CHECK(w.saved() == std::vector<std::string>{"B"});
+  CHECK(w.pending() == 0);
+}
+
+TEST_CASE("mock wifi: every join is answered exactly once, sync or async") {
+  for (bool async : {false, true}) {
+    MockWifi w;
+    w.set_networks({net("A", -50, true), net("B", -60, true)});
+    w.set_async(async);
+    int a = 0;
+    int b = 0;
+    int c = 0;
+    w.connect("A", "", [&](bool) { ++a; });
+    w.connect("B", "", [&](bool) { ++b; });
+    w.connect_saved("A", [&](bool) { ++c; });
+    w.poll(10000);
+    w.poll(10000);
+    CHECK(a == 1);
+    CHECK(b == 1);
+    CHECK(c == 1);
+  }
+}
+
 TEST_CASE("mock wifi: auto_join picks the strongest saved network in range") {
   MockWifi w;
   w.set_networks({net("A", -70), net("B", -50), net("C", -40)});
@@ -507,7 +557,7 @@ TEST_CASE("wifi screen: while connecting the field and keyboard are disabled and
   CHECK_FALSE(visible(p->connectSpinner));
 }
 
-TEST_CASE("wifi screen: Back while connecting, then a late success, does nothing visible") {
+TEST_CASE("wifi screen: Back while connecting, then a late success, only updates the status") {
   Screen s;
   s.wifi.set_async(true);
   s.open();
@@ -518,13 +568,108 @@ TEST_CASE("wifi screen: Back while connecting, then a late success, does nothing
   s.click(s.pw()->back);
   s.settle();
   CHECK(s.pw() == nullptr);
-  CHECK(text(s.parts()->statusText) == "Not connected");
+  // The device is still trying: the card says so until the answer arrives.
+  CHECK(text(s.parts()->statusText) == "Connecting to Office...");
+  CHECK(visible(s.parts()->statusSpinner));
   s.wifi.poll(MockWifi::kDefaultConnectMs);
   s.settle();
   test_advance(kWifiConnectedHoldMs + 50);
+  // No page, no "Connected" pause, no callback: the card and lists follow
+  // the device.
   CHECK(s.pw() == nullptr);
   CHECK(s.connected == 0);
   CHECK(s.backs == 0);
+  CHECK(text(s.parts()->statusText) == "Connected to Office");
+  CHECK_FALSE(visible(s.parts()->statusSpinner));
+  CHECK(s.saved_row("Office") != nullptr);
+}
+
+TEST_CASE("wifi screen: Back while connecting, then an open network: the second join wins") {
+  Screen s;
+  s.wifi.set_async(true);
+  s.open();
+  s.wifi.poll(MockWifi::kDefaultScanMs);
+  wifi_open_password(s.obj, "Office");
+  s.type("office-pass");
+  s.click(s.pw()->connect);
+  s.click(s.pw()->back);
+  s.settle();
+  CHECK(text(s.parts()->statusText) == "Connecting to Office...");
+  s.click(s.nearby_row("Cafe")->row);
+  CHECK(s.wifi.connectCalls == 2);
+  // Office was replaced (answered false at once); Cafe is the attempt now.
+  CHECK(text(s.parts()->statusText) == "Connecting to Cafe...");
+  CHECK(s.wifi.pending() == 1);
+  s.wifi.poll(MockWifi::kDefaultConnectMs);
+  s.settle();
+  CHECK(text(s.parts()->statusText) == "Connected to Cafe");
+  CHECK_FALSE(visible(s.parts()->statusSpinner));
+  CHECK(s.wifi.saved() == std::vector<std::string>{"Cafe"});
+  CHECK(s.connected == 1);
+  CHECK(s.pw() == nullptr);
+}
+
+TEST_CASE("wifi screen: Back while connecting, reopen and Connect again works") {
+  Screen s;
+  s.wifi.set_async(true);
+  s.open();
+  s.wifi.poll(MockWifi::kDefaultScanMs);
+  wifi_open_password(s.obj, "Office");
+  s.type("office-pass");
+  s.click(s.pw()->connect);
+  s.click(s.pw()->back);
+  s.settle();
+  wifi_open_password(s.obj, "Office");
+  REQUIRE(s.pw() != nullptr);
+  s.type("office-pass");
+  CHECK_FALSE(disabled(s.pw()->connect));
+  s.click(s.pw()->connect);
+  CHECK(s.wifi.connectCalls == 2);
+  CHECK(text(s.pw()->connectLabel) == "Connecting...");
+  s.wifi.poll(MockWifi::kDefaultConnectMs);
+  REQUIRE(s.pw() != nullptr);
+  CHECK(text(s.pw()->connectLabel) == "Connected");
+  CHECK_FALSE(visible(s.pw()->error));
+  test_advance(kWifiConnectedHoldMs + 50);
+  s.settle();
+  CHECK(s.pw() == nullptr);
+  CHECK(text(s.parts()->statusText) == "Connected to Office");
+  CHECK(s.wifi.saved() == std::vector<std::string>{"Office"});
+  CHECK(s.connected == 1);
+}
+
+TEST_CASE("wifi screen: a quick tap on a second network while joining is ignored") {
+  Screen s;
+  s.wifi.set_networks({net("Cafe", -70, true), net("Library", -60, true)});
+  s.wifi.set_async(true);
+  s.open();
+  s.wifi.poll(MockWifi::kDefaultScanMs);
+  lv_obj_t* cafe = s.nearby_row("Cafe")->row;
+  lv_obj_t* library = s.nearby_row("Library")->row;
+  s.click(cafe);
+  s.click(library);
+  CHECK(s.wifi.connectCalls == 1);
+  CHECK(s.wifi.lastConnectSsid == "Cafe");
+  CHECK(text(s.parts()->statusText) == "Connecting to Cafe...");
+  s.wifi.poll(MockWifi::kDefaultConnectMs);
+  CHECK(text(s.parts()->statusText) == "Connected to Cafe");
+}
+
+TEST_CASE("wifi screen: forgetting the connected network shows Not connected") {
+  Screen s;
+  s.wifi.set_saved({"Home"});
+  REQUIRE(s.wifi.auto_join());
+  s.open();
+  CHECK(text(s.parts()->statusText) == "Connected to Home");
+  const WifiSavedRow* r = s.saved_row("Home");
+  REQUIRE(r != nullptr);
+  s.click(r->forget);
+  s.click(r->confirmForget);
+  wifi_refresh(s.obj);
+  s.settle();
+  CHECK(text(s.parts()->statusText) == "Not connected");
+  CHECK_FALSE(visible(s.parts()->statusBars));
+  CHECK_FALSE(visible(s.parts()->statusDetail));
 }
 
 TEST_CASE("wifi screen: the typed password is cleared when the page closes") {

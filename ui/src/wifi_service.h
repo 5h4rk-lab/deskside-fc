@@ -4,8 +4,17 @@
 //
 // Contract:
 // - Callbacks (scan, connect, connect_saved) may be invoked synchronously,
-//   from inside the call, or later from the UI thread. They are never invoked
-//   from inside another call to this service. Callers must cope with both.
+//   from inside the call, or later from the UI thread. Apart from the
+//   replaced join below, they are never invoked from inside another call to
+//   this service. Callers must cope with both.
+// - Every request's `done` is called exactly once.
+// - One join at a time: a connect() or connect_saved() made while another
+//   join is pending REPLACES it. The replaced attempt's `done` is called once
+//   with false (possibly from inside the replacing call, before it returns),
+//   and the replaced network is NOT saved. Only the latest join can succeed.
+// - Implementations must not hold a lock while invoking `done`: the UI calls
+//   status() and saved() from inside its callbacks, which may run inside the
+//   service's own call.
 // - connect() saves the network with its password in the service's own
 //   storage when (and only when) it succeeds, replacing an existing entry with
 //   the same SSID. connect_saved() joins a saved network with the password the
@@ -17,7 +26,9 @@
 //   UI's.
 // - The UI never sees or stores saved passwords. A password typed by the user
 //   goes to connect() and nowhere else (no logs, no prefs).
-// - forget() removes one saved entry (unknown SSIDs are ignored).
+// - forget() removes one saved entry (unknown SSIDs are ignored). Forgetting
+//   the network the device is joined to disconnects it: status() then reports
+//   not connected.
 // - At least kMinSavedNetworks networks must be storable. A service may cap
 //   the list above that (dropping the least recently used entry when full),
 //   but must never silently drop saved entries while it holds fewer than

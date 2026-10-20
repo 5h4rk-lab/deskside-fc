@@ -9,8 +9,9 @@
 //
 // Synchronous by default: callbacks run inside the call. With set_async(true)
 // results are queued and delivered by poll() once their latency has passed;
-// the state changes (saved list, status) happen at delivery. Passwords are
-// never printed.
+// the state changes (saved list, status) happen at delivery. A join made
+// while another is queued replaces it: the queued one is answered false at
+// once (in queue order) and saves nothing. Passwords are never printed.
 #pragma once
 
 #include <stddef.h>
@@ -75,13 +76,16 @@ class MockWifi : public WifiService {
   struct Job {
     int64_t due;
     std::function<void()> run;
+    std::function<void()> fail;  // joins only: answers false without effect
   };
 
   const WifiNetwork* in_range(const std::string& ssid) const;
   std::string password_for(const std::string& ssid) const;
   void remember(const std::string& ssid, const std::string& password);
   void join(const std::string& ssid);
-  void deliver(int64_t latency, std::function<void()> run);
+  void deliver(int64_t latency, std::function<void()> run, std::function<void()> fail = nullptr);
+  // Answers every queued join false and drops it (a new join replaces it).
+  void replace_pending_joins();
 
   std::vector<WifiNetwork> networks_;
   std::vector<std::pair<std::string, std::string>> passwords_;

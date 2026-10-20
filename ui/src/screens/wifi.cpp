@@ -83,6 +83,11 @@ struct WifiState {
   bool joinFromPage = false;
   std::string joinSsid;
   uint32_t request = 0;
+  // The latest attempt handed to the service and not answered yet. It stays
+  // after the user walks away (its result is ignored, but the device is still
+  // trying that network), so the status card keeps saying so.
+  std::string inFlightSsid;
+  uint32_t inFlightRequest = 0;
   std::string failedSsid;  // last list join that failed
 
   // Password page.
@@ -331,8 +336,9 @@ void render_status(WifiState* st) {
   std::string main;
   std::string detail;
   bool failed = false;
-  if (st->joining) {
-    main = std::string(kWifiConnectingPrefix) + st->joinSsid + "...";
+  const bool trying = !st->inFlightSsid.empty();
+  if (trying) {
+    main = std::string(kWifiConnectingPrefix) + st->inFlightSsid + "...";
   } else {
     main = wifi_status_text(s);
     if (!st->failedSsid.empty()) {
@@ -346,8 +352,8 @@ void render_status(WifiState* st) {
   set_text(p.statusDetail, detail);
   lv_obj_set_style_text_color(p.statusDetail, failed ? pal.amber : pal.dim, 0);
   show(p.statusDetail, !detail.empty());
-  show_spinner(p.statusSpinner, st->joining);
-  show(p.statusBars, !st->joining && s.connected);
+  show_spinner(p.statusSpinner, trying);
+  show(p.statusBars, !trying && s.connected);
   if (s.connected) set_bars(p.statusBars, wifi_signal_bars(s.rssi));
 }
 
@@ -467,7 +473,9 @@ void stop_hold(WifiState* st) {
 void close_page(WifiState* st) {
   if (!st->pageOpen) return;
   if (st->joining && st->joinFromPage) {
-    // Walk away from the join: its result is ignored.
+    // Walk away from the join: its result is ignored. The device is still
+    // trying, so the status card says so until the service answers; a new
+    // join replaces the attempt (see WifiService).
     ++st->request;
     st->joining = false;
   }
@@ -483,6 +491,18 @@ void close_page(WifiState* st) {
   refresh(st);
 }
 
+// Hands attempt `request` for `ssid` to the service (the caller then calls it).
+void sent(WifiState* st, uint32_t request, const std::string& ssid) {
+  st->inFlightRequest = request;
+  st->inFlightSsid = ssid;
+}
+
+// Every attempt's answer arrives exactly once (a replaced one as a failure).
+// Only the latest one ends the "Connecting to" state.
+void returned(WifiState* st, uint32_t request) {
+  if (request == st->inFlightRequest) st->inFlightSsid.clear();
+}
+
 void page_connect(WifiState* st) {
   if (!st->pageOpen || st->joining || st->pageJoined || st->hold != nullptr) return;
   std::string password = lv_textarea_get_text(st->page.field);
@@ -493,11 +513,17 @@ void page_connect(WifiState* st) {
   st->failedSsid.clear();
   st->pageError = false;
   const uint32_t request = ++st->request;
+  sent(st, request, st->joinSsid);
   update_page(st);
   render_status(st);
   std::shared_ptr<bool> alive = st->alive;
   st->wifi->connect(st->joinSsid, password, [st, alive, request](bool ok) {
-    if (!*alive || request != st->request || !st->pageOpen) return;
+    if (!*alive) return;
+    returned(st, request);
+    if (request != st->request || !st->pageOpen) {
+      refresh(st);  // walked away: only the status and lists follow the device
+      return;
+    }
     st->joining = false;
     if (ok) {
       st->pageJoined = true;
@@ -656,10 +682,16 @@ void start_join(WifiState* st, const std::string& ssid, bool saved) {
   st->joinSsid = ssid;
   st->failedSsid.clear();
   const uint32_t request = ++st->request;
+  sent(st, request, ssid);
   render_status(st);
   std::shared_ptr<bool> alive = st->alive;
   auto done = [st, alive, request, ssid](bool ok) {
-    if (!*alive || request != st->request) return;
+    if (!*alive) return;
+    returned(st, request);
+    if (request != st->request) {
+      refresh(st);
+      return;
+    }
     st->joining = false;
     if (!ok) st->failedSsid = ssid;
     refresh(st);

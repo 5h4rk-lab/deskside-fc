@@ -39,12 +39,27 @@ void MockWifi::join(const std::string& ssid) {
   status_.ip = kMockIp;
 }
 
-void MockWifi::deliver(int64_t latency, std::function<void()> run) {
+void MockWifi::deliver(int64_t latency, std::function<void()> run, std::function<void()> fail) {
   if (!async_) {
     run();
     return;
   }
-  queue_.push_back(Job{clock_ + latency, std::move(run)});
+  queue_.push_back(Job{clock_ + latency, std::move(run), std::move(fail)});
+}
+
+void MockWifi::replace_pending_joins() {
+  // Taken out of the queue first: the answers may call back into the mock.
+  std::vector<std::function<void()>> replaced;
+  std::vector<Job> kept;
+  for (Job& j : queue_) {
+    if (j.fail) {
+      replaced.push_back(std::move(j.fail));
+    } else {
+      kept.push_back(std::move(j));
+    }
+  }
+  queue_ = std::move(kept);
+  for (auto& f : replaced) f();
 }
 
 void MockWifi::scan(std::function<void(std::vector<WifiNetwork>)> done) {
@@ -58,6 +73,7 @@ void MockWifi::connect(const std::string& ssid, const std::string& password,
                        std::function<void(bool ok)> done) {
   ++connectCalls;
   lastConnectSsid = ssid;
+  replace_pending_joins();
   deliver(connectMs_, [this, ssid, password, done] {
     const WifiNetwork* n = in_range(ssid);
     const bool ok = n != nullptr && (n->open || (!password_for(ssid).empty() &&
@@ -67,12 +83,15 @@ void MockWifi::connect(const std::string& ssid, const std::string& password,
       join(ssid);
     }
     if (done) done(ok);
+  }, [done] {
+    if (done) done(false);
   });
 }
 
 void MockWifi::connect_saved(const std::string& ssid, std::function<void(bool ok)> done) {
   ++connectSavedCalls;
   lastConnectSsid = ssid;
+  replace_pending_joins();
   deliver(connectMs_, [this, ssid, done] {
     auto it = std::find_if(saved_.begin(), saved_.end(),
                            [&](const Saved& s) { return s.ssid == ssid; });
@@ -85,6 +104,8 @@ void MockWifi::connect_saved(const std::string& ssid, std::function<void(bool ok
       join(ssid);
     }
     if (done) done(ok);
+  }, [done] {
+    if (done) done(false);
   });
 }
 
@@ -138,11 +159,17 @@ bool MockWifi::auto_join() {
 
 void MockWifi::poll(int64_t elapsedMs) {
   clock_ += elapsedMs;
-  // Due jobs in order; a job may queue another (delivered on a later poll).
-  std::vector<Job> due;
-  std::vector<Job> later;
-  for (Job& j : queue_) (j.due <= clock_ ? due : later).push_back(std::move(j));
-  queue_ = std::move(later);
-  std::stable_sort(due.begin(), due.end(), [](const Job& a, const Job& b) { return a.due < b.due; });
-  for (Job& j : due) j.run();
+  // Due jobs one at a time, earliest first: a delivered result may start a
+  // join that replaces a queued one, so each is taken from the queue only
+  // when it runs.
+  for (;;) {
+    auto next = queue_.end();
+    for (auto it = queue_.begin(); it != queue_.end(); ++it) {
+      if (it->due <= clock_ && (next == queue_.end() || it->due < next->due)) next = it;
+    }
+    if (next == queue_.end()) return;
+    std::function<void()> run = std::move(next->run);
+    queue_.erase(next);
+    run();
+  }
 }
