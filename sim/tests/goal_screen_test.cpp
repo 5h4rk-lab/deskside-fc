@@ -222,6 +222,65 @@ TEST_CASE("goal overlay: floods the top layer with the accent, then leaves after
   CHECK(lv_obj_get_child_count(lv_layer_top()) == 0);
 }
 
+TEST_CASE("goal overlay: events that are not the favourite's are ignored") {
+  Fixture f;
+  GoalEvent other = goal_event();
+  other.favourite = false;
+  goal_celebrate(other, f.images);
+  test_advance(10);
+  CHECK_FALSE(goal_active());
+  CHECK(goal_parts() == nullptr);
+  CHECK(lv_obj_get_child_count(lv_layer_top()) == 0);
+
+  // A showing overlay is left exactly as it is: same object, same timers.
+  goal_celebrate(goal_event(), f.images);
+  run_for(3000);
+  lv_obj_t* overlay = goal_parts()->overlay;
+  goal_celebrate(other, f.images);
+  CHECK(goal_parts()->overlay == overlay);
+  CHECK(text(goal_parts()->scoreLine) == "58'  \xC2\xB7  ARS 2 : 1 CHE");
+  CHECK(lv_obj_get_child_count(lv_layer_top()) == 1);
+  run_for(1200);  // 4.2 s after the favourite's goal
+  CHECK_FALSE(goal_active());
+}
+
+namespace {
+
+void count_draw(lv_event_t* e) { ++*static_cast<int*>(lv_event_get_user_data(e)); }
+
+// Frames (of `step` ms each) in which the rays were drawn, over `ms`.
+int frames_drawn(int& draws, uint32_t ms, uint32_t step = 10) {
+  int frames = 0;
+  for (uint32_t t = 0; t < ms; t += step) {
+    const int before = draws;
+    test_advance(step);
+    if (draws != before) ++frames;
+  }
+  return frames;
+}
+
+}  // namespace
+
+TEST_CASE("goal overlay: full frame rate for the entrance, then throttled repaints") {
+  Fixture f;
+  goal_celebrate(goal_event(), f.images);
+  int draws = 0;
+  lv_obj_add_event_cb(goal_parts()->rays, count_draw, LV_EVENT_DRAW_MAIN, &draws);
+
+  // Entrance: every display refresh repaints. With 10 ms steps the 33 ms
+  // refresh timer runs every 40 ms.
+  const int refreshMs = (LV_DEF_REFR_PERIOD + 9) / 10 * 10;
+  const int entrance = frames_drawn(draws, 400);
+  CHECK(entrance >= 400 / refreshMs - 1);
+
+  run_for(200);  // past kEntranceMs
+  const int idle = frames_drawn(draws, 1000);
+  const int expected = static_cast<int>(1000 / goal::kIdleFrameMs);
+  CHECK(idle >= expected - 2);
+  CHECK(idle <= expected + 2);
+  CHECK(idle < 1000 / refreshMs / 2 + 2);
+}
+
 TEST_CASE("goal overlay: a full-time win stays about 8 s") {
   Fixture f;
   goal_celebrate(goal_event(true), f.images);

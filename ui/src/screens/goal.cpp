@@ -122,7 +122,9 @@ struct State {
   lv_timer_t* lifetime = nullptr;  // fires at the start of the fade (or the end)
   ImageProvider* images = nullptr;
   int32_t rayAngle = 0;            // 0.1 degree units
+  bool moved = false;              // a motion frame has been shown
   uint32_t clockMs = 0;            // time since the start, from the motion animation
+  uint32_t frameMs = 0;            // time of the shown rays and confetti (quantised)
   int32_t lastAnimValue = 0;
   bool reduced = false;
   bool dismissed = false;          // hidden, deletion scheduled
@@ -244,7 +246,7 @@ void draw_rays(lv_event_t* e) {
 void place_confetti(State* st) {
   const int32_t h = lv_obj_get_height(st->parts.overlay);
   const int32_t span = h + 2 * kConfettiMargin;
-  const float t = static_cast<float>(st->clockMs);
+  const float t = static_cast<float>(st->frameMs);
   constexpr float kTwoPi = 6.2831853f;
   for (size_t i = 0; i < st->parts.confetti.size(); ++i) {
     const ConfettiSpec& c = kConfetti[i];
@@ -274,7 +276,14 @@ void on_motion(void* var, int32_t v) {
                                                : v + static_cast<int32_t>(kRayTurnMs) - st->lastAnimValue;
   st->lastAnimValue = v;
   st->clockMs += static_cast<uint32_t>(delta);
-  st->rayAngle = static_cast<int32_t>(static_cast<int64_t>(v) * 3600 / kRayTurnMs);
+  // Full rate while the entrance plays; then the rays and confetti move in
+  // kIdleFrameMs steps and the screen is repainted only when they do.
+  const uint32_t frame =
+      st->clockMs < kEntranceMs ? st->clockMs : st->clockMs - st->clockMs % kIdleFrameMs;
+  if (frame == st->frameMs && st->moved) return;
+  st->moved = true;
+  st->frameMs = frame;
+  st->rayAngle = static_cast<int32_t>(static_cast<int64_t>(frame % kRayTurnMs) * 3600 / kRayTurnMs);
   lv_obj_invalidate(st->parts.rays);
   place_confetti(st);
 }
@@ -463,6 +472,9 @@ void build(State* st, const GoalEvent& event) {
 }  // namespace
 
 void goal_celebrate(const GoalEvent& event, ImageProvider& images) {
+  // Only the favourite's goals and wins are celebrated; anything else leaves
+  // a showing overlay alone.
+  if (!event.favourite) return;
   if (g_current != nullptr) {
     lv_obj_t* old = g_current->parts.overlay;
     g_current = nullptr;

@@ -34,6 +34,8 @@ constexpr int32_t kStampRotation = -40;   // 0.1 degree units: -4 degrees
 constexpr uint32_t kRiseDelayMs = 120;    // cutout starts rising after the stamp starts
 constexpr uint32_t kRiseMs = 280;         // cutout rise duration (ease out)
 constexpr uint32_t kRayTurnMs = 6000;     // one full turn of the rays
+constexpr uint32_t kEntranceMs = 500;     // stamp and rise: rays and confetti at full frame rate
+constexpr uint32_t kIdleFrameMs = 80;     // afterwards they move (and repaint) in steps of this
 constexpr int kRayCount = 24;             // wedges of 7.5 degrees with equal gaps
 constexpr lv_opa_t kRayOpa = 31;          // about 12 percent white
 constexpr int kConfettiCount = 14;
@@ -68,9 +70,10 @@ std::string goal_waiting_line(const GoalEvent& event);
 // when its relative luminance is above 0.6 (chalk text stays legible).
 lv_color_t goal_background(lv_color_t accent);
 
-// Shows the celebration on lv_layer_top() for a favourite event (the caller
-// filters). A second call while one is showing replaces it and restarts the
-// timers: there is never more than one overlay. The scorer cutout and name
+// Shows the celebration on lv_layer_top() for a favourite event; events with
+// favourite == false are ignored (nothing shown, a showing overlay is left as
+// it is). A second favourite call while one is showing replaces it and
+// restarts the timers: there is never more than one overlay. The scorer cutout and name
 // start empty (a silhouette and goal_waiting_line()) until goal_set_scorer().
 void goal_celebrate(const GoalEvent& event, ImageProvider& images);
 
