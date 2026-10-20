@@ -1,9 +1,14 @@
 // Desktop simulator: runs the shared UI code in an SDL window.
 // Usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]
+//            [--screen VIEW] [--match ID]
 //   --scale N        window is 240*N x 320*N, LVGL stays 240x320 (default 2)
 //   --assets DIR     image assets (default: the repo's sim/assets)
 //   --fixtures       load the contract fixtures instead of the demo data
 //   --snapshot PATH  render once without a window, write a PNG and exit
+//   --screen VIEW    live (default), or the match detail: detail (its default
+//                    sub-tab), summary, pitch or stats
+//   --match ID       match the detail opens (default: the live demo match;
+//                    demo-rma-bar is a pre-match with no lineups yet)
 #include <SDL2/SDL.h>
 #include <lvgl.h>
 
@@ -12,12 +17,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <memory>
 #include <string>
 
 #include "app.h"
+#include "data_source.h"
 #include "demo_data.h"
 #include "mock_image_provider.h"
 #include "mock_source.h"
+#include "screens/detail.h"
 #include "snapshot.h"
 #include "store.h"
 
@@ -33,10 +41,14 @@ struct Options {
   std::string assets = SIM_ASSETS_DIR;
   bool fixtures = false;
   std::string snapshot;
+  std::string screen = "live";
+  std::string match = demo::kLiveMatchId;
 };
 
 [[noreturn]] void usage(int code) {
-  std::printf("usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]\n");
+  std::printf(
+      "usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]\n"
+      "           [--screen live|detail|summary|pitch|stats] [--match ID]\n");
   std::exit(code);
 }
 
@@ -54,6 +66,17 @@ Options parse_args(int argc, char** argv) {
       o.assets = argv[++i];
     } else if (std::strcmp(argv[i], "--snapshot") == 0 && hasValue) {
       o.snapshot = argv[++i];
+    } else if (std::strcmp(argv[i], "--screen") == 0 && hasValue) {
+      o.screen = argv[++i];
+      const char* const kScreens[] = {"live", "detail", "summary", "pitch", "stats"};
+      bool known = false;
+      for (const char* k : kScreens) known = known || o.screen == k;
+      if (!known) {
+        std::fprintf(stderr, "invalid --screen '%s'\n", o.screen.c_str());
+        usage(2);
+      }
+    } else if (std::strcmp(argv[i], "--match") == 0 && hasValue) {
+      o.match = argv[++i];
     } else if (std::strcmp(argv[i], "--fixtures") == 0) {
       o.fixtures = true;
     } else if (std::strcmp(argv[i], "--help") == 0) {
@@ -82,19 +105,49 @@ int local_tz_offset(time_t now) {
   return static_cast<int>(std::difftime(std::mktime(&local), std::mktime(&utc)));
 }
 
+// DataSource over the demo data. Callbacks run synchronously.
+class DemoSource : public DataSource {
+ public:
+  void set_now(int64_t now) { now_ = now; }
+
+  void fetch_matches(std::function<void(bool, std::vector<MatchSummary>)> cb) override {
+    cb(true, demo_matches(now_));
+  }
+  void fetch_detail(const std::string& id, std::function<void(bool, MatchDetail)> cb) override {
+    MatchDetail d = demo_detail(id);
+    if (d.match.home.abbr.empty()) {
+      cb(false, {});  // not a demo match
+      return;
+    }
+    // Same kick-off times as the match list.
+    for (const MatchSummary& m : demo_matches(now_)) {
+      if (m.id == id) d.match = m;
+    }
+    cb(true, std::move(d));
+  }
+  void fetch_news(std::function<void(bool, std::vector<NewsItem>)> cb) override { cb(true, {}); }
+  void fetch_teams(std::function<void(bool, std::vector<Team>)> cb) override { cb(true, {}); }
+
+ private:
+  int64_t now_ = 0;
+};
+
 // Fills the store from the demo data or the contract fixtures.
 class Feed {
  public:
-  Feed(Store& store, bool fixtures)
-      : store_(store), source_(fixtures ? new MockSource(CONTRACT_FIXTURES_DIR) : nullptr) {}
-  ~Feed() { delete source_; }
+  Feed(Store& store, bool fixtures) : store_(store) {
+    if (fixtures) {
+      source_.reset(new MockSource(CONTRACT_FIXTURES_DIR));
+    } else {
+      demo_ = new DemoSource();
+      source_.reset(demo_);
+    }
+  }
+
+  DataSource& source() { return *source_; }
 
   void poll(int64_t now) {
-    if (source_ == nullptr) {
-      store_.set_matches(demo_matches(now), now);
-      store_.set_detail(demo_detail(demo::kLiveMatchId));
-      return;
-    }
+    if (demo_ != nullptr) demo_->set_now(now);
     source_->fetch_matches([&](bool ok, std::vector<MatchSummary> matches) {
       if (ok) {
         store_.set_matches(std::move(matches), now);
@@ -117,7 +170,8 @@ class Feed {
 
  private:
   Store& store_;
-  MockSource* source_;
+  std::unique_ptr<DataSource> source_;
+  DemoSource* demo_ = nullptr;  // owned by source_ in demo mode
 };
 
 void discard_flush(lv_display_t* disp, const lv_area_t*, uint8_t*) {
@@ -159,12 +213,20 @@ int main(int argc, char** argv) {
   Feed feed(store, opt.fixtures);
   feed.poll(start);
 
-  AppDeps deps{store, images, [](const std::string& id) {
+  AppDeps deps{store, images, feed.source(), [](const std::string& id) {
                  std::printf("open match %s\n", id.c_str());
                  std::fflush(stdout);
                }};
   lv_obj_t* app = app_create(lv_screen_active(), deps);
   app_refresh(app, start);
+
+  if (opt.screen != "live") {
+    app_open_match(app, opt.match);
+    lv_obj_t* view = app_detail_view(app);
+    if (opt.screen == "summary") detail_select_tab(view, DetailTab::Summary, false);
+    if (opt.screen == "pitch") detail_select_tab(view, DetailTab::Pitch, false);
+    if (opt.screen == "stats") detail_select_tab(view, DetailTab::Stats, false);
+  }
 
   if (headless) {
     for (int i = 0; i < 10; ++i) lv_timer_handler();

@@ -1,0 +1,136 @@
+#include <doctest/doctest.h>
+
+#include <stdint.h>
+
+#include <string>
+
+#include "format.h"
+
+namespace {
+
+constexpr int64_t kTue2000 = 1792526400;  // Tue 2026-10-20 20:00 UTC
+constexpr int kIndia = 5 * 3600 + 30 * 60;
+
+}  // namespace
+
+TEST_CASE("floor_div rounds towards negative infinity") {
+  CHECK(floor_div(7, 2) == 3);
+  CHECK(floor_div(-7, 2) == -4);
+  CHECK(floor_div(-8, 2) == -4);
+  CHECK(floor_div(7, -2) == -4);
+  CHECK(floor_div(0, 5) == 0);
+  CHECK(floor_div(-1, 86400) == -1);
+}
+
+TEST_CASE("hh_mm and weekday use the shifted local time") {
+  CHECK(hh_mm(kTue2000) == "20:00");
+  CHECK(std::string(weekday(kTue2000)) == "Tue");
+  // +05:30 moves 20:00 Tuesday past midnight.
+  CHECK(hh_mm(kTue2000 + kIndia) == "01:30");
+  CHECK(std::string(weekday(kTue2000 + kIndia)) == "Wed");
+  // A negative offset (UTC-08:00) moves 03:00 Tuesday back into Monday.
+  const int64_t tue0300 = kTue2000 - 17 * 3600;
+  CHECK(hh_mm(tue0300 - 8 * 3600) == "19:00");
+  CHECK(std::string(weekday(tue0300 - 8 * 3600)) == "Mon");
+  // Day boundaries.
+  const int64_t midnight = kTue2000 - 20 * 3600;
+  CHECK(hh_mm(midnight) == "00:00");
+  CHECK(std::string(weekday(midnight)) == "Tue");
+  CHECK(hh_mm(midnight - 60) == "23:59");
+  CHECK(std::string(weekday(midnight - 1)) == "Mon");
+  // Before the epoch.
+  CHECK(hh_mm(-60) == "23:59");
+  CHECK(std::string(weekday(-1)) == "Wed");
+  CHECK(std::string(weekday(0)) == "Thu");
+}
+
+TEST_CASE("countdown_text never says 0 min") {
+  CHECK(countdown_text(30) == "Kick-off soon");
+  CHECK(countdown_text(60) == "Kick-off in 1 min");
+  CHECK(countdown_text(59 * 60 + 59) == "Kick-off in 59 min");
+  CHECK(countdown_text(3600) == "Kick-off in 1 h");
+  CHECK(countdown_text(3600 + 59) == "Kick-off in 1 h");
+  CHECK(countdown_text(3600 + 5 * 60) == "Kick-off in 1 h 5 min");
+  CHECK(countdown_text(23 * 3600) == "Kick-off in 23 h");
+  CHECK(countdown_text(86400) == "Kick-off in 1 day");
+  CHECK(countdown_text(3 * 86400 + 7) == "Kick-off in 3 days");
+}
+
+TEST_CASE("stale_text gives minutes, at least one, then hours") {
+  CHECK(stale_text(10) == "Updated 1 min ago");
+  CHECK(stale_text(95) == "Updated 1 min ago");
+  CHECK(stale_text(200) == "Updated 3 min ago");
+  CHECK(stale_text(59 * 60 + 59) == "Updated 59 min ago");
+  CHECK(stale_text(3600) == "Updated 1 h ago");
+  CHECK(stale_text(3 * 3600 + 1800) == "Updated 3 h ago");
+}
+
+TEST_CASE("to_upper changes ASCII letters only") {
+  CHECK(to_upper("Arsenal FC 1") == "ARSENAL FC 1");
+  CHECK(to_upper("M\xC3\xB6nchengladbach") == "M\xC3\xB6NCHENGLADBACH");
+}
+
+TEST_CASE("url_encode keeps unreserved characters and encodes the rest") {
+  CHECK(url_encode("Kai Havertz") == "Kai%20Havertz");
+  CHECK(url_encode("a-b_c.d~e") == "a-b_c.d~e");
+  CHECK(url_encode("\xC3\x98") == "%C3%98");
+  CHECK(url_encode("a&b=c") == "a%26b%3Dc");
+}
+
+TEST_CASE("with_param and sized replace or add query parameters") {
+  CHECK(with_param("/api/img", "w", "48") == "/api/img?w=48");
+  CHECK(with_param("/api/img?u=x", "w", "48") == "/api/img?u=x&w=48");
+  CHECK(with_param("/api/img?u=x&w=10&h=10", "w", "48") == "/api/img?u=x&w=48&h=10");
+  CHECK(with_param("/api/img?wide=1", "w", "48") == "/api/img?wide=1&w=48");
+  CHECK(sized("/api/img?u=x&w=48&h=48", 84, 84) == "/api/img?u=x&w=84&h=84");
+  CHECK(sized("", 84, 84).empty());
+}
+
+TEST_CASE("league_name maps known codes and passes unknown ones through") {
+  CHECK(std::string(league_name("eng.1")) == "Premier League");
+  CHECK(std::string(league_name("uefa.champions")) == "Champions League");
+  const std::string unknown = "xyz.9";
+  CHECK(std::string(league_name(unknown)) == "xyz.9");
+}
+
+TEST_CASE("formation_blurb explains a formation in plain English") {
+  CHECK(formation_blurb("4-3-3") == "4 defenders, 3 midfielders, 3 attackers");
+  CHECK(formation_blurb("3-1-4-2") == "3 defenders, 5 midfielders, 2 attackers");
+  CHECK(formation_blurb("4-2-3-1") == "4 defenders, 5 midfielders, 1 attacker");
+  CHECK(formation_blurb("4-4-2") == "4 defenders, 4 midfielders, 2 attackers");
+  CHECK(formation_blurb("5-4-1") == "5 defenders, 4 midfielders, 1 attacker");
+  CHECK(formation_blurb("1-3-2") == "1 defender, 3 midfielders, 2 attackers");
+  CHECK(formation_blurb("4-1-4-1") == "4 defenders, 5 midfielders, 1 attacker");
+  CHECK(formation_blurb("").empty());
+  CHECK(formation_blurb("4-4").empty());
+  CHECK(formation_blurb("4--3-3").empty());
+  CHECK(formation_blurb("4-3-3-").empty());
+  CHECK(formation_blurb("a-b-c").empty());
+  CHECK(formation_blurb("4-x-3").empty());
+}
+
+TEST_CASE("minute_sort_key orders added time after the base minute") {
+  CHECK(minute_sort_key("12'") < minute_sort_key("34'"));
+  CHECK(minute_sort_key("45'") < minute_sort_key("45'+2'"));
+  CHECK(minute_sort_key("45'+2'") < minute_sort_key("46'"));
+  CHECK(minute_sort_key("90'+4'") < minute_sort_key("105'"));
+  CHECK(minute_sort_key("9'") < minute_sort_key("10'"));
+  // Unparsable minutes go last.
+  CHECK(minute_sort_key("120'") < minute_sort_key("?"));
+  CHECK(minute_sort_key("") == minute_sort_key("?"));
+}
+
+TEST_CASE("stat_number reads the leading number of a stat value") {
+  double v = -1;
+  CHECK(stat_number("58%", v));
+  CHECK(v == doctest::Approx(58));
+  CHECK(stat_number("11", v));
+  CHECK(v == doctest::Approx(11));
+  CHECK(stat_number("1.75", v));
+  CHECK(v == doctest::Approx(1.75));
+  CHECK(stat_number(" 7", v));
+  CHECK(v == doctest::Approx(7));
+  CHECK_FALSE(stat_number("", v));
+  CHECK_FALSE(stat_number("n/a", v));
+  CHECK_FALSE(stat_number("%", v));
+}

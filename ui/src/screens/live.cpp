@@ -1,6 +1,7 @@
 #include "screens/live.h"
 
 #include "fonts.h"
+#include "format.h"
 #include "theme.h"
 
 // Geometry follows screen 1 of the mockup (240x320, tab bar overlaid at the
@@ -88,98 +89,6 @@ struct LiveState {
 
 // ---------------------------------------------------------------- helpers
 
-int64_t floor_div(int64_t a, int64_t b) {
-  int64_t q = a / b;
-  if ((a % b != 0) && ((a < 0) != (b < 0))) --q;
-  return q;
-}
-
-std::string two_digits(int v) {
-  char buf[4];
-  buf[0] = static_cast<char>('0' + (v / 10) % 10);
-  buf[1] = static_cast<char>('0' + v % 10);
-  buf[2] = '\0';
-  return buf;
-}
-
-// "HH:MM" of `t` shifted by the timezone offset.
-std::string hh_mm(int64_t local) {
-  const int64_t secs = local - floor_div(local, 86400) * 86400;
-  return two_digits(static_cast<int>(secs / 3600)) + ":" +
-         two_digits(static_cast<int>((secs % 3600) / 60));
-}
-
-const char* weekday(int64_t local) {
-  static const char* const kDays[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
-  int64_t d = (floor_div(local, 86400) + 4) % 7;  // 1970-01-01 was a Thursday
-  if (d < 0) d += 7;
-  return kDays[d];
-}
-
-std::string to_upper(std::string s) {
-  for (char& c : s) {
-    if (c >= 'a' && c <= 'z') c = static_cast<char>(c - 'a' + 'A');
-  }
-  return s;  // non-ASCII letters keep their case (fonts carry both)
-}
-
-std::string url_encode(const std::string& s) {
-  static const char kHex[] = "0123456789ABCDEF";
-  std::string out;
-  for (unsigned char c : s) {
-    const bool keep = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-                      (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~';
-    if (keep) {
-      out += static_cast<char>(c);
-    } else {
-      out += '%';
-      out += kHex[c >> 4];
-      out += kHex[c & 0xF];
-    }
-  }
-  return out;
-}
-
-// Replaces (or adds) the query parameter `key` in a helper path.
-std::string with_param(const std::string& path, const std::string& key, const std::string& value) {
-  const size_t q = path.find('?');
-  if (q == std::string::npos) return path + "?" + key + "=" + value;
-  size_t pos = q + 1;
-  while (pos < path.size()) {
-    size_t end = path.find('&', pos);
-    if (end == std::string::npos) end = path.size();
-    if (path.compare(pos, key.size() + 1, key + "=") == 0) {
-      return path.substr(0, pos) + key + "=" + value + path.substr(end);
-    }
-    pos = end + 1;
-  }
-  return path + "&" + key + "=" + value;
-}
-
-std::string sized(const std::string& path, int w, int h) {
-  if (path.empty()) return path;
-  return with_param(with_param(path, "w", std::to_string(w)), "h", std::to_string(h));
-}
-
-const char* league_name(const std::string& code) {
-  struct Entry {
-    const char* code;
-    const char* name;
-  };
-  static const Entry kLeagues[] = {
-      {"eng.1", "Premier League"},     {"esp.1", "La Liga"},
-      {"ita.1", "Serie A"},            {"ger.1", "Bundesliga"},
-      {"fra.1", "Ligue 1"},            {"uefa.champions", "Champions League"},
-      {"uefa.europa", "Europa League"}, {"eng.fa", "FA Cup"},
-      {"eng.league_cup", "League Cup"}, {"fifa.world", "World Cup"},
-      {"uefa.euro", "Euro"},
-  };
-  for (const Entry& e : kLeagues) {
-    if (code == e.code) return e.name;
-  }
-  return code.c_str();
-}
-
 const char* event_name(EventType t) {
   switch (t) {
     case EventType::Goal: return "Goal";
@@ -188,24 +97,6 @@ const char* event_name(EventType t) {
     case EventType::Sub: return "Substitution";
   }
   return "";
-}
-
-std::string countdown_text(int64_t seconds) {
-  if (seconds < 60) return "Kick-off soon";
-  if (seconds < 3600) return "Kick-off in " + std::to_string(seconds / 60) + " min";
-  if (seconds < 86400) {
-    return "Kick-off in " + std::to_string(seconds / 3600) + " h " +
-           std::to_string((seconds % 3600) / 60) + " min";
-  }
-  const int64_t days = seconds / 86400;
-  return "Kick-off in " + std::to_string(days) + (days == 1 ? " day" : " days");
-}
-
-std::string stale_text(int64_t age) {
-  int64_t minutes = age / 60;
-  if (minutes < 1) minutes = 1;
-  if (minutes < 60) return "Updated " + std::to_string(minutes) + " min ago";
-  return "Updated " + std::to_string(minutes / 60) + " h ago";
 }
 
 int distance_sq(lv_color_t a, lv_color_t b) {

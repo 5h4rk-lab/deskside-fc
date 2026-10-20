@@ -15,12 +15,25 @@ class NoImages : public ImageProvider {
   void request(const std::string&, std::function<void(ImagePtr)> done) override { done(nullptr); }
 };
 
+class NoSource : public DataSource {
+ public:
+  void fetch_matches(std::function<void(bool, std::vector<MatchSummary>)> cb) override {
+    cb(false, {});
+  }
+  void fetch_detail(const std::string&, std::function<void(bool, MatchDetail)> cb) override {
+    cb(false, {});
+  }
+  void fetch_news(std::function<void(bool, std::vector<NewsItem>)> cb) override { cb(false, {}); }
+  void fetch_teams(std::function<void(bool, std::vector<Team>)> cb) override { cb(false, {}); }
+};
+
 // Store, images and the deps that point at them, for app_create().
 struct Host {
   Store store;
   NoImages images;
+  NoSource source;
   std::vector<std::string> opened;
-  AppDeps deps{store, images, [this](const std::string& id) { opened.push_back(id); }};
+  AppDeps deps{store, images, source, [this](const std::string& id) { opened.push_back(id); }};
 };
 
 }  // namespace

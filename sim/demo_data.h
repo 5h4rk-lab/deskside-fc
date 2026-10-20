@@ -13,6 +13,8 @@ namespace demo {
 
 // Id of the live Arsenal v Chelsea match in demo_matches().
 constexpr const char* kLiveMatchId = "demo-ars-che";
+// Id of the Real Madrid v Barcelona match (pre-match: no lineups yet).
+constexpr const char* kPreMatchId = "demo-rma-bar";
 // Favourite team of the demo (Arsenal, ESPN id).
 constexpr const char* kFavouriteId = "359";
 
@@ -23,6 +25,9 @@ constexpr const char* kFavouriteId = "359";
 // PSG v Marseille yesterday (3:1, full time). Times are relative to `now`.
 std::vector<MatchSummary> demo_matches(int64_t now);
 
-// Detail for a demo match. The live match has three goals (Saka 12', Palmer
-// 34', Havertz 58'); any other id gives a detail with that id and no events.
+// Detail for a demo match. The live match has lineups (Arsenal 4-3-3, Chelsea
+// 4-2-3-1; faces for Saka, Havertz, Rice and Palmer), five events (goals by
+// Saka 12', Palmer 34' and Havertz 58', a yellow card and a substitution) and
+// five stats. The pre-match Real Madrid v Barcelona has only its summary. Any
+// other id gives a detail with that id and nothing else.
 MatchDetail demo_detail(const std::string& matchId);

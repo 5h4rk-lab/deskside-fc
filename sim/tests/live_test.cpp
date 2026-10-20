@@ -315,7 +315,7 @@ TEST_CASE("demo data: live Arsenal v Chelsea with the latest goal by Havertz") {
   CHECK(ms[0].home.crest ==
         "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F359.png&w=48&h=48");
   const MatchDetail d = demo_detail(demo::kLiveMatchId);
-  REQUIRE(d.events.size() == 3);
+  REQUIRE(d.events.size() == 5);
   CHECK(d.events.back().player == "Kai Havertz");
   CHECK(demo_detail("other").events.empty());
 }
