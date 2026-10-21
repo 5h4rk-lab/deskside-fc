@@ -36,6 +36,10 @@ struct AppDeps {
   // there is no guided setup. With it, app_create() opens the guided setup
   // when nothing is saved and the device is not connected.
   WifiService* wifi = nullptr;
+  // Optional: called once after every successful join made on the Wi-Fi
+  // pages (first setup or from Settings), after the screens have updated.
+  // The host asks for fresh data here (Poller::request_all_now()).
+  std::function<void()> onWifiConnected = nullptr;
 };
 
 // Night dimming lifts for this long after the last touch.
@@ -113,6 +117,9 @@ std::string app_open_match_id(lv_obj_t* appRoot);
 // match list; for any goal or full-time event it fetches that match's detail
 // into the Store (the Live strip shows the new event) and, for the favourite's
 // goals and wins, starts the goal celebration and then fills in the scorer
-// from the detail. The first call never celebrates (first sight of a match).
+// from the detail, once a detail has as many goals of the scoring side as its
+// score (scorer_for_goal): app_refresh() keeps checking the Store's detail
+// while the overlay shows. The first call never celebrates (first sight of a
+// match).
 // `now` is epoch seconds, used to refresh the screens when the detail arrives.
 void app_matches_changed(lv_obj_t* appRoot, int64_t now);

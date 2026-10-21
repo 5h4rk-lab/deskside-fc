@@ -5,8 +5,9 @@
 // tick()).
 //
 // - Only helper image paths are fetched: a path must start with "/api/img?" or
-//   "/api/cutout?", be at most kMaxPathLength long and contain no "..", no
-//   "://", no whitespace and no control characters. Anything else is answered
+//   "/api/cutout?", be at most kMaxPathLength long, contain no ".." and no
+//   "://", and consist only of the bytes A-Z a-z 0-9 and - . _ ~ % & = ? / : + ,
+//   (non-ASCII text must arrive percent-encoded). Anything else is answered
 //   with nullptr at once and never fetched (the device only talks to its
 //   helper).
 // - A cached image is answered at once. A miss for a path already queued or
@@ -23,10 +24,18 @@
 //   the next success.
 // - The host calls tick() regularly with a monotonic millisecond count: it
 //   expires remembered failures and treats a request with no answer for
-//   kLostMs as lost (its waiters get nullptr; a late answer is ignored).
-// - Callbacks may run synchronously or later, and may call request() again. A
-//   provider destroyed with requests outstanding drops them: their callers
-//   are not called. The token is never logged or exposed.
+//   kLostMs as lost (its waiters get nullptr; a late answer is ignored). The
+//   clock must be 64-bit and never wrap (on the ESP32 esp_timer_get_time() /
+//   1000, not a 32-bit millis()); if it goes backwards anyway, requests in
+//   flight count as started at that tick and remembered failures last at most
+//   their longest window from it, so nothing freezes.
+// - Callers' callbacks may run synchronously (cache hits, refused paths,
+//   remembered failures) or later, and may call request() again. A provider
+//   destroyed with requests outstanding drops them: their callers are not
+//   called. Destroying the provider from inside a callback is supported only
+//   for answers that arrive asynchronously from the transport (the transport
+//   contract in http_transport.h forbids answering inside get()). The token is
+//   never logged or exposed.
 #pragma once
 
 #include <stddef.h>

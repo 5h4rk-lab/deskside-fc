@@ -322,3 +322,117 @@ TEST_CASE("demo data: live Arsenal v Chelsea with the latest goal by Havertz") {
   CHECK(d.events.back().player == "Kai Havertz");
   CHECK(demo_detail("other").events.empty());
 }
+
+// ------------------------------------------------------------ last result
+
+namespace {
+
+MatchSummary past_match(const char* id, Team home, Team away, int hs, int as, int64_t kickoff) {
+  MatchSummary m;
+  m.id = id;
+  m.league = "eng.1";
+  m.state = MatchState::Post;
+  m.clock = "FT";
+  m.kickoff = kickoff;
+  m.home = std::move(home);
+  m.away = std::move(away);
+  m.homeScore = hs;
+  m.awayScore = as;
+  return m;
+}
+
+Team ars() { return team("359", "ARS", "Arsenal", 0xEF0107); }
+Team che() { return team("363", "CHE", "Chelsea", 0x034694); }
+
+}  // namespace
+
+TEST_CASE("last result: only a past match shows the last-result card (home win)") {
+  Fixture f;
+  f.store.set_matches({past_match("m-past", ars(), che(), 3, 1, kNow - 26 * 3600)}, kNow);
+  f.refresh();
+  const LiveParts* p = f.parts();
+  CHECK(visible(p->lastCaption));
+  CHECK(text(p->lastCaption) == "Last result");
+  CHECK(score_text(p) == "3:1");
+  CHECK(visible(p->score));
+  CHECK(text(p->lastOpponent) == "vs CHE");
+  CHECK(text(p->lastFt) == "FT");
+  CHECK(visible(p->lastFt));
+  CHECK(text(p->lastWhen) == "yesterday");
+  CHECK(visible(p->lastWhen));
+  CHECK_FALSE(visible(p->message));
+  CHECK_FALSE(visible(p->pill));
+  CHECK_FALSE(visible(p->homeName));
+  CHECK(visible(p->homeCrest));
+  CHECK(visible(p->awayCrest));
+  CHECK(lv_obj_get_style_text_font(p->lastCaption, 0) == &hanken_10);
+  CHECK(u32(lv_obj_get_style_text_color(p->lastCaption, 0)) == u32(theme().dim));
+  // Tapping opens the match detail.
+  REQUIRE(visible(p->scoreArea));
+  lv_obj_send_event(p->scoreArea, LV_EVENT_CLICKED, nullptr);
+  REQUIRE(f.opened.size() == 1);
+  CHECK(f.opened[0] == "m-past");
+}
+
+TEST_CASE("last result: an away loss is shown from the favourite's side") {
+  Fixture f;
+  f.store.set_matches({past_match("m-past", che(), ars(), 2, 0, kNow - 3 * 86400 - 600)}, kNow);
+  f.refresh();
+  const LiveParts* p = f.parts();
+  CHECK(score_text(p) == "0:2");
+  CHECK(text(p->lastOpponent) == "vs CHE");
+  CHECK(text(p->lastWhen) == "3 days ago");
+}
+
+TEST_CASE("last result: a draw") {
+  Fixture f;
+  f.store.set_matches({past_match("m-past", che(), ars(), 1, 1, kNow - 5 * 3600)}, kNow);
+  f.refresh();
+  const LiveParts* p = f.parts();
+  CHECK(score_text(p) == "1:1");
+  CHECK(text(p->lastOpponent) == "vs CHE");
+  CHECK(text(p->lastWhen) == "5h ago");
+}
+
+TEST_CASE("last result: a live match still wins, and so does the next fixture") {
+  Fixture f;
+  const LiveParts* p = f.parts();
+  const MatchSummary past = past_match("m-past", ars(), che(), 3, 1, kNow - 26 * 3600);
+  f.store.set_matches({past, live_match()}, kNow);
+  f.refresh();
+  CHECK(visible(p->pill));
+  CHECK(score_text(p) == "2:1");
+  CHECK_FALSE(visible(p->lastCaption));
+  CHECK_FALSE(visible(p->lastOpponent));
+  CHECK_FALSE(visible(p->lastWhen));
+
+  MatchSummary next = live_match();
+  next.id = "m-next";
+  next.state = MatchState::Pre;
+  next.clock = "";
+  next.kickoff = 1792526400;
+  next.homeScore.reset();
+  next.awayScore.reset();
+  f.store.set_matches({past, next}, kNow);
+  f.refresh();
+  CHECK(text(p->message) == "Next: CHE Tue 20:00");
+  CHECK(visible(p->message));
+  CHECK_FALSE(visible(p->lastCaption));
+  CHECK_FALSE(visible(p->score));
+  CHECK_FALSE(visible(p->lastWhen));
+
+  // Back to only the past match, then to nothing of the favourite's.
+  f.store.set_matches({past}, kNow);
+  f.refresh();
+  CHECK(visible(p->lastCaption));
+  CHECK_FALSE(visible(p->message));
+  MatchSummary other = past;
+  other.home = team("1", "AAA", "Other", 0x111111);
+  other.away = team("2", "BBB", "Else", 0x222222);
+  f.store.set_matches({other}, kNow);
+  f.refresh();
+  CHECK(text(p->message) == "No matches soon");
+  CHECK(visible(p->message));
+  CHECK_FALSE(visible(p->lastCaption));
+  CHECK_FALSE(visible(p->score));
+}

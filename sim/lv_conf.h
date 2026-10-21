@@ -5,7 +5,7 @@
  * lv_conf_internal.h. The ESP32 firmware config must match the items marked
  * [FW] so the UI renders and behaves identically on the device:
  *   - LV_COLOR_DEPTH 16 (RGB565, same as the ILI9341-class panel)
- *   - LV_FONT_FMT_TXT_LARGE 0 (the generated ui/fonts/*.c assume the default)
+ *   - LV_FONT_FMT_TXT_LARGE 0 (the generated .c files in ui/fonts assume the default)
  *   - LV_USE_TABVIEW, LV_USE_SNAPSHOT, LV_USE_LODEPNG, LV_USE_TJPGD enabled
  *   - LV_USE_KEYBOARD (needs LV_USE_BUTTONMATRIX), LV_USE_TEXTAREA,
  *     LV_USE_SLIDER, LV_USE_SWITCH enabled (Settings and the team picker).

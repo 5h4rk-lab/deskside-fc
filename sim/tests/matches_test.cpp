@@ -611,3 +611,48 @@ TEST_CASE("app: tapping a Matches row opens the detail overlay") {
   CHECK(h.source.calls[0] == "m-mnc");
   CHECK(h.opened == std::vector<std::string>{"m-mnc"});
 }
+
+namespace {
+
+lv_area_t coords(lv_obj_t* o) {
+  lv_area_t a;
+  lv_obj_get_coords(o, &a);
+  return a;
+}
+
+// True when the two rectangles, one grown by `clearance` px, overlap.
+bool too_near(const lv_area_t& a, const lv_area_t& b, int32_t clearance) {
+  return a.x1 - clearance <= b.x2 && b.x1 <= a.x2 + clearance && a.y1 - clearance <= b.y2 &&
+         b.y1 <= a.y2 + clearance;
+}
+
+}  // namespace
+
+TEST_CASE("the favourite's dot sits by its own crest, clear of both crests") {
+  Fixture f;
+  f.load({live("m-home", kNow - 600, ars(), che(), 1, 0),
+          make("m-away", "eng.1", MatchState::Pre, kNow + 3 * kDay, bha(), ars())});
+  for (const char* id : {"m-home", "m-away"}) {
+    INFO("row: ", id);
+    MatchesRowParts r = f.row(id);
+    lv_obj_update_layout(r.row);
+    const lv_area_t dot = coords(r.favDot);
+    const lv_area_t home = coords(r.homeCrest);
+    const lv_area_t away = coords(r.awayCrest);
+    const lv_area_t row = coords(r.row);
+    CHECK_FALSE(too_near(dot, home, 2));
+    CHECK_FALSE(too_near(dot, away, 2));
+    // Inside the row.
+    CHECK(dot.x1 >= row.x1);
+    CHECK(dot.x2 <= row.x2);
+    CHECK(dot.y1 >= row.y1);
+    CHECK(dot.y2 <= row.y2);
+    // On the favourite's side.
+    const int32_t rowMid = (row.x1 + row.x2) / 2;
+    if (std::string(id) == "m-home") {
+      CHECK(dot.x2 < rowMid);
+    } else {
+      CHECK(dot.x1 > rowMid);
+    }
+  }
+}

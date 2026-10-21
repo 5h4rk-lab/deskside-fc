@@ -267,9 +267,118 @@ TEST_CASE("poller: request_matches_now fetches at the next tick, even during bac
   f.at(1002);
   CHECK(f.source.count("matches") == 1);
   f.source.answer_matches(true, {match("m1", MatchState::Pre)});
-  // ...and the request was served by that fetch.
+  // ...but is remembered: the fetch in flight may predate the reason for asking.
   f.at(2000);
+  CHECK(f.source.count("matches") == 2);
+  f.source.answer_matches(true, {match("m1", MatchState::Pre)});
+  f.at(3000);
+  CHECK(f.source.count("matches") == 2);  // asked once, fetched once more
+}
+
+TEST_CASE("poller: a forced request made while a fetch is pending survives its failure") {
+  Fixture f;
+  f.start(false);
+  f.poller.request_matches_now();
+  f.at(1000);
+  REQUIRE(f.source.count("matches") == 1);
+  f.poller.request_matches_now();  // e.g. Wi-Fi just connected
+  f.at(1500);
   CHECK(f.source.count("matches") == 1);
+  f.source.answer_matches(false, {}, FetchError::Offline);  // back-off would say 180 s
+  f.at(1501);
+  CHECK(f.source.count("matches") == 2);
+}
+
+TEST_CASE("poller: a forced request made while a fetch is pending survives its loss") {
+  Fixture f;
+  f.start(false);
+  f.poller.request_matches_now();
+  f.at(1000);
+  f.poller.request_matches_now();
+  f.at(30999);
+  CHECK(f.source.count("matches") == 1);
+  f.at(31000);  // lost after 30 s: the remembered request goes out at once
+  CHECK(f.source.count("matches") == 2);
+}
+
+TEST_CASE("poller: request_all_now with empty teams and news fetches all three in order") {
+  Fixture f;
+  f.at(0);
+  f.source.answer_matches(true, {match("m1", MatchState::Pre)});
+  f.source.answer_teams(false, FetchError::Offline);
+  f.source.answer_news(false, FetchError::Offline);
+  f.source.calls.clear();
+  f.at(1000);
+  CHECK(f.source.calls.empty());  // teams wait 60 s, news 5 min
+  f.poller.request_all_now();
+  f.at(1001);
+  CHECK(f.source.calls == std::vector<std::string>{"matches", "teams", "news"});
+}
+
+TEST_CASE("poller: request_all_now with teams and news in only fetches matches") {
+  Fixture f;
+  f.start(false);
+  f.poller.request_all_now();
+  f.at(1000);
+  CHECK(f.source.calls == std::vector<std::string>{"matches"});
+}
+
+TEST_CASE("poller: request_all_now refetches news whose last fetch failed") {
+  Fixture f;
+  f.start(false);
+  f.at(300000);  // news due
+  REQUIRE(f.source.count("news") == 1);
+  f.source.answer_news(false, FetchError::Server);
+  REQUIRE_FALSE(f.store.news().empty());  // kept
+  f.source.answer_matches(true, {match("m1", MatchState::Pre)});
+  f.source.calls.clear();
+  f.poller.request_all_now();
+  f.at(300001);
+  CHECK(f.source.calls == std::vector<std::string>{"matches", "news"});
+}
+
+TEST_CASE("poller: request_all_now while teams and news are in flight honours them after") {
+  Fixture f;
+  f.at(0);
+  f.source.answer_matches(true, {match("m1", MatchState::Pre)});
+  f.source.calls.clear();
+  f.poller.request_all_now();  // teams and news still pending
+  f.at(10);
+  CHECK(f.source.calls == std::vector<std::string>{"matches"});
+  f.source.answer_teams(false, FetchError::Offline);
+  f.source.answer_news(false, FetchError::Offline);
+  f.at(20);
+  CHECK(f.source.calls == std::vector<std::string>{"matches", "teams", "news"});
+}
+
+TEST_CASE("poller: a monotonic clock that jumps backwards restarts the timing") {
+  Fixture f;
+  f.at(100000);
+  f.source.answer_matches(true, {match("m1", MatchState::Pre)});
+  f.source.answer_teams(true);
+  f.source.answer_news(true);
+  f.source.calls.clear();
+  f.at(5000);  // the clock went back (a wrapped counter)
+  CHECK(f.source.calls.empty());
+  f.at(184999);
+  CHECK(f.source.count("matches") == 0);
+  f.at(185000);  // 180 s after the new base
+  CHECK(f.source.count("matches") == 1);
+}
+
+TEST_CASE("poller: a backwards clock does not keep a pending fetch from being lost") {
+  Fixture f;
+  f.start(false);
+  f.at(200000);
+  REQUIRE(f.source.count("matches") == 1);  // pending, never answered
+  f.at(1000);                               // clock back
+  f.at(30999);
+  CHECK(f.source.count("matches") == 1);
+  f.at(31000);  // lost 30 s after the new base
+  f.at(180999);
+  CHECK(f.source.count("matches") == 1);
+  f.at(181000);  // and retried by the normal delay, counted from the new base
+  CHECK(f.source.count("matches") == 2);
 }
 
 TEST_CASE("poller: news every 5 min; teams only while empty, at most once a minute") {

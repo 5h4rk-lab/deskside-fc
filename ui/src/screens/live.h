@@ -1,5 +1,8 @@
 // Live screen (home tab): the favourite team's live match over a diagonal
-// split in both team colours, or a card for its next match. Mockup: screen 1
+// split in both team colours, else a card for its next match, else a card
+// for its last result (score from the favourite's side, "vs CHE", "FT" and
+// how long ago), else "No matches soon" ("Connecting..." before any data).
+// The live and last-result cards open the match when tapped. Mockup: screen 1
 // of docs/superpowers/specs/assets/ui-mockup-v2.html.
 //
 // Shared with the ESP32 firmware: no clock reads, no SDL, no stdio. Every
@@ -64,6 +67,11 @@ struct LiveParts {
   lv_obj_t* eventCutout;
   lv_obj_t* eventCaption; // "58'  Goal"
   lv_obj_t* eventPlayer;
+  lv_obj_t* lastCaption;  // last result card: "Last result" (Hanken 10, dim)
+  lv_obj_t* lastLine;     // row holding lastOpponent and the FT tag
+  lv_obj_t* lastOpponent; // "vs CHE"
+  lv_obj_t* lastFt;       // "FT" inside an outlined tag
+  lv_obj_t* lastWhen;     // relative_time() of the kick-off: "yesterday"
   lv_obj_t* gear;         // settings button (32x32), hidden until live_set_on_settings()
 };
 

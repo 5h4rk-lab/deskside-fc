@@ -316,3 +316,28 @@ TEST_CASE("http source: an answer arriving after the source is gone is ignored")
   t.flush();
   CHECK_FALSE(called);
 }
+
+TEST_CASE("http source: a folded duplicate whose first caller destroys the source stops there") {
+  FakeTransport t;
+  auto* src = new HttpSource(t, kBase, kToken);
+  src->fetch_matches([](bool, std::vector<MatchSummary>) {});  // in flight
+  bool firstCalled = false;
+  int laterCalls = 0;
+  // The first news request destroys the source from its callback.
+  src->fetch_news([&](bool, std::vector<NewsItem>) {
+    firstCalled = true;
+    delete src;
+    src = nullptr;
+  });
+  // Eight more: the first one is folded into the next duplicate.
+  for (int i = 0; i < 8; ++i) src->fetch_news([&](bool, std::vector<NewsItem>) { ++laterCalls; });
+  REQUIRE(src->queued() == HttpSource::kMaxQueued);
+  t.respond(500, "");                                 // matches
+  t.respond(200, fixture("news-normalised.json"));    // the folded pair
+  CHECK(t.deliver_next());
+  CHECK(t.deliver_next());
+  CHECK(firstCalled);
+  CHECK(src == nullptr);
+  CHECK(laterCalls == 0);  // the newer half never ran on the dead source
+  CHECK(t.pending() == 0);  // and nothing more was sent
+}

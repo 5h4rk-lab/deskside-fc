@@ -5,8 +5,9 @@
 //   --assets DIR     image assets (default: the repo's sim/assets)
 //   --fixtures       load the contract fixtures instead of the demo data
 //   --snapshot PATH  render once without a window, write a PNG and exit
-//   --screen VIEW    live (default), matches (the Matches tab), news (the News
-//                    tab), or the match
+//   --screen VIEW    live (default), live-last (the Live tab when the
+//                    favourite has only a past match: its last result),
+//                    matches (the Matches tab), news (the News tab), or the match
 //                    detail: detail (its default sub-tab), summary, pitch or
 //                    stats
 //   --match ID       match the detail opens (default: the live demo match;
@@ -38,9 +39,11 @@
 //                    page (a few characters typed), after a wrong password,
 //                    and while joining
 //   --helper URL     fetch real data from the helper at URL (also the
-//                    HELPER_URL environment variable) instead of the demo
+//                    HELPER_URL environment variable) instead of the demo.
+//                    Use https for real use. Only scheme://host is printed.
 //   --token T        the helper's access token (also HELPER_TOKEN); never
-//                    printed. With --helper, crests, photos and cutouts are
+//                    printed. Prefer HELPER_TOKEN: argv is visible to other
+//                    local users in /proc. With --helper, crests, photos and cutouts are
 //                    downloaded through the helper too (a second connection,
 //                    so pictures never queue behind data polls); without it
 //                    they come from --assets. Control characters in the URL or
@@ -152,7 +155,7 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
 [[noreturn]] void usage(int code) {
   std::printf(
       "usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]\n"
-      "           [--screen live|matches|news|detail|summary|pitch|stats|goal|goal-win]\n"
+      "           [--screen live|live-last|matches|news|detail|summary|pitch|stats|goal|goal-win]\n"
       "           [--match ID] [--at-ms N] [--reduced-motion] [--demo-goal]\n"
       "           [--screen settings|zone|picker|picker-search]\n"
       "           [--prefs FILE|memory] [--reset-prefs] [--tz ZONE] [--now EPOCH]\n"
@@ -188,7 +191,7 @@ Options parse_args(int argc, char** argv) {
       o.snapshot = argv[++i];
     } else if (std::strcmp(argv[i], "--screen") == 0 && hasValue) {
       o.screen = argv[++i];
-      const char* const kScreens[] = {"live",     "matches",  "news",   "detail",
+      const char* const kScreens[] = {"live",     "live-last", "matches",  "news",   "detail",
                                       "summary",  "pitch",    "stats",  "goal",
                                       "goal-win", "settings", "zone",   "picker",
                                       "picker-search", "wifi", "wifi-first", "wifi-password",
@@ -287,6 +290,34 @@ Options parse_args(int argc, char** argv) {
     std::exit(2);
   }
   return o;
+}
+
+// "scheme://host[:port]" of a URL, without userinfo, path or query (which may
+// carry secrets), for printing.
+std::string printable_origin(const std::string& url) {
+  const size_t scheme = url.find("://");
+  if (scheme == std::string::npos) return "(invalid URL)";
+  const size_t start = scheme + 3;
+  size_t end = url.find_first_of("/?#", start);
+  if (end == std::string::npos) end = url.size();
+  std::string authority = url.substr(start, end - start);
+  const size_t at = authority.rfind('@');
+  if (at != std::string::npos) authority = authority.substr(at + 1);
+  return url.substr(0, start) + authority;
+}
+
+// --screen live-last: the favourite keeps only its past matches, so the Live
+// tab falls back to the last result.
+void keep_only_past_of_favourite(MockSource& source, const std::string& fav) {
+  std::vector<MatchSummary> kept;
+  source.fetch_matches([&](bool ok, std::vector<MatchSummary> ms) {
+    if (!ok) return;
+    for (MatchSummary& m : ms) {
+      const bool favourite = m.home.id == fav || m.away.id == fav;
+      if (!favourite || m.state == MatchState::Post) kept.push_back(std::move(m));
+    }
+  });
+  source.set_matches(std::move(kept));
 }
 
 // Milliseconds since start on a monotonic clock (for the Poller).
@@ -530,7 +561,8 @@ int main(int argc, char** argv) {
     transport = std::make_unique<CurlTransport>();
     http = std::make_unique<HttpSource>(*transport, opt.helper, opt.token);
     source = http.get();
-    std::printf("fetching from the helper at %s\n", opt.helper.c_str());  // never the token
+    // Never the token, nor userinfo or a query string from the URL.
+    std::printf("fetching from the helper at %s\n", printable_origin(opt.helper).c_str());
     std::fflush(stdout);
   } else if (opt.offlineTest) {
     source = &flaky;
@@ -591,10 +623,15 @@ int main(int argc, char** argv) {
                  std::printf("open match %s\n", id.c_str());
                  std::fflush(stdout);
                },
-               *prefs, &backlight, opt.wifi ? &wifi : nullptr};
+               *prefs, &backlight, opt.wifi ? &wifi : nullptr,
+               // Connected at last: fetch everything now, not at the next due time.
+               [&poller] { poller.request_all_now(); }};
   app = app_create(lv_screen_active(), deps);
   // A session-only override of the saved setting.
   if (opt.reducedMotion) goal_set_reduced_motion(true);
+  if (opt.screen == "live-last" && demoData) {
+    keep_only_past_of_favourite(mock, store.favourite());
+  }
   pump(start);  // matches, teams, news (at once with the demo source)
   pump(start);  // the favourite's live detail, now that the matches are in
   if (headless && transport) {
@@ -667,7 +704,7 @@ int main(int argc, char** argv) {
         if (opt.screen != "wifi-password") lv_obj_send_event(p->connect, LV_EVENT_CLICKED, nullptr);
       }
     }
-  } else if (opt.screen != "live") {
+  } else if (opt.screen != "live" && opt.screen != "live-last") {
     app_open_match(app, opt.match);
     lv_obj_t* view = app_detail_view(app);
     if (opt.screen == "summary") detail_select_tab(view, DetailTab::Summary, false);

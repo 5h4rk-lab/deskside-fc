@@ -1,4 +1,5 @@
-cmake_minimum_required(VERSION 3.16)
+# 3.25: FetchContent_Declare(... SYSTEM) below.
+cmake_minimum_required(VERSION 3.25)
 project(soccer_display_sim LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
@@ -10,7 +11,6 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
 endif()
 
 include(FetchContent)
-include(CTest)
 
 # --- Dependencies (pinned) ---------------------------------------------------
 # LVGL reads our lv_conf.h from this directory.

@@ -32,7 +32,7 @@ constexpr int32_t kCentreWidth = 54;
 constexpr int32_t kEdgeWidth = 3;
 constexpr int32_t kEdgeInset = 6;  // keeps the bar clear of the rounded corners
 constexpr int32_t kFavDotSize = 5;
-constexpr int32_t kFavDotInset = 5;
+constexpr int32_t kFavDotTop = 2;  // above the crest (which starts at y 9), 2 px clear
 constexpr int32_t kHeaderPadLeft = 4;  // plus the list's 8 px: the mockup's 12
 constexpr int32_t kHeaderPadTop = 4;   // on top of the row gap
 constexpr int32_t kListPadBottom = 10;
@@ -55,11 +55,12 @@ struct RowView {
   std::string sub;
   bool smallCentre = false;
   bool fav = false;
+  bool favHome = false;  // the favourite plays at home: the dot sits over the home crest
 
   bool operator==(const RowView& o) const {
     return homeAbbr == o.homeAbbr && awayAbbr == o.awayAbbr && homeCrest == o.homeCrest &&
            awayCrest == o.awayCrest && state == o.state && centre == o.centre && sub == o.sub &&
-           smallCentre == o.smallCentre && fav == o.fav;
+           smallCentre == o.smallCentre && fav == o.fav && favHome == o.favHome;
   }
   bool operator!=(const RowView& o) const { return !(*this == o); }
 };
@@ -134,6 +135,7 @@ RowView row_view(const MatchSummary& m, const Store& store, int tz) {
   r.state = m.state;
   const std::string& fav = store.favourite();
   r.fav = !fav.empty() && (m.home.id == fav || m.away.id == fav);
+  r.favHome = r.fav && m.home.id == fav;
   const std::string score =
       std::to_string(m.homeScore.value_or(0)) + ":" + std::to_string(m.awayScore.value_or(0));
   switch (m.state) {
@@ -312,7 +314,6 @@ Item create_row(MatchesState* st) {
   lv_obj_add_flag(p.edge, LV_OBJ_FLAG_HIDDEN);
 
   p.favDot = dot(row, kFavDotSize, pal.accent);
-  lv_obj_align(p.favDot, LV_ALIGN_TOP_RIGHT, -kFavDotInset, kFavDotInset);
   lv_obj_add_flag(p.favDot, LV_OBJ_FLAG_HIDDEN);
 
   it.obj = row;
@@ -361,6 +362,12 @@ void apply_row(MatchesState* st, Item& it, const RowView& v) {
     lv_obj_set_style_bg_color(p.row, row_color(live), 0);
     lv_obj_set_style_bg_color(p.row, mix(row_color(live), pal.chalk, 18), LV_STATE_PRESSED);
     show(p.edge, live);
+  }
+  if (v.fav && (first || v.favHome != old.favHome || !old.fav)) {
+    // Centred over the favourite's own crest, in the row's top padding.
+    const int32_t x = kRowPad + (kCrestSize - kFavDotSize) / 2;
+    lv_obj_align(p.favDot, v.favHome ? LV_ALIGN_TOP_LEFT : LV_ALIGN_TOP_RIGHT, v.favHome ? x : -x,
+                 kFavDotTop);
   }
   show(p.favDot, v.fav);
   it.shown = v;

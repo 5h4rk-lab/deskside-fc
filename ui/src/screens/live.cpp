@@ -39,6 +39,9 @@ constexpr int32_t kStripTop = 214;
 constexpr int32_t kStripInset = 10;
 constexpr int32_t kMessageTop = 128;        // next-match text, under the crests
 constexpr int32_t kStatusMessageTop = 120;  // "Connecting...", "No matches soon"
+constexpr int32_t kLastCaptionTop = 4;      // "Last result", on the status row line, centred
+constexpr int32_t kLastLineTop = 180;       // "vs CHE [FT]", under the score
+constexpr int32_t kLastWhenTop = 216;       // "yesterday"
 
 const lv_font_t* const kNameFont = &bigshoulders_16;
 
@@ -46,7 +49,7 @@ constexpr int32_t kGearSize = 32;     // tap target
 constexpr int32_t kGearIconTop = 2;   // glyph centred on the status row text
 constexpr int32_t kStatusRightGear = -32;  // status row's right edge with the gear
 
-enum class Mode { Connecting, NoMatches, Next, Live };
+enum class Mode { Connecting, NoMatches, Last, Next, Live };
 
 // Everything the screen shows, computed from the Store. Applied to the
 // widgets only when it differs from what is on screen.
@@ -56,6 +59,8 @@ struct View {
   StatusInfo status;
   std::string message;
   std::string countdown;
+  std::string lastOpponent;  // "vs CHE"
+  std::string lastWhen;      // "yesterday"
   std::string matchId;
   std::string homeCrest;
   std::string awayCrest;
@@ -74,6 +79,7 @@ struct View {
 
   bool operator==(const View& o) const {
     return mode == o.mode && league == o.league && status == o.status && message == o.message && countdown == o.countdown &&
+           lastOpponent == o.lastOpponent && lastWhen == o.lastWhen &&
            matchId == o.matchId && homeCrest == o.homeCrest && awayCrest == o.awayCrest &&
            homeColor == o.homeColor && awayColor == o.awayColor && pill == o.pill &&
            scoreHome == o.scoreHome && scoreAway == o.scoreAway && homeName == o.homeName &&
@@ -225,7 +231,8 @@ void draw_background(lv_event_t* e) {
 
 void on_score_clicked(lv_event_t* e) {
   auto* st = static_cast<LiveState*>(lv_event_get_user_data(e));
-  if (st->shown.mode == Mode::Live && st->onOpen) st->onOpen(st->shown.matchId);
+  const bool opens = st->shown.mode == Mode::Live || st->shown.mode == Mode::Last;
+  if (opens && st->onOpen) st->onOpen(st->shown.matchId);
 }
 
 void on_gear_clicked(lv_event_t* e) {
@@ -313,6 +320,23 @@ View compute_view(const Store& store, int64_t now) {
     v.countdown = countdown_text(m->kickoff - now);
     return v;
   }
+  if (const MatchSummary* m = store.last_for(fav, now)) {
+    v.mode = Mode::Last;
+    v.matchId = m->id;
+    v.homeCrest = sized(m->home.crest, kCrestSize, kCrestSize);
+    v.awayCrest = sized(m->away.crest, kCrestSize, kCrestSize);
+    v.homeColor = m->home.color;
+    v.awayColor = m->away.color;
+    // From the favourite's side: its goals first.
+    const bool home = m->home.id == fav;
+    const int favGoals = (home ? m->homeScore : m->awayScore).value_or(0);
+    const int oppGoals = (home ? m->awayScore : m->homeScore).value_or(0);
+    v.scoreHome = std::to_string(favGoals);
+    v.scoreAway = std::to_string(oppGoals);
+    v.lastOpponent = "vs " + (home ? m->away : m->home).abbr;
+    v.lastWhen = relative_time(now, m->kickoff, tz);
+    return v;
+  }
   v.mode = Mode::NoMatches;
   v.message = "No matches soon";
   return v;
@@ -324,11 +348,12 @@ void apply(LiveState* st, const View& v) {
   const bool first = !st->everApplied;
   const bool live = v.mode == Mode::Live;
   const bool next = v.mode == Mode::Next;
+  const bool last = v.mode == Mode::Last;
 
   widgets::status_row_apply(st->status, v.league, v.status);
 
   // Background split.
-  const bool split = live || next;
+  const bool split = live || next || last;
   if (split != st->splitVisible || (split && (first || v.homeColor != old.homeColor ||
                                               v.awayColor != old.awayColor))) {
     st->splitVisible = split;
@@ -344,7 +369,7 @@ void apply(LiveState* st, const View& v) {
   if (first || v.homeCrest != old.homeCrest) load_image(st, p.homeCrest, v.homeCrest);
   if (first || v.awayCrest != old.awayCrest) load_image(st, p.awayCrest, v.awayCrest);
 
-  show(p.message, !live);
+  show(p.message, !live && !last);
   set_text(p.message, v.message);
   if (v.mode != old.mode || first) {
     if (next) {
@@ -356,13 +381,18 @@ void apply(LiveState* st, const View& v) {
   show(p.countdown, next);
   set_text(p.countdown, v.countdown);
 
-  show(p.scoreArea, live);
+  show(p.scoreArea, live || last);
   show(p.pill, live);
-  show(p.score, live);
+  show(p.score, live || last);
   show(p.homeName, live);
   show(p.awayName, live);
   set_text(p.pillLabel, v.pill);
-  if (live) set_score_font(p, score_font(v));
+  if (live || last) set_score_font(p, score_font(v));
+  show(p.lastCaption, last);
+  show(p.lastLine, last);
+  show(p.lastWhen, last);
+  set_text(p.lastOpponent, v.lastOpponent);
+  set_text(p.lastWhen, v.lastWhen);
   set_text(p.scoreHome, v.scoreHome);
   set_text(p.scoreAway, v.scoreAway);
   set_text(p.homeName, v.homeName);
@@ -537,6 +567,32 @@ lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
     lv_obj_set_width(l, LV_PCT(100));
   }
 
+  // Last result card: caption between the crests, the score where the live
+  // score goes, then "vs CHE [FT]" and how long ago.
+  p.lastCaption = label(root, &hanken_10, pal.dim);
+  lv_label_set_text(p.lastCaption, "Last result");
+  lv_obj_align(p.lastCaption, LV_ALIGN_TOP_MID, 0, kLastCaptionTop);
+  p.lastLine = plain(root);
+  lv_obj_set_size(p.lastLine, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_flex_flow(p.lastLine, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(p.lastLine, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(p.lastLine, 8, 0);
+  lv_obj_align(p.lastLine, LV_ALIGN_TOP_MID, 0, kLastLineTop);
+  p.lastOpponent = label(p.lastLine, &bigshoulders_28, pal.chalk);
+  lv_obj_t* ft = plain(p.lastLine);
+  lv_obj_set_size(ft, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
+  lv_obj_set_style_border_color(ft, pal.chalk, 0);
+  lv_obj_set_style_border_opa(ft, 110, 0);
+  lv_obj_set_style_border_width(ft, 1, 0);
+  lv_obj_set_style_radius(ft, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_pad_hor(ft, 7, 0);
+  lv_obj_set_style_pad_ver(ft, 1, 0);
+  p.lastFt = label(ft, &hanken_10, pal.chalk);
+  lv_label_set_text(p.lastFt, "FT");
+  p.lastWhen = label(root, &hanken_12, pal.chalk);
+  lv_obj_set_style_text_opa(p.lastWhen, 190, 0);  // as the countdown: dim is lost on team colours
+  lv_obj_align(p.lastWhen, LV_ALIGN_TOP_MID, 0, kLastWhenTop);
+
   // Settings gear at the top right, above everything else; shown once the
   // host listens (live_set_on_settings).
   p.gear = plain(root);
@@ -554,8 +610,8 @@ lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
   lv_obj_add_flag(p.gear, LV_OBJ_FLAG_HIDDEN);
 
   // Initial state: Connecting, nothing else visible until the first refresh.
-  for (lv_obj_t* o : {p.homeCrest, p.awayCrest, p.countdown,
-                      p.scoreArea, p.pill, p.score, p.homeName, p.awayName, p.eventStrip}) {
+  for (lv_obj_t* o : {p.homeCrest, p.awayCrest, p.countdown, p.scoreArea, p.pill, p.score,
+                      p.homeName, p.awayName, p.eventStrip, p.lastCaption, p.lastLine, p.lastWhen}) {
     lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
   }
   return root;

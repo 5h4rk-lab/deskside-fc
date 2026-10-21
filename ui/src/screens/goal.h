@@ -58,6 +58,12 @@ struct Scorer {
 };
 std::optional<Scorer> latest_scorer(const MatchDetail& detail, Side side);
 
+// The scorer for a celebration: latest_scorer(detail, event.side), but only
+// when the detail has at least as many Goal events of that side (own goals
+// counted for the side recorded in the event) as the side's score in the
+// event; otherwise the detail predates the goal and the result is nullopt.
+std::optional<Scorer> scorer_for_goal(const MatchDetail& detail, const GoalEvent& event);
+
 // Texts of the overlay. Headline: "GOAL!" or, at full time, "WIN!". Score
 // line: "58'  ·  ARS 2 : 1 CHE" (no minute part when the clock is empty), or
 // "Full time  ·  ARS 3 : 1 CHE". Waiting line (until the scorer is known):

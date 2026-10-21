@@ -79,6 +79,10 @@ struct AppState {
 
   // Goal celebration: fed by app_matches_changed().
   GoalDetector detector;
+  // The celebration still waiting for its scorer (the detail lagged behind
+  // the score); app_refresh() looks at the Store's detail for it.
+  std::optional<GoalEvent> awaitingScorer;
+  std::function<void()> onWifiConnected;
 
   // Cleared when the tab view is deleted, for callbacks that outlive it.
   std::shared_ptr<bool> alive = std::make_shared<bool>(true);
@@ -251,7 +255,20 @@ void close_detail(AppState* st, bool fromInside) {
   discard(overlay, fromInside);
 }
 
+void drive_backlight(AppState* st, int64_t now);
+
+// A brightness drag that never got its release (Settings closed or rebuilt
+// under the finger): drop the unsaved value and give the backlight back to
+// the schedule.
+void end_preview(AppState* st) {
+  if (!st->previewing) return;
+  st->previewing = false;
+  st->settings.dayBrightness = st->saved.dayBrightness;
+  drive_backlight(st, st->now);
+}
+
 void close_settings(AppState* st, bool fromInside) {
+  end_preview(st);
   lv_obj_t* overlay = st->settingsOverlay;
   if (overlay == nullptr) return;
   st->settingsOverlay = nullptr;
@@ -400,11 +417,15 @@ void open_settings(AppState* st) {
 // ---------------------------------------------------------------- wifi
 
 // A join made on the Wi-Fi pages succeeded. First setup ends there.
+// Either way the host hears about it last (it asks the poller for fresh data).
 void wifi_joined(AppState* st, WifiMode mode) {
   sync_settings_wifi(st);
-  if (mode != WifiMode::FirstSetup) return;
-  close_wifi(st, true);  // called from inside the Wi-Fi screen
-  app_refresh(st->tabview, st->now);
+  if (mode == WifiMode::FirstSetup) {
+    close_wifi(st, true);  // called from inside the Wi-Fi screen
+    app_refresh(st->tabview, st->now);
+  }
+  const std::function<void()> notify = st->onWifiConnected;  // may outlive the app
+  if (notify) notify();
 }
 
 void open_wifi(AppState* st, WifiMode mode) {
@@ -612,6 +633,24 @@ void build_tabs(AppState* st) {
   lv_tabview_set_active(st->tabview, active, LV_ANIM_OFF);
 }
 
+// A celebration still without its scorer: the detail watch keeps refreshing
+// the Store's detail, so look there. Forgotten once the overlay is gone.
+void check_scorer(AppState* st) {
+  if (!st->awaitingScorer) return;
+  const GoalParts* parts = goal_parts();
+  if (parts == nullptr || parts->matchId != st->awaitingScorer->matchId) {
+    st->awaitingScorer.reset();
+    return;
+  }
+  const MatchDetail* d = st->store->detail_for(st->awaitingScorer->matchId);
+  if (d == nullptr) return;
+  const std::optional<Scorer> scorer = scorer_for_goal(*d, *st->awaitingScorer);
+  if (!scorer) return;
+  const std::string matchId = st->awaitingScorer->matchId;
+  st->awaitingScorer.reset();
+  goal_set_scorer(matchId, scorer->name, scorer->photo);
+}
+
 }  // namespace
 
 lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
@@ -623,6 +662,7 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   st->prefs = &deps.prefs;
   st->backlight = deps.backlight;
   st->wifi = deps.wifi;
+  st->onWifiConnected = deps.onWifiConnected;
 
   // Saved settings first: the screens capture the accent colour as they are built.
   st->settings = load_settings(deps.prefs);
@@ -697,6 +737,7 @@ void app_refresh(lv_obj_t* appRoot, int64_t now) {
   // Every screen's local times follow the zone, daylight saving included.
   st->store->set_tz_offset(offset_seconds(st->settings.zoneId, now));
   drive_backlight(st, now);
+  check_scorer(st);
   if (st->live != nullptr) live_refresh(st->live, now);
   if (st->matches != nullptr) matches_refresh(st->matches, now);
   if (st->news != nullptr) news_refresh(st->news, now);
@@ -768,6 +809,7 @@ lv_obj_t* app_wifi_view(lv_obj_t* appRoot) {
 void app_apply_team(lv_obj_t* appRoot, const Team& team) {
   AppState* st = app_state(appRoot);
   if (st == nullptr) return;
+  end_preview(st);
   st->settings.favourite = team;
   save(st);
   st->store->set_favourite(team.id);
@@ -828,16 +870,19 @@ void app_matches_changed(lv_obj_t* appRoot, int64_t now) {
   const std::optional<GoalEvent> event =
       st->detector.update(st->store->matches(), st->store->favourite());
   if (!event) return;
-  if (event->favourite) goal_celebrate(*event, *st->images);
+  if (event->favourite) {
+    goal_celebrate(*event, *st->images);
+    st->awaitingScorer = *event;
+  }
 
-  // The detail names the scorer and feeds the Live strip, for either team.
+  // The detail names the scorer and feeds the Live strip, for either team. A
+  // detail that predates the goal names nobody; app_refresh() keeps looking
+  // at later details (the poller's detail watch) while the overlay shows.
   std::shared_ptr<bool> alive = st->alive;
   const GoalEvent ev = *event;
-  st->source->fetch_detail(ev.matchId, [st, alive, ev, now](bool ok, MatchDetail detail) {
+  st->source->fetch_detail(ev.matchId, [st, alive, now](bool ok, MatchDetail detail) {
     if (!*alive || !ok) return;
-    const std::optional<Scorer> scorer = latest_scorer(detail, ev.side);
     st->store->set_detail(std::move(detail));
-    if (ev.favourite && scorer) goal_set_scorer(ev.matchId, scorer->name, scorer->photo);
-    app_refresh(st->tabview, now);
+    app_refresh(st->tabview, now);  // names the scorer when this detail has the goal
   });
 }

@@ -12,8 +12,15 @@ Poller::Poller(Store& store, DataSource& source, std::function<void(int64_t)> on
 Poller::~Poller() { *alive_ = false; }
 
 void Poller::request_matches_now() {
-  // A fetch in flight serves the request.
-  if (!matches_.pending) forceMatches_ = true;
+  // Remembered even while a fetch is in flight: that fetch may predate the
+  // reason for asking (Wi-Fi just connected), so it goes out once more.
+  forceMatches_ = true;
+}
+
+void Poller::request_all_now() {
+  forceMatches_ = true;
+  if (store_.teams().empty()) forceTeams_ = true;
+  if (store_.news().empty() || news_.error != FetchError::None) forceNews_ = true;
 }
 
 void Poller::set_detail_watch(const std::string& matchId) {
@@ -25,6 +32,12 @@ void Poller::set_detail_watch(const std::string& matchId) {
   detail_.everStarted = true;
   detail_.startedMs = nowMs_;
   detailNow_ = !matchId.empty() && store_.detail_for(matchId) == nullptr;
+}
+
+void Poller::rebase(Slot& slot) {
+  // A clock that went backwards (a wrapped counter): treat the attempt as
+  // just started, so nothing waits for the clock to catch up.
+  if (slot.everStarted && nowMs_ < slot.startedMs) slot.startedMs = nowMs_;
 }
 
 void Poller::expire(Slot& slot) {
@@ -45,6 +58,7 @@ uint32_t Poller::begin(Slot& slot) {
 void Poller::tick(int64_t monotonicMs, int64_t epochSeconds) {
   nowMs_ = monotonicMs;
   epoch_ = epochSeconds;
+  for (Slot* slot : {&matches_, &news_, &teams_, &detail_}) rebase(*slot);
   expire(matches_);
   expire(news_);
   expire(teams_);
@@ -55,8 +69,15 @@ void Poller::tick(int64_t monotonicMs, int64_t epochSeconds) {
     forceMatches_ = false;  // before the fetch: a synchronous answer may ask again
     fetch_matches();
   }
-  if (store_.teams().empty() && due(teams_, kTeamsRetryMs)) fetch_teams();
-  if (due(news_, policy_.news_delay_ms())) fetch_news();
+  if (!store_.teams().empty()) forceTeams_ = false;
+  if (store_.teams().empty() && !teams_.pending && (forceTeams_ || due(teams_, kTeamsRetryMs))) {
+    forceTeams_ = false;
+    fetch_teams();
+  }
+  if (!news_.pending && (forceNews_ || due(news_, policy_.news_delay_ms()))) {
+    forceNews_ = false;
+    fetch_news();
+  }
   if (!watchId_.empty() && !detail_.pending) {
     bool live = false;
     for (const MatchSummary& m : store_.matches()) {

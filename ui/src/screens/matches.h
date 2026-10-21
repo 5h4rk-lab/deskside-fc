@@ -54,7 +54,7 @@ struct MatchesRowParts {
   std::string matchId;
   lv_obj_t* row;        // clickable card
   lv_obj_t* edge;       // amber left edge, visible on live rows only
-  lv_obj_t* favDot;     // accent dot, visible on the favourite's matches only
+  lv_obj_t* favDot;     // accent dot over the favourite's crest (home or away), its matches only
   lv_obj_t* homeCrest;
   lv_obj_t* homeAbbr;
   lv_obj_t* centre;     // kickoff time, score or PPD

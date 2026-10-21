@@ -171,6 +171,41 @@ TEST_CASE("latest_scorer: own goals still name the player") {
   CHECK(s->photo == "/api/cutout?name=Levi%20Colwill&w=96&h=96");
 }
 
+TEST_CASE("scorer_for_goal: a detail that predates the goal names nobody") {
+  GoalEvent e = goal_event();
+  e.homeScore = 2;
+  e.awayScore = 0;
+  MatchDetail d;
+  d.events = {{"12'", EventType::Goal, Side::Home, "Bukayo Saka", ""}};
+  CHECK_FALSE(scorer_for_goal(d, e));
+  // An away goal does not count for the home side.
+  d.events.push_back({"30'", EventType::Goal, Side::Away, "Cole Palmer", ""});
+  CHECK_FALSE(scorer_for_goal(d, e));
+}
+
+TEST_CASE("scorer_for_goal: with as many goals as the score, the last one by minute") {
+  GoalEvent e = goal_event();
+  e.homeScore = 2;
+  e.awayScore = 0;
+  MatchDetail d;
+  d.events = {{"58'", EventType::Goal, Side::Home, "Kai Havertz", ""},
+              {"12'", EventType::Goal, Side::Home, "Bukayo Saka", ""}};
+  auto s = scorer_for_goal(d, e);
+  REQUIRE(s);
+  CHECK(s->name == "Kai Havertz");
+
+  // Away side: counts the away goals against awayScore.
+  GoalEvent a = goal_event();
+  a.side = Side::Away;
+  a.homeScore = 0;
+  a.awayScore = 1;
+  MatchDetail da;
+  CHECK_FALSE(scorer_for_goal(da, a));
+  da.events = {{"70'", EventType::Goal, Side::Away, "Cole Palmer", ""}};
+  REQUIRE(scorer_for_goal(da, a));
+  CHECK(scorer_for_goal(da, a)->name == "Cole Palmer");
+}
+
 // ------------------------------------------------------------ texts
 
 TEST_CASE("goal texts: headline, score line and waiting line") {
@@ -519,6 +554,15 @@ struct AppFixture {
     source.set_matches({m});
     source.set_detail(demo_detail_for(m));
   }
+  // The demo detail of the current match plus one goal.
+  MatchDetail with_goal(const char* minute, Side side, const char* player) {
+    MatchDetail d = demo_detail_for(current());
+    d.events.push_back({minute, EventType::Goal, side, player, ""});
+    return d;
+  }
+  void add_goal(const char* minute, Side side, const char* player) {
+    source.set_detail(with_goal(minute, side, player));
+  }
 };
 
 }  // namespace
@@ -530,6 +574,7 @@ TEST_CASE("app goal path: first sight is silent, a favourite goal celebrates and
   CHECK(f.source.details.empty());
 
   f.source.advance_score("m1", Side::Home);  // 3:1
+  f.add_goal("70'", Side::Home, "Kai Havertz");  // the detail already has the goal
   f.poll();
   CHECK(goal_active());
   REQUIRE(f.source.details.size() == 1);
@@ -590,4 +635,51 @@ TEST_CASE("app goal path: a favourite win at full time celebrates WIN!") {
   CHECK_FALSE(goal_active());
   run_for(50);
   CHECK(lv_obj_get_child_count(lv_layer_top()) == 0);
+}
+
+TEST_CASE("app goal path: a detail that lags behind the score leaves the scorer blank") {
+  AppFixture f;
+  f.poll();
+  f.source.advance_score("m1", Side::Home);  // 3:1, the detail still has two home goals
+  f.poll();
+  CHECK(goal_active());
+  REQUIRE(goal_parts() != nullptr);
+  CHECK(text(goal_parts()->name) == "ARS scored");
+  for (const std::string& r : f.images.requested) {
+    CHECK(r.find("Kai%20Havertz&w=192") == std::string::npos);  // not the previous scorer
+  }
+
+  // A stale detail on refresh changes nothing.
+  app_refresh(f.app, f.now + 1);
+  CHECK(text(goal_parts()->name) == "ARS scored");
+
+  // The detail watch brings the goal: the next refresh names the scorer.
+  f.store.set_detail(f.with_goal("67'", Side::Home, "Gabriel Martinelli"));
+  app_refresh(f.app, f.now + 15);
+  CHECK(text(goal_parts()->name) == "GABRIEL MARTINELLI");
+  bool asked = false;
+  for (const std::string& r : f.images.requested) {
+    if (r == "/api/cutout?name=Gabriel%20Martinelli&w=192&h=192") asked = true;
+  }
+  CHECK(asked);
+}
+
+TEST_CASE("app goal path: once the overlay is gone a late detail does nothing") {
+  AppFixture f;
+  f.poll();
+  f.source.advance_score("m1", Side::Home);
+  f.poll();
+  REQUIRE(goal_active());
+  goal_dismiss();
+  run_for(50);
+  CHECK_FALSE(goal_active());
+  const size_t requests = f.images.requested.size();
+  f.store.set_detail(f.with_goal("67'", Side::Home, "Gabriel Martinelli"));
+  app_refresh(f.app, f.now + 15);
+  run_for(50);
+  CHECK_FALSE(goal_active());
+  CHECK(lv_obj_get_child_count(lv_layer_top()) == 0);
+  for (size_t i = requests; i < f.images.requested.size(); ++i) {
+    CHECK(f.images.requested[i].find("w=192") == std::string::npos);  // no celebration cutout
+  }
 }

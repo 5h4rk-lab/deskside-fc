@@ -41,6 +41,19 @@ std::optional<Scorer> latest_scorer(const MatchDetail& detail, Side side) {
   return s;
 }
 
+std::optional<Scorer> scorer_for_goal(const MatchDetail& detail, const GoalEvent& event) {
+  // A detail fetched just after the scoreboard moved often predates the goal
+  // (feed lag, helper cache): its last goal of that side is then the previous
+  // one. Only trust it once it has as many goals as the side has scored.
+  const int score = event.side == Side::Home ? event.homeScore : event.awayScore;
+  int goals = 0;
+  for (const MatchEvent& ev : detail.events) {
+    if (ev.type == EventType::Goal && ev.team == event.side) ++goals;
+  }
+  if (goals < score) return std::nullopt;
+  return latest_scorer(detail, event.side);
+}
+
 std::string goal_headline(const GoalEvent& event) { return event.fullTime ? "WIN!" : "GOAL!"; }
 
 std::string goal_score_line(const GoalEvent& event) {

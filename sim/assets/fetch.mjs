@@ -96,7 +96,16 @@ for (const [name, { url, kind }] of jobs) {
   }
   try {
     const out = await shrink(await download(url), kind);
-    fs.writeFileSync(dest, out);
+    // Atomic: a crash or Ctrl-C never leaves a half-written file that the
+    // next run would skip as "already present".
+    const tmp = `${dest}.${process.pid}.tmp`;
+    try {
+      fs.writeFileSync(tmp, out);
+      fs.renameSync(tmp, dest);
+    } catch (err) {
+      fs.rmSync(tmp, { force: true });
+      throw err;
+    }
     fetched++;
     console.log(`fetch  ${name} (${out.length} bytes)`);
   } catch (err) {
@@ -109,5 +118,9 @@ for (const [name, { url, kind }] of jobs) {
 console.log(`\n${fetched} fetched, ${skipped} already present, ${failed.length} failed (of ${jobs.size})`);
 if (fetched + skipped === 0) {
   console.error('nothing could be fetched');
+  process.exit(1);
+}
+if (failed.length > 0) {
+  console.error(`failed: ${failed.join(', ')}`);
   process.exit(1);
 }

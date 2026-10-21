@@ -122,9 +122,11 @@ void HttpSource::trim_queue() {
         if (queue_[j].kind != queue_[i].kind || queue_[j].target != queue_[i].target) continue;
         std::function<void(const HttpResult&)> older = std::move(queue_[i].handle);
         std::function<void(const HttpResult&)> newer = std::move(queue_[j].handle);
-        queue_[j].handle = [older = std::move(older), newer = std::move(newer)](const HttpResult& r) {
+        // older()'s caller may destroy the source: newer() then must not run.
+        queue_[j].handle = [alive = alive_, older = std::move(older),
+                            newer = std::move(newer)](const HttpResult& r) {
           older(r);
-          newer(r);
+          if (*alive) newer(r);
         };
         queue_.erase(queue_.begin() + static_cast<std::ptrdiff_t>(i));
         folded = true;

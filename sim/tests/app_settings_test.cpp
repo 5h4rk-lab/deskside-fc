@@ -122,6 +122,7 @@ struct Host {
   CountingPrefs prefs;
   FakeBacklight backlight;
   WifiService* wifi = nullptr;
+  int wifiConnected = 0;  // onWifiConnected calls
   lv_obj_t* app = nullptr;
 
   explicit Host(bool create = true) {
@@ -139,6 +140,7 @@ struct Host {
 
   void make() {
     AppDeps deps{store, images, source, nullptr, prefs, &backlight, wifi};
+    deps.onWifiConnected = [this] { ++wifiConnected; };
     app = app_create(lv_screen_active(), deps);
     settle();
   }
@@ -839,4 +841,117 @@ TEST_CASE("app: Wi-Fi results after the overlay closed or the app is gone do not
     h.settle();
     CHECK(wifi.status().connected);
   }
+}
+
+// ------------------------------------------------------------ wifi connected
+
+TEST_CASE("app: a first-setup join calls onWifiConnected once") {
+  MockWifi wifi = demo_wifi();
+  Host h(false);
+  h.wifi = &wifi;
+  h.make();
+  lv_obj_t* view = app_wifi_view(h.app);
+  REQUIRE(view != nullptr);
+  // A wrong password first: no call.
+  wifi_open_password(view, "Home");
+  lv_textarea_set_text(wifi_password_parts(view)->field, "wrongwrong");
+  h.click(wifi_password_parts(view)->connect);
+  h.settle();
+  test_advance(kWifiConnectedHoldMs + 50);
+  CHECK(h.wifiConnected == 0);
+  lv_textarea_set_text(wifi_password_parts(view)->field, "homehome1");
+  h.click(wifi_password_parts(view)->connect);
+  h.settle();
+  test_advance(kWifiConnectedHoldMs + 50);
+  h.settle();
+  CHECK(app_wifi_view(h.app) == nullptr);
+  CHECK(h.wifiConnected == 1);
+  test_advance(kWifiConnectedHoldMs + 50);
+  CHECK(h.wifiConnected == 1);
+}
+
+TEST_CASE("app: a join from Settings calls onWifiConnected once per success") {
+  MockWifi wifi = demo_wifi();
+  wifi.set_saved({"Home"});
+  Host h(false);
+  h.wifi = &wifi;
+  h.make();
+  app_open_settings(h.app);
+  app_open_wifi(h.app);
+  lv_obj_t* view = app_wifi_view(h.app);
+  REQUIRE(view != nullptr);
+  std::vector<WifiSavedRow> rows = wifi_saved_rows(view);
+  REQUIRE(rows.size() == 1);
+  h.click(rows[0].row);
+  h.settle();
+  test_advance(kWifiConnectedHoldMs + 50);
+  h.settle();
+  CHECK(h.wifiConnected == 1);
+  CHECK(app_wifi_view(h.app) == view);  // normal mode stays open
+}
+
+TEST_CASE("app: a failed open-network join does not call onWifiConnected") {
+  MockWifi wifi = demo_wifi();
+  wifi.set_saved({"Somewhere"});
+  Host h(false);
+  h.wifi = &wifi;
+  h.make();
+  app_open_wifi(h.app);
+  lv_obj_t* view = app_wifi_view(h.app);
+  REQUIRE(view != nullptr);
+  wifi.set_networks({{"Home", -50, false}});  // Cafe went out of range: its join fails
+  bool clicked = false;
+  for (const WifiNearbyRow& r : wifi_nearby_rows(view)) {
+    if (r.network.ssid == "Cafe") {
+      h.click(r.row);
+      clicked = true;
+    }
+  }
+  REQUIRE(clicked);
+  h.settle();
+  test_advance(kWifiConnectedHoldMs + 50);
+  CHECK(h.wifiConnected == 0);
+}
+
+// ------------------------------------------------------------ preview reset
+
+TEST_CASE("app: closing Settings mid-drag ends the preview and restores the saved brightness") {
+  Host h(false);
+  Settings st;
+  st.dayBrightness = 80;
+  st.nightDim = true;
+  st.nightStartHour = 23;
+  st.nightEndHour = 7;
+  st.nightPercent = 20;
+  save_settings(h.prefs, st);
+  h.make();
+  app_refresh(h.app, kSummer);
+  REQUIRE(h.backlight.values.back() == 80);
+  app_open_settings(h.app);
+  lv_obj_t* slider = h.settings()->brightSlider;
+  lv_obj_add_state(slider, LV_STATE_PRESSED);
+  lv_slider_set_value(slider, 40, LV_ANIM_OFF);
+  lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, nullptr);  // no RELEASED follows
+  CHECK(h.backlight.values.back() == 40);
+  app_close_settings(h.app);
+  CHECK(app_settings(h.app)->dayBrightness == 80);
+  CHECK(pref(h.prefs, "bright") == "80");
+  CHECK(h.backlight.values.back() == 80);  // restored at once
+  // The schedule drives the backlight again: night dimming without a touch.
+  test_advance(kTouchWakeMs + 1000);
+  app_refresh(h.app, kNight);
+  CHECK(h.backlight.values.back() == 20);
+}
+
+TEST_CASE("app: applying a team mid-drag ends the preview too") {
+  Host h;
+  app_refresh(h.app, kSummer);
+  const int saved = app_settings(h.app)->dayBrightness;
+  app_open_settings(h.app);
+  lv_obj_t* slider = h.settings()->brightSlider;
+  lv_slider_set_value(slider, 30, LV_ANIM_OFF);
+  lv_obj_send_event(slider, LV_EVENT_VALUE_CHANGED, nullptr);
+  app_apply_team(h.app, liverpool());
+  CHECK(app_settings(h.app)->dayBrightness == saved);
+  CHECK(h.backlight.values.back() == saved);
 }

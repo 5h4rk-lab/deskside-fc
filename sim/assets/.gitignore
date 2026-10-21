@@ -1,2 +1,6 @@
-*.png
-*.jpg
+# Downloaded third-party artwork stays out of the repo: ignore everything
+# but the fetch script and its notes.
+*
+!.gitignore
+!README.md
+!fetch.mjs

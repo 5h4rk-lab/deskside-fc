@@ -13,6 +13,17 @@ bool starts_with(const std::string& s, const char* prefix) {
   return s.compare(0, std::char_traits<char>::length(prefix), prefix) == 0;
 }
 
+// The bytes a helper image path may contain: unreserved characters, '%' for
+// escapes and the few delimiters the helper's query strings use. Everything
+// else (bytes >= 0x80, controls, space, quotes, '\\', '#', '<', '>' ...) is refused.
+bool url_safe(unsigned char c) {
+  if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')) return true;
+  for (const char* p = "-._~%&=?/:+,"; *p != '\0'; ++p) {
+    if (c == static_cast<unsigned char>(*p)) return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 HttpImageProvider::HttpImageProvider(HttpTransport& transport, ImageDecoder& decoder,
@@ -28,8 +39,7 @@ bool HttpImageProvider::is_allowed_path(const std::string& path) {
   if (path.size() > kMaxPathLength) return false;
   if (!starts_with(path, kImgPrefix) && !starts_with(path, kCutoutPrefix)) return false;
   for (char ch : path) {
-    const unsigned char c = static_cast<unsigned char>(ch);
-    if (c <= 0x20 || c == 0x7F) return false;  // control characters and whitespace
+    if (!url_safe(static_cast<unsigned char>(ch))) return false;
   }
   if (path.find("..") != std::string::npos) return false;
   if (path.find("://") != std::string::npos) return false;
@@ -157,6 +167,16 @@ void HttpImageProvider::finish(const std::string& path, uint32_t id, HttpResult 
 }
 
 void HttpImageProvider::tick(int64_t monotonicMs) {
+  if (clockStarted_ && monotonicMs < nowMs_) {
+    // The clock went backwards (a wrapped counter): requests in flight count
+    // as just started, and no remembered failure outlasts its own window.
+    for (auto& kv : entries_) {
+      if (kv.second.inFlight && kv.second.startedMs > monotonicMs) kv.second.startedMs = monotonicMs;
+    }
+    for (auto& kv : negative_) {
+      if (kv.second > monotonicMs + kNegativeLongMs) kv.second = monotonicMs + kNegativeLongMs;
+    }
+  }
   nowMs_ = monotonicMs;
   if (!clockStarted_) {
     // Requests made before the first tick were stamped with time 0.

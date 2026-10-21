@@ -601,3 +601,82 @@ TEST_CASE("http images: images load into widgets once delivered, and a deleted w
   }
   deinit_test_display();
 }
+
+TEST_CASE("http images: the path guard is a strict allow-list") {
+  const std::string img = "/api/img?u=";
+  const std::vector<std::string> rejected = {
+      img + "a\xC3\xA9" "b",          // bytes >= 0x80 (raw UTF-8)
+      img + "a\xFF" "b",
+      img + "a\\b",                   // backslash
+      img + "a#frag",                 // fragment
+      img + "a\"b",                   // quotes
+      img + "a'b",
+      img + "a<b",
+      img + "a>b",
+      img + "a b",                    // space
+      img + "a\tb",                   // control characters
+      img + "a\x1F" "b",
+      img + "a\x7F" "b",
+      img + "a`b",
+      img + "a{b}",
+      img + "a|b",
+      img + "a^b",
+      img + "a[b]",
+      img + "a;b",
+      img + "a@b",
+      img + "a!b",
+      img + "a$b",
+      img + "a*b",
+      img + "a(b)",
+      img + "%2e%2e/..",              // ".." still refused
+      img + "https://x",              // "://" still refused
+  };
+  for (const std::string& p : rejected) {
+    INFO("path: ", p);
+    CHECK_FALSE(HttpImageProvider::is_allowed_path(p));
+  }
+  const std::vector<std::string> accepted = {
+      "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F359.png&w=48&h=48",
+      "/api/cutout?name=Kai%20Havertz&w=96&h=96",
+      "/api/cutout?name=J%C3%BCrgen%20Kl%C3%B6pp&w=96&h=96",  // percent-encoded UTF-8
+      "/api/img?u=a-b_c.d~e%2F&fit=cover&w=240&h=135",
+      "/api/img?u=a+b,c:d/e",
+  };
+  for (const std::string& p : accepted) {
+    INFO("path: ", p);
+    CHECK(HttpImageProvider::is_allowed_path(p));
+  }
+}
+
+TEST_CASE("http images: a clock that jumps backwards does not freeze lost-request expiry") {
+  Rig rig;
+  Got a;
+  rig.provider.tick(500000);
+  rig.provider.request(kCrest57, a.cb());  // started at 500000, never answered
+  rig.provider.tick(1000);                 // the clock went back
+  rig.provider.tick(30999);
+  CHECK(a.calls == 0);
+  rig.provider.tick(31000);  // lost 30 s after the new base
+  CHECK(a.calls == 1);
+  CHECK(a.image == nullptr);
+  CHECK(rig.provider.pending() == 0);
+  // The remembered failure expires on the new clock too.
+  Got b;
+  rig.provider.tick(31000 + HttpImageProvider::kNegativeShortMs);
+  rig.provider.request(kCrest57, b.cb());
+  CHECK(rig.transport.requests.size() == 2);
+}
+
+TEST_CASE("http images: a backwards jump does not keep old failures for the length of the jump") {
+  Rig rig;
+  rig.provider.tick(1000000);
+  Got a;
+  rig.provider.request(kCrest57, a.cb());
+  REQUIRE(rig.transport.deliver_at(0, 404, ""));
+  REQUIRE(a.calls == 1);
+  rig.provider.tick(0);  // back by 1000 s
+  rig.provider.tick(HttpImageProvider::kNegativeLongMs);
+  Got b;
+  rig.provider.request(kCrest57, b.cb());
+  CHECK(rig.transport.requests.size() == 2);  // tried again after at most the 5 min window
+}

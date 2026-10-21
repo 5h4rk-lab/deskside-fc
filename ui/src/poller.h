@@ -6,7 +6,8 @@
 // - The first tick fetches matches, teams and news, in that order.
 // - Matches are fetched again policy.next_delay_ms() after the start of the
 //   last attempt (25 s with a live match, 180 s otherwise, longer after
-//   failures), or at the next tick after request_matches_now().
+//   failures), or at the next tick after request_matches_now() (or once the
+//   fetch in flight when it was asked has ended, however it ended).
 // - News every policy.news_delay_ms(). Teams only while the Store has none,
 //   at most once every kTeamsRetryMs.
 // - The watched detail (set_detail_watch) every policy.detail_delay_ms(live).
@@ -25,6 +26,10 @@
 //   touch it (the detail screen shows its own).
 // - Epoch times given to the Store are those of the latest tick.
 // - Sources may call back synchronously (inside fetch_*) or later.
+// - The monotonic clock must be 64-bit and never wrap (on the ESP32:
+//   esp_timer_get_time() / 1000, not a 32-bit millis()). If it ever goes
+//   backwards anyway, every attempt is treated as started at that moment, so
+//   polling resumes (delays and lost-fetch expiry count from there).
 #pragma once
 
 #include <stdint.h>
@@ -53,9 +58,18 @@ class Poller {
 
   void tick(int64_t monotonicMs, int64_t epochSeconds);
 
-  // Fetch matches at the next tick, whatever the delay (a manual refresh, or
-  // after Wi-Fi connects). A matches fetch already in flight serves it.
+  // Fetch matches at the next tick, whatever the delay or failure back-off (a
+  // manual refresh, or after Wi-Fi connects). While a matches fetch is in
+  // flight the request is remembered and honoured at the first tick after
+  // that fetch ends (success, failure or lost).
   void request_matches_now();
+
+  // After Wi-Fi connects: matches as request_matches_now(), plus teams when
+  // the Store has none and news when the Store has none or the last news
+  // fetch failed. The teams spacing (kTeamsRetryMs), the news delay and the
+  // failure back-off do not apply; a fetch of that kind in flight is waited
+  // for first, as for matches.
+  void request_all_now();
 
   // The match whose detail to keep fresh (the open detail overlay); empty for
   // none. Setting the same id again changes nothing.
@@ -70,6 +84,7 @@ class Poller {
     FetchError error = FetchError::None;
   };
 
+  void rebase(Slot& slot);
   void expire(Slot& slot);
   bool due(const Slot& slot, int64_t delayMs) const;
   uint32_t begin(Slot& slot);
@@ -86,6 +101,8 @@ class Poller {
   int64_t nowMs_ = 0;
   int64_t epoch_ = 0;
   bool forceMatches_ = false;
+  bool forceTeams_ = false;
+  bool forceNews_ = false;
   Slot matches_;
   Slot news_;
   Slot teams_;

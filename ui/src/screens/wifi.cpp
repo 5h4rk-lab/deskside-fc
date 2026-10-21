@@ -616,6 +616,7 @@ void open_page(WifiState* st, const std::string& ssid) {
   lv_obj_set_style_pad_right(p.field, kShowW, 0);
   lv_textarea_set_one_line(p.field, true);
   lv_textarea_set_password_mode(p.field, true);
+  lv_textarea_set_password_show_time(p.field, 0);  // mask each character at once
   lv_textarea_set_max_length(p.field, kWifiMaxPassword);
   lv_textarea_set_placeholder_text(p.field, kWifiPasswordPlaceholder);
   lv_obj_set_size(p.field, kContentW, kFieldH);

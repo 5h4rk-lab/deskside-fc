@@ -775,3 +775,15 @@ TEST_CASE("wifi screen: refresh picks up changes made by the service") {
   CHECK(text(s.parts()->statusText) == "Connected to Home");
   CHECK(s.nearby_row("Home") == nullptr);
 }
+
+TEST_CASE("wifi screen: every typed character is masked at once") {
+  Screen s;
+  s.open();
+  wifi_open_password(s.obj, "Office");
+  const WifiPasswordParts* p = s.pw();
+  REQUIRE(p != nullptr);
+  CHECK(lv_textarea_get_password_show_time(p->field) == 0);
+  // Show/Hide still works.
+  s.click(p->show);
+  CHECK_FALSE(lv_textarea_get_password_mode(p->field));
+}
