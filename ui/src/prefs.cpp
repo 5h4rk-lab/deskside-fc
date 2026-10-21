@@ -45,3 +45,14 @@ bool pref_bool(const Prefs& prefs, const std::string& key, bool def) {
 void set_pref_bool(Prefs& prefs, const std::string& key, bool value) {
   prefs.set(key, value ? "1" : "0");
 }
+
+bool prefs_key_valid(const std::string& key) {
+  if (key.empty() || key.size() > kPrefsMaxKeyLen) return false;
+  for (const char c : key) {
+    const bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '.' || c == '_';
+    if (!ok) return false;
+  }
+  return true;
+}
+
+bool prefs_value_valid(const std::string& value) { return value.size() <= kPrefsMaxValueLen; }
