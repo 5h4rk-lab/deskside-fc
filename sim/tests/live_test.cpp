@@ -374,24 +374,55 @@ TEST_CASE("last result: only a past match shows the last-result card (home win)"
   CHECK(f.opened[0] == "m-past");
 }
 
-TEST_CASE("last result: an away loss is shown from the favourite's side") {
-  Fixture f;
-  f.store.set_matches({past_match("m-past", che(), ars(), 2, 0, kNow - 3 * 86400 - 600)}, kNow);
-  f.refresh();
+// The last-result card reads favourite first: its crest and colour on the
+// left, its goals first, the opponent on the right. `fresh` is a fixture
+// refreshed once, so its first two image requests are the left then the
+// right crest.
+void check_favourite_first(Fixture& f, const char* score, const char* id) {
   const LiveParts* p = f.parts();
-  CHECK(score_text(p) == "0:2");
+  REQUIRE(f.images.requested.size() >= 2);
+  CHECK(f.images.requested[0].find("x%2F359.png") != std::string::npos);  // ARS left
+  CHECK(f.images.requested[1].find("x%2F363.png") != std::string::npos);  // CHE right
+  CHECK(score_text(p) == score);
   CHECK(text(p->lastOpponent) == "vs CHE");
-  CHECK(text(p->lastWhen) == "3 days ago");
+  // Split: Arsenal red on the left, Chelsea blue on the right.
+  const lv_color_t left = pixel_at(f.live, 6, 150);
+  const lv_color_t right = pixel_at(f.live, 234, 150);
+  CHECK(left.red > left.blue + 40);
+  CHECK(right.blue > right.red + 30);
+  lv_obj_send_event(p->scoreArea, LV_EVENT_CLICKED, nullptr);
+  REQUIRE(f.opened.size() == 1);
+  CHECK(f.opened[0] == id);
 }
 
-TEST_CASE("last result: a draw") {
+TEST_CASE("last result: a home win reads favourite first") {
   Fixture f;
-  f.store.set_matches({past_match("m-past", che(), ars(), 1, 1, kNow - 5 * 3600)}, kNow);
+  f.store.set_matches({past_match("m-hw", ars(), che(), 3, 1, kNow - 26 * 3600)}, kNow);
   f.refresh();
-  const LiveParts* p = f.parts();
-  CHECK(score_text(p) == "1:1");
-  CHECK(text(p->lastOpponent) == "vs CHE");
-  CHECK(text(p->lastWhen) == "5h ago");
+  check_favourite_first(f, "3:1", "m-hw");
+}
+
+TEST_CASE("last result: an away loss puts the favourite on the left (CHE 2-0 ARS reads 0:2)") {
+  Fixture f;
+  f.store.set_matches({past_match("m-al", che(), ars(), 2, 0, kNow - 3 * 86400 - 600)}, kNow);
+  f.refresh();
+  check_favourite_first(f, "0:2", "m-al");
+  CHECK(text(f.parts()->lastWhen) == "3 days ago");
+}
+
+TEST_CASE("last result: an away win puts the favourite on the left (CHE 1-3 ARS reads 3:1)") {
+  Fixture f;
+  f.store.set_matches({past_match("m-aw", che(), ars(), 1, 3, kNow - 2 * 3600)}, kNow);
+  f.refresh();
+  check_favourite_first(f, "3:1", "m-aw");
+}
+
+TEST_CASE("last result: a draw away from home") {
+  Fixture f;
+  f.store.set_matches({past_match("m-d", che(), ars(), 1, 1, kNow - 5 * 3600)}, kNow);
+  f.refresh();
+  check_favourite_first(f, "1:1", "m-d");
+  CHECK(text(f.parts()->lastWhen) == "5h ago");
 }
 
 TEST_CASE("last result: a live match still wins, and so does the next fixture") {

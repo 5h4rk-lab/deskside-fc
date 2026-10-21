@@ -955,3 +955,118 @@ TEST_CASE("app: applying a team mid-drag ends the preview too") {
   CHECK(app_settings(h.app)->dayBrightness == saved);
   CHECK(h.backlight.values.back() == saved);
 }
+
+// ------------------------------------------------------------ wifi connected, async
+
+namespace {
+
+// An app whose Wi-Fi answers later (MockWifi::poll), with the list scanned.
+struct AsyncWifiHost {
+  MockWifi wifi = demo_wifi();
+  Host h{false};
+  explicit AsyncWifiHost(bool firstSetup) {
+    wifi.set_async(true);
+    if (!firstSetup) wifi.set_saved({"Somewhere"});
+    h.wifi = &wifi;
+    h.make();
+    if (!firstSetup) app_open_wifi(h.app);
+    wifi.poll(MockWifi::kDefaultScanMs);
+    h.settle();
+  }
+  lv_obj_t* view() const { return app_wifi_view(h.app); }
+  void type_and_connect(const char* ssid, const char* password) {
+    wifi_open_password(view(), ssid);
+    lv_textarea_set_text(wifi_password_parts(view())->field, password);
+    h.click(wifi_password_parts(view())->connect);
+  }
+  void tap_nearby(const char* ssid) {
+    for (const WifiNearbyRow& r : wifi_nearby_rows(view())) {
+      if (r.network.ssid == ssid) h.click(r.row);
+    }
+  }
+  void answer() {
+    wifi.poll(MockWifi::kDefaultConnectMs);
+    h.settle();
+    test_advance(kWifiConnectedHoldMs + 50);
+    h.settle();
+  }
+};
+
+}  // namespace
+
+TEST_CASE("app: Back on the password page before the join answers still notifies once") {
+  AsyncWifiHost a(false);
+  a.type_and_connect("Home", "homehome1");
+  a.h.click(wifi_password_parts(a.view())->back);
+  a.h.settle();
+  CHECK(a.h.wifiConnected == 0);
+  a.answer();
+  CHECK(a.h.wifiConnected == 1);
+  CHECK(a.wifi.status().connected);
+  a.answer();
+  CHECK(a.h.wifiConnected == 1);
+}
+
+TEST_CASE("app: closing the Wi-Fi overlay before the join answers still notifies once") {
+  AsyncWifiHost a(false);
+  a.type_and_connect("Home", "homehome1");
+  app_close_wifi(a.h.app);
+  CHECK(app_wifi_view(a.h.app) == nullptr);
+  a.answer();
+  CHECK(a.h.wifiConnected == 1);
+}
+
+TEST_CASE("app: first setup closed before the join answers still notifies once") {
+  AsyncWifiHost a(true);
+  REQUIRE(a.view() != nullptr);
+  a.type_and_connect("Home", "homehome1");
+  a.h.click(wifi_password_parts(a.view())->back);
+  a.h.click(wifi_parts(a.view())->back);  // leaves the guided setup
+  a.h.settle();
+  CHECK(app_wifi_view(a.h.app) == nullptr);
+  a.answer();
+  CHECK(a.h.wifiConnected == 1);
+}
+
+TEST_CASE("app: an in-page success notifies exactly once (async)") {
+  for (bool first : {false, true}) {
+    INFO("first setup: ", first);
+    AsyncWifiHost a(first);
+    a.type_and_connect("Home", "homehome1");
+    a.answer();
+    CHECK(a.h.wifiConnected == 1);
+    a.answer();
+    CHECK(a.h.wifiConnected == 1);
+  }
+}
+
+TEST_CASE("app: a failed async join never notifies") {
+  AsyncWifiHost a(false);
+  a.type_and_connect("Home", "wrongwrong");
+  a.answer();
+  CHECK(a.h.wifiConnected == 0);
+  CHECK_FALSE(a.wifi.status().connected);
+}
+
+TEST_CASE("app: a replaced join does not notify; the replacing success notifies once") {
+  AsyncWifiHost a(false);
+  a.type_and_connect("Home", "homehome1");
+  a.h.click(wifi_password_parts(a.view())->back);
+  a.h.settle();
+  a.tap_nearby("Cafe");  // open network: replaces the Home attempt
+  a.h.settle();
+  CHECK(a.h.wifiConnected == 0);
+  a.answer();
+  CHECK(a.h.wifiConnected == 1);
+  CHECK(a.wifi.status().ssid == "Cafe");
+}
+
+TEST_CASE("app: a join answered after the app is deleted notifies nobody") {
+  AsyncWifiHost a(false);
+  a.type_and_connect("Home", "homehome1");
+  lv_obj_delete(a.h.app);  // the Wi-Fi overlay is a sibling: it stays
+  a.h.app = nullptr;
+  a.answer();
+  CHECK(a.h.wifiConnected == 0);
+  CHECK(a.wifi.status().connected);
+}

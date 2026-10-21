@@ -323,17 +323,20 @@ View compute_view(const Store& store, int64_t now) {
   if (const MatchSummary* m = store.last_for(fav, now)) {
     v.mode = Mode::Last;
     v.matchId = m->id;
-    v.homeCrest = sized(m->home.crest, kCrestSize, kCrestSize);
-    v.awayCrest = sized(m->away.crest, kCrestSize, kCrestSize);
-    v.homeColor = m->home.color;
-    v.awayColor = m->away.color;
-    // From the favourite's side: its goals first.
+    // Favourite first, whether it played at home or away: its crest and
+    // colour on the left with its goals, the opponent on the right with
+    // theirs, so each number sits on its own team's side. (The "home"/"away"
+    // fields of the view mean left/right here.)
     const bool home = m->home.id == fav;
-    const int favGoals = (home ? m->homeScore : m->awayScore).value_or(0);
-    const int oppGoals = (home ? m->awayScore : m->homeScore).value_or(0);
-    v.scoreHome = std::to_string(favGoals);
-    v.scoreAway = std::to_string(oppGoals);
-    v.lastOpponent = "vs " + (home ? m->away : m->home).abbr;
+    const Team& us = home ? m->home : m->away;
+    const Team& them = home ? m->away : m->home;
+    v.homeCrest = sized(us.crest, kCrestSize, kCrestSize);
+    v.awayCrest = sized(them.crest, kCrestSize, kCrestSize);
+    v.homeColor = us.color;
+    v.awayColor = them.color;
+    v.scoreHome = std::to_string((home ? m->homeScore : m->awayScore).value_or(0));
+    v.scoreAway = std::to_string((home ? m->awayScore : m->homeScore).value_or(0));
+    v.lastOpponent = "vs " + them.abbr;
     v.lastWhen = relative_time(now, m->kickoff, tz);
     return v;
   }
@@ -567,8 +570,9 @@ lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
     lv_obj_set_width(l, LV_PCT(100));
   }
 
-  // Last result card: caption between the crests, the score where the live
-  // score goes, then "vs CHE [FT]" and how long ago.
+  // Last result card, favourite on the left: the caption centred on the
+  // status row line, the score where the live score goes, then "vs CHE [FT]"
+  // and how long ago.
   p.lastCaption = label(root, &hanken_10, pal.dim);
   lv_label_set_text(p.lastCaption, "Last result");
   lv_obj_align(p.lastCaption, LV_ALIGN_TOP_MID, 0, kLastCaptionTop);

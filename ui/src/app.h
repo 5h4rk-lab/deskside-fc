@@ -36,8 +36,10 @@ struct AppDeps {
   // there is no guided setup. With it, app_create() opens the guided setup
   // when nothing is saved and the device is not connected.
   WifiService* wifi = nullptr;
-  // Optional: called once after every successful join made on the Wi-Fi
-  // pages (first setup or from Settings), after the screens have updated.
+  // Optional: called once for every successful join started on the Wi-Fi
+  // pages (first setup or from Settings), when the service reports it, even
+  // if the user has left the page or closed the Wi-Fi overlay meanwhile;
+  // never for failed or replaced attempts, nor after the app is deleted.
   // The host asks for fresh data here (Poller::request_all_now()).
   std::function<void()> onWifiConnected = nullptr;
 };

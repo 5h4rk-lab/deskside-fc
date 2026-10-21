@@ -72,6 +72,13 @@ struct WifiCallbacks {
   // After every successful join made on these pages. In first-setup mode it
   // comes after the "Connected" pause and the host closes the pages.
   std::function<void()> onConnected;
+  // After every successful join started on these pages, as soon as the
+  // service answers: also when the user has left the page or the screen is
+  // gone by then (the function is copied into the service's callback, so it
+  // must stay safe to call; guard it with the host's own liveness). Never for
+  // failures or replaced attempts. Called after the page has handled the
+  // result.
+  std::function<void()> onJoinSucceeded;
 };
 
 // Builds the list as a child of `parent`, filling it, and starts a scan.

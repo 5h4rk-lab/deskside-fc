@@ -6,7 +6,8 @@
 //   --fixtures       load the contract fixtures instead of the demo data
 //   --snapshot PATH  render once without a window, write a PNG and exit
 //   --screen VIEW    live (default), live-last (the Live tab when the
-//                    favourite has only a past match: its last result),
+//                    favourite has only a past match: its last result;
+//                    live-last-away: that result as a 0:2 away defeat),
 //                    matches (the Matches tab), news (the News tab), or the match
 //                    detail: detail (its default sub-tab), summary, pitch or
 //                    stats
@@ -155,7 +156,7 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
 [[noreturn]] void usage(int code) {
   std::printf(
       "usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]\n"
-      "           [--screen live|live-last|matches|news|detail|summary|pitch|stats|goal|goal-win]\n"
+      "           [--screen live|live-last|live-last-away|matches|news|detail|summary|pitch|stats|goal|goal-win]\n"
       "           [--match ID] [--at-ms N] [--reduced-motion] [--demo-goal]\n"
       "           [--screen settings|zone|picker|picker-search]\n"
       "           [--prefs FILE|memory] [--reset-prefs] [--tz ZONE] [--now EPOCH]\n"
@@ -191,7 +192,7 @@ Options parse_args(int argc, char** argv) {
       o.snapshot = argv[++i];
     } else if (std::strcmp(argv[i], "--screen") == 0 && hasValue) {
       o.screen = argv[++i];
-      const char* const kScreens[] = {"live",     "live-last", "matches",  "news",   "detail",
+      const char* const kScreens[] = {"live",     "live-last", "live-last-away", "matches",  "news",   "detail",
                                       "summary",  "pitch",    "stats",  "goal",
                                       "goal-win", "settings", "zone",   "picker",
                                       "picker-search", "wifi", "wifi-first", "wifi-password",
@@ -307,14 +308,21 @@ std::string printable_origin(const std::string& url) {
 }
 
 // --screen live-last: the favourite keeps only its past matches, so the Live
-// tab falls back to the last result.
-void keep_only_past_of_favourite(MockSource& source, const std::string& fav) {
+// tab falls back to the last result. `awayLoss`: those become 2-0 defeats
+// away from home (live-last-away).
+void keep_only_past_of_favourite(MockSource& source, const std::string& fav, bool awayLoss) {
   std::vector<MatchSummary> kept;
   source.fetch_matches([&](bool ok, std::vector<MatchSummary> ms) {
     if (!ok) return;
     for (MatchSummary& m : ms) {
       const bool favourite = m.home.id == fav || m.away.id == fav;
-      if (!favourite || m.state == MatchState::Post) kept.push_back(std::move(m));
+      if (favourite && m.state != MatchState::Post) continue;
+      if (favourite && awayLoss) {
+        if (m.home.id == fav) std::swap(m.home, m.away);
+        m.homeScore = 2;
+        m.awayScore = 0;
+      }
+      kept.push_back(std::move(m));
     }
   });
   source.set_matches(std::move(kept));
@@ -629,8 +637,8 @@ int main(int argc, char** argv) {
   app = app_create(lv_screen_active(), deps);
   // A session-only override of the saved setting.
   if (opt.reducedMotion) goal_set_reduced_motion(true);
-  if (opt.screen == "live-last" && demoData) {
-    keep_only_past_of_favourite(mock, store.favourite());
+  if ((opt.screen == "live-last" || opt.screen == "live-last-away") && demoData) {
+    keep_only_past_of_favourite(mock, store.favourite(), opt.screen == "live-last-away");
   }
   pump(start);  // matches, teams, news (at once with the demo source)
   pump(start);  // the favourite's live detail, now that the matches are in
@@ -704,7 +712,7 @@ int main(int argc, char** argv) {
         if (opt.screen != "wifi-password") lv_obj_send_event(p->connect, LV_EVENT_CLICKED, nullptr);
       }
     }
-  } else if (opt.screen != "live" && opt.screen != "live-last") {
+  } else if (opt.screen != "live" && opt.screen.rfind("live-last", 0) != 0) {
     app_open_match(app, opt.match);
     lv_obj_t* view = app_detail_view(app);
     if (opt.screen == "summary") detail_select_tab(view, DetailTab::Summary, false);

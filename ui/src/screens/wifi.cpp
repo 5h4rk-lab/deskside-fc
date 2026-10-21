@@ -503,6 +503,17 @@ void returned(WifiState* st, uint32_t request) {
   if (request == st->inFlightRequest) st->inFlightSsid.clear();
 }
 
+// The service's answer to a join: the page's own handling (which ignores a
+// page that is gone), then onJoinSucceeded on success whatever the page's
+// state. The hook is copied here, so it survives the screen.
+std::function<void(bool)> with_join_hook(WifiState* st, std::function<void(bool)> page) {
+  return [hook = st->cb.onJoinSucceeded, page = std::move(page)](bool ok) {
+    const std::function<void()> joined = hook;  // the page may end this lambda's owner
+    page(ok);
+    if (ok && joined) joined();
+  };
+}
+
 void page_connect(WifiState* st) {
   if (!st->pageOpen || st->joining || st->pageJoined || st->hold != nullptr) return;
   std::string password = lv_textarea_get_text(st->page.field);
@@ -517,7 +528,7 @@ void page_connect(WifiState* st) {
   update_page(st);
   render_status(st);
   std::shared_ptr<bool> alive = st->alive;
-  st->wifi->connect(st->joinSsid, password, [st, alive, request](bool ok) {
+  auto page = [st, alive, request](bool ok) {
     if (!*alive) return;
     returned(st, request);
     if (request != st->request || !st->pageOpen) {
@@ -541,7 +552,8 @@ void page_connect(WifiState* st) {
     }
     update_page(st);
     refresh(st);
-  });
+  };
+  st->wifi->connect(st->joinSsid, password, with_join_hook(st, page));
   std::fill(password.begin(), password.end(), '\0');
 }
 
@@ -711,9 +723,9 @@ void start_join(WifiState* st, const std::string& ssid, bool saved) {
     }
   };
   if (saved) {
-    st->wifi->connect_saved(ssid, done);
+    st->wifi->connect_saved(ssid, with_join_hook(st, done));
   } else {
-    st->wifi->connect(ssid, "", done);
+    st->wifi->connect(ssid, "", with_join_hook(st, done));
   }
 }
 

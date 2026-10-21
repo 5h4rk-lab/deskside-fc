@@ -417,15 +417,11 @@ void open_settings(AppState* st) {
 // ---------------------------------------------------------------- wifi
 
 // A join made on the Wi-Fi pages succeeded. First setup ends there.
-// Either way the host hears about it last (it asks the poller for fresh data).
 void wifi_joined(AppState* st, WifiMode mode) {
   sync_settings_wifi(st);
-  if (mode == WifiMode::FirstSetup) {
-    close_wifi(st, true);  // called from inside the Wi-Fi screen
-    app_refresh(st->tabview, st->now);
-  }
-  const std::function<void()> notify = st->onWifiConnected;  // may outlive the app
-  if (notify) notify();
+  if (mode != WifiMode::FirstSetup) return;
+  close_wifi(st, true);  // called from inside the Wi-Fi screen
+  app_refresh(st->tabview, st->now);
 }
 
 void open_wifi(AppState* st, WifiMode mode) {
@@ -437,6 +433,13 @@ void open_wifi(AppState* st, WifiMode mode) {
   };
   cb.onConnected = [st, alive, mode] {
     if (*alive) wifi_joined(st, mode);
+  };
+  // From the join result itself: also after Back on the page or with the
+  // overlay closed, but not once the app is gone.
+  cb.onJoinSucceeded = [st, alive] {
+    if (!*alive) return;
+    const std::function<void()> notify = st->onWifiConnected;  // the host may delete the app
+    if (notify) notify();
   };
   st->wifiOverlay = make_overlay(st, OverlayKind::Wifi, true);
   st->wifiView = wifi_create(st->wifiOverlay, *st->wifi, mode, cb);

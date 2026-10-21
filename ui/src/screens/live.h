@@ -1,7 +1,8 @@
 // Live screen (home tab): the favourite team's live match over a diagonal
 // split in both team colours, else a card for its next match, else a card
-// for its last result (score from the favourite's side, "vs CHE", "FT" and
-// how long ago), else "No matches soon" ("Connecting..." before any data).
+// for its last result read favourite first (its crest, colour and goals on
+// the left, the opponent's on the right; "vs CHE", "FT" and how long ago),
+// else "No matches soon" ("Connecting..." before any data).
 // The live and last-result cards open the match when tapped. Mockup: screen 1
 // of docs/superpowers/specs/assets/ui-mockup-v2.html.
 //
