@@ -104,6 +104,7 @@
 #include "mock_power.h"
 #include "mock_source.h"
 #include "mock_wifi.h"
+#include "host_loop.h"
 #include "poller.h"
 #include "prefs.h"
 #include "settings.h"
@@ -748,28 +749,35 @@ int main(int argc, char** argv) {
   }
 
   lv_obj_t* app = nullptr;
-  bool matchesChanged = false;
-  Poller poller(store, *source, [&app, &matchesChanged](int64_t now) {
-    app_matches_changed(app, now);
-    matchesChanged = true;
-  });
-  // The open detail, else the favourite's live match (its latest event feeds
-  // the Live tab's strip).
-  auto detail_watch = [&]() {
-    std::string id = app_open_match_id(app);
-    if (id.empty()) {
-      if (const MatchSummary* m = store.live_for(store.favourite())) id = m->id;
-    }
-    return id;
-  };
-  // One step of the data path: deliver finished requests, then schedule.
-  auto pump = [&](int64_t now) {
+  PowerStatus lastModelStatus = modelPower.status();
+  // The shared host loop: the same sequence the firmware runs. The data path
+  // is delivered, scheduled and refreshed from it; in the simulator the
+  // battery model is sampled once a second just before the refresh.
+  HostLoop::Hooks hooks;
+  hooks.pollTransports = [&] {
     if (transport) transport->poll();
     if (imageTransport) imageTransport->poll();
-    if (httpImages) httpImages->tick(monotonic_ms());
-    poller.set_detail_watch(detail_watch());
-    poller.tick(monotonic_ms(), now);
   };
+  hooks.tickImages = [&](int64_t ms) {
+    if (httpImages) httpImages->tick(ms);
+  };
+  hooks.openMatchId = [&] { return app_open_match_id(app); };
+  hooks.onMatchesChanged = [&](int64_t now) { app_matches_changed(app, now); };
+  hooks.everySecond = [&](int64_t now) {
+    if (opt.batteryMv <= 0) return;
+    modelPower.sample(now);
+    const PowerStatus s = modelPower.status();
+    if (s != lastModelStatus) {  // the model's view changed: say so
+      std::printf("ADC %d mV -> %s\n", modelPower.millivolts(), MockPower::describe(s).c_str());
+      std::fflush(stdout);
+      lastModelStatus = s;
+    }
+  };
+  hooks.refresh = [&](int64_t now) { app_refresh(app, now); };
+  HostLoop host(store, *source, hooks);
+  Poller& poller = host.poller();
+  // One step of the data path: deliver finished requests, then schedule.
+  auto pump = [&](int64_t now) { host.pump(monotonic_ms(), now); };
 
   AppDeps deps{store, *images, *source,
                [](const std::string& id) {
@@ -797,6 +805,7 @@ int main(int argc, char** argv) {
     }
   }
   app_refresh(app, start);
+  host.note_refreshed(start);
 
   // Runs a demo change through the whole path: source, poll, detector,
   // celebration.
@@ -892,10 +901,7 @@ int main(int argc, char** argv) {
     const int64_t until = monotonic_ms() + kImageSnapshotMs;
     while (monotonic_ms() < until && httpImages->pending() > 0) {
       pump(start);
-      if (matchesChanged) {
-        app_refresh(app, start);
-        matchesChanged = false;
-      }
+      if (host.take_matches_changed()) app_refresh(app, start);
       SDL_Delay(10);
     }
     pump(start);
@@ -929,8 +935,6 @@ int main(int argc, char** argv) {
   Keys keys;
   SDL_AddEventWatch(watch_keys, &keys);
   bool demoGoalDone = !opt.demoGoal;
-  int64_t lastRefresh = start;
-  PowerStatus lastModelStatus = modelPower.status();
   uint32_t lastWifiMs = SDL_GetTicks();
   for (;;) {
     lv_timer_handler();
@@ -967,21 +971,7 @@ int main(int argc, char** argv) {
       keys.millivolts = 0;
       std::fflush(stdout);
     }
-    pump(now);
-    if (now != lastRefresh && opt.batteryMv > 0) {
-      modelPower.sample(now);
-      const PowerStatus s = modelPower.status();
-      if (s != lastModelStatus) {  // the model's view changed: say so
-        std::printf("ADC %d mV -> %s\n", modelPower.millivolts(), MockPower::describe(s).c_str());
-        std::fflush(stdout);
-        lastModelStatus = s;
-      }
-    }
-    if (now != lastRefresh || matchesChanged) {
-      app_refresh(app, now);
-      lastRefresh = now;
-      matchesChanged = false;
-    }
+    host.tick(monotonic_ms(), now);
     SDL_Delay(5);
   }
 }
