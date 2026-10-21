@@ -22,6 +22,8 @@ describe("normalizeSummary (full lineups)", () => {
     expect(d.match.homeScore).toBe(3);
     expect(d.match.awayScore).toBe(1);
     expect(d.match.home.crest.startsWith("/api/img?u=")).toBe(true);
+    expect(d.match.home.primary).toBe("#132257");
+    expect(d.match.away.primary).toBe("#5CBFEB");
     expect(d.match.kickoff).toBe(Date.parse("2026-10-19T19:00Z") / 1000);
   });
 

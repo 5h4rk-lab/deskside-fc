@@ -36,6 +36,7 @@ describe("normalizeScoreboard", () => {
     expect(m.home.id).toBe("367");
     expect(m.home.name).toBe("Tottenham Hotspur");
     expect(m.home.color).toMatch(/^#[0-9A-Fa-f]{6}$/);
+    expect(m.home.primary).toBe("#132257");
   });
 
   it("takes home from the competitor flagged homeAway=home regardless of order", () => {
@@ -116,6 +117,7 @@ describe("normalizeScoreboard", () => {
     delete team.color;
     const [m] = normalizeScoreboard(raw, "eng.1");
     expect(m.home.color).toBe("#7C8F84");
+    expect(m.home.primary).toBe("#7C8F84");
   });
 
   it("matches-normalised.json matches the normaliser output (run `npm run gen:fixtures` to refresh)", () => {

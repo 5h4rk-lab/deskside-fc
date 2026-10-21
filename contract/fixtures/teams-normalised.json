@@ -6,6 +6,7 @@
       "name": "AFC Bournemouth",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F349.png&w=48&h=48",
       "color": "#DA291C",
+      "primary": "#DA291C",
       "league": "eng.1"
     },
     {
@@ -14,6 +15,7 @@
       "name": "Arsenal",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F359.png&w=48&h=48",
       "color": "#EF0107",
+      "primary": "#EF0107",
       "league": "eng.1"
     },
     {
@@ -22,6 +24,7 @@
       "name": "Aston Villa",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F362.png&w=48&h=48",
       "color": "#95BFE5",
+      "primary": "#670E36",
       "league": "eng.1"
     },
     {
@@ -30,6 +33,7 @@
       "name": "Brentford",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F337.png&w=48&h=48",
       "color": "#E30613",
+      "primary": "#E30613",
       "league": "eng.1"
     },
     {
@@ -38,6 +42,7 @@
       "name": "Brighton & Hove Albion",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F331.png&w=48&h=48",
       "color": "#0057B8",
+      "primary": "#0057B8",
       "league": "eng.1"
     },
     {
@@ -46,6 +51,7 @@
       "name": "Chelsea",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F363.png&w=48&h=48",
       "color": "#DBA111",
+      "primary": "#034694",
       "league": "eng.1"
     },
     {
@@ -54,6 +60,7 @@
       "name": "Coventry City",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F388.png&w=48&h=48",
       "color": "#5CBFEB",
+      "primary": "#5CBFEB",
       "league": "eng.1"
     },
     {
@@ -62,6 +69,7 @@
       "name": "Crystal Palace",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F384.png&w=48&h=48",
       "color": "#C4122E",
+      "primary": "#1B458F",
       "league": "eng.1"
     },
     {
@@ -70,6 +78,7 @@
       "name": "Everton",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F368.png&w=48&h=48",
       "color": "#3F6FD1",
+      "primary": "#003399",
       "league": "eng.1"
     },
     {
@@ -78,6 +87,7 @@
       "name": "Fulham",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F370.png&w=48&h=48",
       "color": "#FFFFFF",
+      "primary": "#000000",
       "league": "eng.1"
     },
     {
@@ -86,6 +96,7 @@
       "name": "Hull City",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F306.png&w=48&h=48",
       "color": "#F5A12D",
+      "primary": "#F5A12D",
       "league": "eng.1"
     },
     {
@@ -94,6 +105,7 @@
       "name": "Ipswich Town",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F373.png&w=48&h=48",
       "color": "#3A64A3",
+      "primary": "#3A64A3",
       "league": "eng.1"
     },
     {
@@ -102,6 +114,7 @@
       "name": "Leeds United",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F357.png&w=48&h=48",
       "color": "#FFFFFF",
+      "primary": "#1D428A",
       "league": "eng.1"
     },
     {
@@ -110,6 +123,7 @@
       "name": "Liverpool",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F364.png&w=48&h=48",
       "color": "#C8102E",
+      "primary": "#C8102E",
       "league": "eng.1"
     },
     {
@@ -118,6 +132,7 @@
       "name": "Manchester City",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F382.png&w=48&h=48",
       "color": "#6CABDD",
+      "primary": "#6CABDD",
       "league": "eng.1"
     },
     {
@@ -126,6 +141,7 @@
       "name": "Manchester United",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F360.png&w=48&h=48",
       "color": "#DA291C",
+      "primary": "#DA291C",
       "league": "eng.1"
     },
     {
@@ -134,6 +150,7 @@
       "name": "Newcastle United",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F361.png&w=48&h=48",
       "color": "#FFFFFF",
+      "primary": "#241F20",
       "league": "eng.1"
     },
     {
@@ -142,6 +159,7 @@
       "name": "Nottingham Forest",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F393.png&w=48&h=48",
       "color": "#E53233",
+      "primary": "#E53233",
       "league": "eng.1"
     },
     {
@@ -150,6 +168,7 @@
       "name": "Sunderland",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F366.png&w=48&h=48",
       "color": "#EB172B",
+      "primary": "#EB172B",
       "league": "eng.1"
     },
     {
@@ -158,6 +177,7 @@
       "name": "Tottenham Hotspur",
       "crest": "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F367.png&w=48&h=48",
       "color": "#FFFFFF",
+      "primary": "#132257",
       "league": "eng.1"
     }
   ]

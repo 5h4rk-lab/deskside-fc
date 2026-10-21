@@ -9,7 +9,7 @@ import type {
   StatRow,
   Team,
 } from "./contract.js";
-import { teamColor } from "./colors.js";
+import { teamColor, teamPrimary } from "./colors.js";
 import { layoutFormation, parseFormation } from "./formation.js";
 import { fetchJson, UPSTREAM_TIMEOUT_MS } from "./http.js";
 import { isAllowedImageUrl, type Fit } from "./images.js";
@@ -35,12 +35,14 @@ export function crestPath(logoUrl: string | undefined, size = 48): string {
 function toTeam(competitor: Json, league: string): Team {
   const t: Json = competitor?.team ?? {};
   const abbr = String(t.abbreviation ?? "");
+  const espnHex = typeof t.color === "string" ? t.color : undefined;
   return {
     id: String(t.id ?? competitor?.id ?? ""),
     abbr,
     name: String(t.displayName ?? t.name ?? ""),
     crest: crestPath(t.logo ?? t.logos?.[0]?.href),
-    color: teamColor(abbr, typeof t.color === "string" ? t.color : undefined, league),
+    color: teamColor(abbr, espnHex, league),
+    primary: teamPrimary(abbr, espnHex, league),
   };
 }
 

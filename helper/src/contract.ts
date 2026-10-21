@@ -5,7 +5,10 @@ export interface Team {
   abbr: string;
   name: string;
   crest: string;
-  color: string; // "#RRGGBB"
+  color: string; // "#RRGGBB": readable accent for small details on the dark UI
+  // "#RRGGBB": the club's real brand colour for large surfaces (may be dark).
+  // Devices treat it as optional and fall back to `color` when it is absent or invalid.
+  primary: string;
 }
 
 export type MatchState = "pre" | "live" | "post" | "postponed";

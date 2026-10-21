@@ -20,10 +20,17 @@ describe("normalizeTeams", () => {
     expect(ars.name).toBe("Arsenal");
     expect(ars.id).toBe("359");
     expect(ars.color).toBe("#EF0107");
+    expect(ars.primary).toBe("#EF0107");
+    const che = teams.find((t) => t.abbr === "CHE")!;
+    expect(che.color).toBe("#DBA111");
+    expect(che.primary).toBe("#034694");
   });
 
   it("gives every team a valid #RRGGBB colour", () => {
-    for (const t of teams) expect(t.color).toMatch(/^#[0-9A-F]{6}$/);
+    for (const t of teams) {
+      expect(t.color).toMatch(/^#[0-9A-F]{6}$/);
+      expect(t.primary).toMatch(/^#[0-9A-F]{6}$/);
+    }
   });
 
   it("builds a helper crest path at 48x48", () => {
@@ -51,6 +58,8 @@ describe("curated colours in the match normalisers", () => {
     const [m] = normalizeScoreboard(load("scoreboard-post.json"), "eng.1");
     expect(m.home.color).toBe("#FFFFFF"); // TOT
     expect(m.away.color).toBe("#5CBFEB"); // COV
+    expect(m.home.primary).toBe("#132257"); // TOT navy for large surfaces
+    expect(m.away.primary).toBe("#5CBFEB"); // COV
   });
 });
 

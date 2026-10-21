@@ -11,6 +11,8 @@ and proxies/resizes images. Every endpoint needs the `x-token` header.
 - `GET /api/img?u=<url>&w=48&h=48`: image proxy (allow-listed hosts, resized PNG).
 - `GET /api/cutout?name=<player>&w=40&h=40`: player cutout photo.
 
+Every team object carries `color` (readable accent for small details, curated in `src/colors.ts` with a luminance floor) and `primary` (the club's real brand colour for large surfaces, may be dark; white-kit clubs use their dark identity colour).
+
 ### 400 responses
 
 `/api/matches` answers 400 (JSON `{"error": ...}`, before any ESPN request) for:
