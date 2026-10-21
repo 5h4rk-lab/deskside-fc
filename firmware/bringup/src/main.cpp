@@ -6,7 +6,8 @@
 // endless touch-test loop with a 5 s heartbeat. Every step is logged on the native USB serial port at 115200.
 //
 // Serial commands: 'r' replays the boot log, 'p' reruns the colour phases,
-// 's' prints the result line again.
+// 's' prints the result line again, 'a' arms the opt-in power-off test (then
+// hold the PWR key 3 s), 'o' runs it right away.
 // BOOT button: press it when the test card looks right to mark display=ok.
 #include <Arduino.h>
 #include <esp_system.h>
@@ -239,6 +240,8 @@ void handleSerialInput() {
       case 'r': bringupLogReplay(); break;
       case 'p': runDisplayPhases(); break;
       case 's': printResult(); break;
+      case 'a': power::armPowerOffTest(); break;
+      case 'o': power::startPowerOffTest(); break;
       default: break;
     }
   }
@@ -264,7 +267,7 @@ void setup() {
   power::begin();
   pinMode(pins::kBootButton, INPUT_PULLUP);
   printResult();
-  logf("[sys] touch-test mode. Press BOOT if the test card looks right. Serial: r=replay p=phases s=result");
+  logf("[sys] touch-test mode. Press BOOT if the test card looks right. Serial: r=replay p=phases s=result a=arm power-off test o=run it");
   bringupLogFreeze();
 }
 

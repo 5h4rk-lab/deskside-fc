@@ -100,7 +100,7 @@ monitor prints `[sys] alive ...`; the result line repeats every minute.
 
 Keys in the serial monitor: `r` prints the whole boot log again (useful if the
 monitor started late), `p` re-runs the colour sequence, `s` prints the result
-line.
+line, `a` arms and `o` runs the opt-in power-off test (see the battery section).
 
 ## The four versions (environments)
 
@@ -201,9 +201,47 @@ result as the final word.
 - **Power button:** pressing the board's power key prints
   `[power] pwr_key pressed` and `pwr_key released after N ms`. That is all it
   does. The vendor's long-press logic (10 s sleep, 15 s restart, 20 s
-  shutdown) is deliberately **not** implemented, so the button is inert.
+  shutdown) is deliberately **not** implemented, so the button is inert,
+  except for the opt-in power-off test below.
 - The `~NN%` is a rough guess from the voltage (approximate table). It is not
   a fuel gauge and is off while charging or under load.
+
+### Optional: power-off test (is there a real off switch?)
+
+We do not yet know whether the board can really be switched off by software
+or by the power button while USB is attached. This opt-in test finds out. It
+never starts by itself and has to be armed again after every reset or power
+cycle. It drives GPIO7 (the power hold line) low for a few seconds, which is
+what the vendor does to shut the board down.
+
+How to start it (serial monitor open):
+
+- Type `o` to run it immediately, or
+- type `a` (arms it: `power-off test ARMED`), then hold the board's power key
+  for 3 seconds. Holding the key does nothing unless you armed it first.
+
+The log counts down (`POWER-OFF TEST: driving GPIO7 low in 3 s`, then
+`3 ...`, `2 ...`, `1 ...`) and then drives GPIO7 low.
+
+- **On USB only, no battery (do this first):** expect the board to keep
+  running. After 5 seconds the log says
+  `board stayed on after GPIO7 low: USB (or something else) keeps it powered;
+  GPIO7 restored high`.
+- **On battery only, USB unplugged (only after the battery test above worked):**
+  without USB there is no serial port, so use the power key. With USB still
+  attached, type `a` in the monitor to arm the test, then unplug the USB
+  cable (the screen keeps running on the battery), then hold the power key
+  for 3 seconds. Expect the board to turn off completely (screen dark, no
+  backlight). Pressing the power key again should start it, and the log
+  (after you plug USB back in and reopen the monitor) shows a fresh boot. If
+  the board does not turn off, GPIO7 is restored high after 5 seconds and
+  the screen just keeps running.
+
+What to send me: the exact `[power]` lines (`ARMED`, `POWER-OFF TEST`,
+`stayed on`, or the last line before the board went dark) and what the screen
+did. This is how we learn whether the board can really be switched off while
+USB is attached (expected: no, USB keeps it powered) and whether it switches
+off on battery.
 
 ### What to send me
 

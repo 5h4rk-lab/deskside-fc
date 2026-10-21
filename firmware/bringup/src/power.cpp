@@ -41,10 +41,24 @@ constexpr int kMinHistoryForTrend = 7;       // need >= 30 s of data
 constexpr int32_t kTrendThresholdMv = 15;    // below this the change is noise
 constexpr uint32_t kRepeatMs = 60000;        // interpretation lines repeat rate
 
+// Power-off test timing.
+constexpr int kOffCountdownS = 3;
+constexpr uint32_t kOffHoldKeyMs = 3000;   // PWR key hold that starts the test (armed only)
+constexpr uint32_t kOffStayedOnMs = 5000;  // still running this long after GPIO7 low => USB powers us
+
 constexpr uint32_t kKeyPollMs = 20;
 constexpr uint32_t kKeyDebounceMs = 30;
 
+enum class OffTest : uint8_t { Idle, Countdown, WaitAfterLow };
+
 struct State {
+  bool armed = false;
+  OffTest offTest = OffTest::Idle;
+  uint32_t offStartedAt = 0;
+  int offSecondsLeft = 0;
+  uint32_t offLowAt = 0;
+  bool keyHoldHandled = false;
+
   uint32_t latestMv = 0;
   uint32_t history[kHistory] = {};
   int histCount = 0;  // valid entries, oldest first up to kHistory
@@ -151,10 +165,54 @@ void begin() {
        pins::kPowerKey);
 }
 
+void armPowerOffTest() {
+  g.armed = true;
+  logf("[power] power-off test ARMED for this boot: hold the PWR key for 3 s or send 'o' to start it");
+}
+
+void startPowerOffTest() {
+  if (g.offTest != OffTest::Idle) {
+    logf("[power] power-off test already running");
+    return;
+  }
+  logf("[power] POWER-OFF TEST: driving GPIO%d low in %d s (unplug nothing)", pins::kPowerHold, kOffCountdownS);
+  g.offTest = OffTest::Countdown;
+  g.offStartedAt = millis();
+  g.offSecondsLeft = kOffCountdownS;
+}
+
+// Advances the power-off test state machine; called from pollKey().
+static void stepPowerOffTest(uint32_t now) {
+  if (g.offTest == OffTest::Countdown) {
+    const int left = kOffCountdownS - int((now - g.offStartedAt) / 1000);
+    if (left > 0 && left < g.offSecondsLeft) {
+      g.offSecondsLeft = left;
+      logf("[power] POWER-OFF TEST: %d ...", left);
+    } else if (left <= 0) {
+      logf("[power] POWER-OFF TEST: driving GPIO%d LOW now (hold=%s before)", pins::kPowerHold,
+           digitalRead(pins::kPowerHold) ? "high" : "low");
+      Serial.flush();
+      digitalWrite(pins::kPowerHold, LOW);
+      g.offLowAt = millis();
+      g.offTest = OffTest::WaitAfterLow;
+    }
+  } else if (g.offTest == OffTest::WaitAfterLow && now - g.offLowAt >= kOffStayedOnMs) {
+    logf("[power] board stayed on after GPIO%d low: USB (or something else) keeps it powered; GPIO%d restored high",
+         pins::kPowerHold, pins::kPowerHold);
+    digitalWrite(pins::kPowerHold, HIGH);
+    g.offTest = OffTest::Idle;
+  }
+}
+
 void pollKey() {
   const uint32_t now = millis();
   if (now - g.lastPoll < kKeyPollMs) return;
   g.lastPoll = now;
+  stepPowerOffTest(now);
+  if (g.keyDown && g.armed && !g.keyHoldHandled && now - g.pressedAt >= kOffHoldKeyMs) {
+    g.keyHoldHandled = true;
+    startPowerOffTest();
+  }
 
   const bool raw = digitalRead(pins::kPowerKey) == LOW;
   if (raw != g.keyCandidate) {
@@ -167,6 +225,7 @@ void pollKey() {
   g.keyDown = raw;
   if (raw) {
     g.pressedAt = g.candidateSince;
+    g.keyHoldHandled = false;
     logf("[power] pwr_key pressed");
   } else {
     logf("[power] pwr_key released after %lu ms", (unsigned long)(g.candidateSince - g.pressedAt));
