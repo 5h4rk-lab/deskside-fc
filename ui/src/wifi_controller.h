@@ -12,6 +12,11 @@
 // held: status() and saved() are plain RAM reads and are safe inside them.
 //
 // What it adds to the WifiService contract (wifi_service.h):
+// - Callbacks: a replaced join is answered false from inside the replacing
+//   call, as the contract allows. A join cancelled by forget() or wipe() is
+//   answered by the next tick(), never from inside those calls.
+// - A join requested before the radio is ready waits for it (retrying every
+//   second) and ends at its 15 s deadline like any other.
 // - Nothing blocks: scan(), connect() and the others only change state and
 //   start asynchronous radio work. tick() (call it every 10 to 50 ms) polls
 //   the scan, drives the timers and starts the next step.
@@ -162,6 +167,7 @@ class WifiController : public WifiService {
   // (null for an auto-join), to be called once the caller's state is consistent.
   std::function<void(bool)> take_join();
   void fail_join();
+  void issue_join();
   bool classify(const std::string& ssid, const std::string& password, bool& open) const;
 
   // Scans
@@ -192,6 +198,8 @@ class WifiController : public WifiService {
   WifiStatus status_;
   uint32_t genCounter_ = 0;
   Join join_;
+  // Callbacks of joins cancelled by forget() / wipe(), run by the next tick().
+  std::vector<std::function<void(bool)>> deferred_;
 
   // Scan
   std::vector<std::function<void(std::vector<WifiNetwork>)>> scanWaiters_;

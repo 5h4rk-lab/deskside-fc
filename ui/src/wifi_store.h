@@ -31,6 +31,7 @@ bool wifi_password_valid(const std::string& password);
 class WifiStore {
  public:
   static constexpr size_t kMaxSaved = 16;
+  static_assert(kMaxSaved >= kMinSavedNetworks, "the list must be able to hold the contract's minimum");
   static constexpr size_t kMaxSsidBytes = 32;
   static constexpr size_t kMaxPasswordBytes = 63;
   // marker + two lengths + checksum around the longest SSID and password.

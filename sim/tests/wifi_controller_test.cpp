@@ -855,11 +855,63 @@ TEST_CASE("controller forget: cancels a join of that saved network (false, once)
   Result res;
   r.ctrl.connect_saved("Home", into(res));
   r.ctrl.forget("Home");
-  CHECK(res.calls == 1);
+  CHECK(res.calls == 0);  // only a REPLACED join is answered inside a service call
+  r.tick();
+  CHECK(res.calls == 1);  // the next tick answers it
   CHECK_FALSE(res.ok);
   r.advance(20000);
   CHECK(res.calls == 1);
   CHECK(r.ctrl.saved().empty());
+}
+
+TEST_CASE("controller wipe: a pending join is answered false by the next tick, not inside wipe") {
+  Rig r;
+  r.seed({{"Home", kPass}});
+  r.advance(100);
+  Result res;
+  r.ctrl.connect("New", kPass2, into(res));
+  r.ctrl.wipe();
+  CHECK(res.calls == 0);
+  r.tick();
+  CHECK(res.calls == 1);
+  CHECK_FALSE(res.ok);
+  r.advance(20000);
+  CHECK(res.calls == 1);
+}
+
+TEST_CASE("controller connect before the radio is ready: nothing reaches the driver, the callback ends false once") {
+  Rig r;
+  r.ctrl.load();
+  r.radio.isReady = false;
+  Result res;
+  r.ctrl.connect("Home", kPass, into(res));
+  r.advance(14000);
+  CHECK(res.calls == 0);
+  CHECK(r.radio.joins.empty());  // join() is never called on a radio that is not up
+  r.advance(1500);               // the 15 s deadline
+  CHECK(res.calls == 1);
+  CHECK_FALSE(res.ok);
+  CHECK(r.radio.joins.empty());
+  CHECK(r.ctrl.saved().empty());
+  r.advance(20000);
+  CHECK(res.calls == 1);
+}
+
+TEST_CASE("controller connect before the radio is ready: the join goes out as soon as it is") {
+  Rig r;
+  r.ctrl.load();
+  r.radio.isReady = false;
+  Result res;
+  r.ctrl.connect("Home", kPass, into(res));
+  r.advance(2500);
+  CHECK(r.radio.joins.empty());
+  r.radio.isReady = true;
+  r.advance(1200);
+  REQUIRE(r.radio.joins.size() == 1);
+  CHECK(r.radio.joins[0].ssid == "Home");
+  r.gotIp();
+  CHECK(res.ok);
+  CHECK(res.calls == 1);
 }
 
 TEST_CASE("controller forget: the user's own pending join is not touched by forgetting an old entry") {
@@ -1081,27 +1133,54 @@ TEST_CASE("controller fuzz: random calls and driver events keep every callback e
       counters.push_back(std::make_unique<int>(0));
       return counters.back().get();
     };
+    // Which WifiService call is running right now ("" none). Callbacks check it:
+    // apart from a replaced join (answered inside connect / connect_saved), none may
+    // run from inside a service call.
+    std::string current;
+    int violations = 0;
+    struct Call {
+      std::string& cur;
+      Call(std::string& c, const char* name) : cur(c) { cur = name; }
+      ~Call() { cur.clear(); }
+    };
+    auto scanCb = [&](int* c) {
+      return [c, &current, &violations](std::vector<WifiNetwork>) {
+        ++*c;
+        if (!current.empty()) ++violations;
+      };
+    };
+    auto joinCb = [&](int* c) {
+      return [c, &current, &violations](bool) {
+        ++*c;
+        if (!current.empty() && current != "connect" && current != "connect_saved") ++violations;
+      };
+    };
     for (int step = 0; step < 600; ++step) {
       switch (next(14)) {
         case 0: {
           int* c = counter();
-          r.ctrl.scan([c](std::vector<WifiNetwork>) { ++*c; });
+          Call g(current, "scan");
+          r.ctrl.scan(scanCb(c));
           break;
         }
         case 1:
         case 2: {
           int* c = counter();
-          r.ctrl.connect(names[next(6)], next(3) == 0 ? "short" : kPass, [c](bool) { ++*c; });
+          Call g(current, "connect");
+          r.ctrl.connect(names[next(6)], next(3) == 0 ? "short" : kPass, joinCb(c));
           break;
         }
         case 3: {
           int* c = counter();
-          r.ctrl.connect_saved(names[next(6)], [c](bool) { ++*c; });
+          Call g(current, "connect_saved");
+          r.ctrl.connect_saved(names[next(6)], joinCb(c));
           break;
         }
-        case 4:
+        case 4: {
+          Call g(current, "forget");
           r.ctrl.forget(names[next(6)]);
           break;
+        }
         case 5:
           r.radio.up = true;
           r.ctrl.on_ip(next(3) == 0 ? next(30) : r.radio.lastGen(), "10.0.0.1");
@@ -1117,19 +1196,32 @@ TEST_CASE("controller fuzz: random calls and driver events keep every callback e
           break;
         case 9:
           r.radio.scanFails = next(4) == 0;
+          r.radio.scanHangs = next(8) == 0;
           r.radio.startOk = next(5) != 0;
           r.radio.isReady = next(6) != 0;
           break;
         case 10:
-          if (next(30) == 0) r.ctrl.wipe();
+          if (next(30) == 0) {
+            Call g(current, "wipe");
+            r.ctrl.wipe();
+          }
           break;
         default:
           r.advance(next(4) * 700 + 10);
           break;
       }
-      const WifiStatus st = r.ctrl.status();
+      WifiStatus st;
+      size_t savedCount;
+      {
+        Call g(current, "status");
+        st = r.ctrl.status();
+      }
+      {
+        Call g(current, "saved");
+        savedCount = r.ctrl.saved().size();
+      }
       if (st.connected) CHECK_FALSE(st.ssid.empty());
-      CHECK(r.ctrl.saved().size() <= WifiStore::kMaxSaved);
+      CHECK(savedCount <= WifiStore::kMaxSaved);
     }
     // Let everything finish: timeouts answer what is still pending.
     r.radio.isReady = true;
@@ -1140,5 +1232,7 @@ TEST_CASE("controller fuzz: random calls and driver events keep every callback e
       INFO("seed " << seed);
       CHECK(*c == 1);
     }
+    INFO("seed " << seed);
+    CHECK(violations == 0);
   }
 }

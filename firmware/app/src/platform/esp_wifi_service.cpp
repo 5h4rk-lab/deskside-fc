@@ -112,15 +112,19 @@ class EspRadio : public WifiRadio {
   enum ScanPhase : int { Idle = 0, Requested, Running, Done, Failed };
 
   bool begin() {
+    if (task_) return true;
     commands_ = xQueueCreate(kCommandQueueLen, sizeof(Command));
     events_ = xQueueCreate(kEventQueueLen, sizeof(DriverEvent));
     if (!commands_ || !events_) {
       Serial.println("[wifi] ERROR: cannot create the Wi-Fi queues");
+      release_queues();
       return false;
     }
     if (xTaskCreatePinnedToCore(&EspRadio::task_main, "wifi_worker", kWorkerStackBytes, this, kWorkerPriority,
                                 &task_, kWorkerCore) != pdPASS) {
       Serial.println("[wifi] ERROR: cannot create the Wi-Fi worker task");
+      task_ = nullptr;
+      release_queues();
       return false;
     }
     return true;
@@ -168,11 +172,15 @@ class EspRadio : public WifiRadio {
     if (!post(c)) {
       // The worker is not taking commands: report a failed attempt so the
       // controller retries within its window and finally times out.
-      DriverEvent e = {};
-      e.type = DriverEvent::Disconnected;
-      e.gen = gen;
-      e.reason = 1;
-      xQueueSend(events_, &e, 0);
+      // (Before start() there is no queue at all: the controller never gets here
+      // then, because ready() is false, but the guard stays.)
+      if (events_) {
+        DriverEvent e = {};
+        e.type = DriverEvent::Disconnected;
+        e.gen = gen;
+        e.reason = 1;
+        xQueueSend(events_, &e, 0);
+      }
     }
     memset(c.password, 0, sizeof(c.password));
   }
@@ -188,6 +196,13 @@ class EspRadio : public WifiRadio {
   size_t stack_free_bytes() const { return task_ ? uxTaskGetStackHighWaterMark(task_) * sizeof(StackType_t) : 0; }
 
  private:
+  void release_queues() {
+    if (commands_) vQueueDelete(commands_);
+    if (events_) vQueueDelete(events_);
+    commands_ = nullptr;
+    events_ = nullptr;
+  }
+
   bool post(const Command& c) {
     if (!commands_) return false;
     if (xQueueSend(commands_, &c, 0) != pdTRUE) {
@@ -586,12 +601,19 @@ void EspWifiService::diag_print_scan() {
   });
 }
 
-// Joins the user's own network with a deliberately wrong, throw-away
-// passphrase to prove the failure path (and that nothing is saved).
+// Joins the most recently saved network (the user's own) with a deliberately
+// wrong, throw-away key to prove the failure path. The failed attempt saves
+// nothing and replaces nothing; the auto-join then rejoins the network.
 void EspWifiService::diag_wrong_password_test() {
+  const std::vector<std::string> list = saved();
+  if (list.empty()) {
+    Serial.println("[wifi-diag] no saved network to test against (save one first)");
+    return;
+  }
   const int64_t t0 = now_ms();
-  Serial.println("[wifi-diag] joining TP-Link_D066 with a deliberately wrong throw-away credential");
-  connect("TP-Link_D066", "wrong-test-phrase-1", [this, t0](bool ok) {
+  Serial.printf("[wifi-diag] joining %s with a deliberately wrong throw-away credential\n",
+                wifi_printable(list.front()).c_str());
+  connect(list.front(), "wrong-test-phrase-1", [this, t0](bool ok) {
     Serial.printf("[wifi-diag] result: %s after %lld ms; saved networks now %u\n", ok ? "JOINED (unexpected)" : "failed",
                   (long long)(now_ms() - t0), (unsigned)saved().size());
   });

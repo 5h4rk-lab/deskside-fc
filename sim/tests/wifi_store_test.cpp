@@ -107,7 +107,6 @@ TEST_CASE("WifiStore: replacing an entry of a full store drops nothing") {
 }
 
 TEST_CASE("WifiStore never drops an entry while it holds fewer than kMinSavedNetworks") {
-  static_assert(WifiStore::kMaxSaved >= kMinSavedNetworks, "capacity must cover the minimum");
   WifiStore s;
   for (size_t i = 0; i < kMinSavedNetworks; ++i) {
     CHECK(s.add_or_replace("net" + std::to_string(i), "password" + std::to_string(i)));

@@ -2,21 +2,25 @@
 // and the persistent settings, and prints a compact status and memory report on
 // the serial console.
 //
-// Serial commands (one letter, no Enter needed; echo -n g > /dev/ttyACM0):
+// Serial commands. One-letter commands act at once, no Enter needed
+// (echo -n g > /dev/ttyACM0); none of them erases or restarts anything:
 //   g        the favourite scores in its live demo match (goal celebration)
 //   w        the live demo match ends with the favourite ahead (win)
 //   d        reload the demo data (after a win the live match is gone)
 //   s0 s1 s2 show the Live, Matches or News tab
 //   t        make the next team of the list the favourite (saved; shows persistence)
 //   p        print the settings in use
-//   e        erase the saved settings and restart (defaults: Arsenal, UTC, full brightness)
 //   k        NVS self-test (PASS/FAIL lines; also a counter that survives reboots and flashes)
 //   f        toggle one-second performance lines ([perf]) instead of 5 s
 //   m        print the memory report now
-//   r        restart the board
-// Whole-word commands (type the word and Enter: echo wifi > /dev/ttyACM0):
-//   wifi       one line: connected network, signal, address, number of saved networks, memory
-//   wipe-wifi  forget every saved network and restart (the first-run Wi-Fi setup shows again)
+// Word commands start with ':' and run only when you press Enter (echo ':wifi' > /dev/ttyACM0).
+// While you type one its letters are swallowed, so typing by hand can never run a letter
+// command; a word left unfinished for 5 s is dropped:
+//   :wifi            one line: connected network, signal, address, saved networks, memory
+//   :wipe-wifi       forget every saved network and restart (first-run Wi-Fi setup shows again)
+//   :erase-settings  erase the saved settings (not the Wi-Fi networks) and restart
+//   :restart         restart the board
+//   :help            list the commands
 // Only in the diagnostics builds (pio run -e app_diag, also app_debug; -DAPP_DIAG), never in the
 // release `app` env, because they can inject a touch:
 //   h j n    scripted swipe left / right / list scroll, b0..b2 tap a tab button, =xxxyyy tap at x,y
@@ -25,7 +29,7 @@
 //   x0..x5   hide/show a part of the goal celebration (0 rays, 1 confetti, 2 stamp box, 3 cutout,
 //            4 strip, 5 baked stamp) to see what costs frame time
 //   S        scan and print the networks in range (SSID, signal, open/secured)
-//   W        join TP-Link_D066 with a deliberately wrong throw-away passphrase (failure path)
+//   W        join the most recently saved network with a deliberately wrong throw-away key (failure path)
 //   Z        join a network that does not exist (the 15 s timeout path)
 // The commands are read here (the Arduino loop task) and handed to the LVGL
 // task through a queue (the settings erase and the NVS self-test too), so the
@@ -230,7 +234,7 @@ void nvsSelfTest() {
   Serial.printf("[nvs-test] %s (%d failures)\n", fails == 0 ? "ALL PASSED" : "FAILED", fails);
 }
 
-// Runs in the LVGL task (posted by the 'e' command): the settings are written by
+// Runs in the LVGL task (posted by the :erase-settings command): the settings are written by
 // that task too, so the erase cannot interleave with a write.
 void eraseSettingsAndRestart() {
   if (s_prefs && s_prefs->clear()) {
@@ -390,9 +394,6 @@ void handleSerialByte(int c) {
     case 'p':
       app_host_post(AppCommand::Settings);
       break;
-    case 'e':
-      app_host_post_call(eraseSettingsAndRestart);  // runs in the LVGL task, like the settings writes
-      break;
     case 'k':
       app_host_post_call(nvsSelfTest);
       break;
@@ -403,19 +404,20 @@ void handleSerialByte(int c) {
     case 'm':
       printMemory();
       break;
-    case 'r':
-      Serial.println("[cmd] restarting");
-      Serial.flush();
-      delay(100);
-      esp_restart();
-      break;
     default:
       break;  // line ends and anything else are ignored
   }
 }
 
 // Whole-word commands and the one-letter commands share the console; see serial_commands.h.
-SerialCommandSplitter s_splitter({"wifi", "wipe-wifi"});
+SerialCommandSplitter s_splitter;
+
+void restartNow() {
+  Serial.println("[cmd] restarting");
+  Serial.flush();
+  delay(100);
+  esp_restart();
+}
 
 void handleSerialItem(const SerialCommandSplitter::Item& it) {
   if (!it.isWord) {
@@ -424,13 +426,21 @@ void handleSerialItem(const SerialCommandSplitter::Item& it) {
     app_host_post_call(wifiPrintState);
   } else if (it.word == "wipe-wifi") {
     app_host_post_call(wifiWipeAndRestart);
+  } else if (it.word == "erase-settings") {
+    app_host_post_call(eraseSettingsAndRestart);  // runs in the LVGL task, like the settings writes
+  } else if (it.word == "restart") {
+    restartNow();
+  } else if (it.word == "help") {
+    Serial.println("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): :wifi :wipe-wifi :erase-settings :restart :help");
+  } else {
+    Serial.printf("[cmd] unknown command ':%s' (:help lists them)\n", it.word.c_str());
   }
 }
 
 void pollSerial() {
   std::vector<SerialCommandSplitter::Item> items;
   while (Serial.available() > 0) s_splitter.feed(static_cast<char>(Serial.read()), millis(), items);
-  s_splitter.poll(millis(), items);
+  s_splitter.poll(millis());
   for (const SerialCommandSplitter::Item& it : items) handleSerialItem(it);
 }
 

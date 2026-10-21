@@ -135,7 +135,17 @@ void WifiController::begin_join(const std::string& ssid, const std::string& pass
   autoNextAt_ = -1;
   if (user) autoScan_ = false;
   say("[wifi] joining " + wifi_printable(ssid) + (open ? " (open network)" : ""));
-  radio_.join(join_.gen, ssid, join_.password);
+  issue_join();
+}
+
+// Hands the attempt to the radio, or, while the driver is not up yet, tries
+// again a moment later (the join's own deadline still ends it).
+void WifiController::issue_join() {
+  if (!radio_.ready()) {
+    join_.retryAt = now() + timing_.retryDelayMs;
+    return;
+  }
+  radio_.join(join_.gen, join_.ssid, join_.password);
 }
 
 std::function<void(bool)> WifiController::take_join() {
@@ -270,7 +280,9 @@ void WifiController::forget(const std::string& ssid) {
     radio_.disconnect();
     autoBackoffIdx_ = 0;
     schedule_auto(0);
-    if (d) d(false);
+    // Only a replaced join may be answered from inside a service call: this one
+    // is answered by the next tick().
+    if (d) deferred_.push_back(std::move(d));
   }
 }
 
@@ -291,7 +303,7 @@ void WifiController::wipe() {
   autoScan_ = false;
   candidates_.clear();
   say("[wifi] saved networks wiped");
-  if (d) d(false);
+  if (d) deferred_.push_back(std::move(d));  // answered by the next tick()
 }
 
 std::string WifiController::describe() const {
@@ -426,6 +438,14 @@ void WifiController::auto_try_next_candidate() {
 void WifiController::tick() {
   const int64_t t = now();
 
+  // Joins cancelled by forget() / wipe(): answered false, once, now that no
+  // service call is running. A callback may queue more; they wait for the next tick.
+  if (!deferred_.empty()) {
+    std::vector<std::function<void(bool)>> due = std::move(deferred_);
+    deferred_.clear();
+    for (auto& d : due) d(false);
+  }
+
   // A link that vanished without a driver event.
   if (connected_ && !radio_.link_up()) {
     say("[wifi] lost " + wifi_printable(status_.ssid));
@@ -443,7 +463,7 @@ void WifiController::tick() {
     } else if (join_.retryAt != 0 && t >= join_.retryAt) {
       join_.retryAt = 0;
       join_.gen = ++genCounter_;
-      radio_.join(join_.gen, join_.ssid, join_.password);
+      issue_join();
     }
   }
 

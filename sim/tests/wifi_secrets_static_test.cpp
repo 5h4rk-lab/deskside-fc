@@ -66,6 +66,7 @@ const char* const kWifiSources[] = {
     "firmware/app/src/platform/esp_wifi_service.cpp", "firmware/app/src/platform/esp_wifi_service.h",
     "ui/src/wifi_controller.cpp",                    "ui/src/wifi_controller.h",
     "ui/src/wifi_store.cpp",                         "ui/src/wifi_store.h",
+    "ui/src/screens/wifi.cpp",
 };
 
 }  // namespace
