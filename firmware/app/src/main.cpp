@@ -233,12 +233,13 @@ void printStatus(uint32_t elapsedMs) {
   Serial.printf(
       "[status] up %lu s | frames %lu (%lu.%lu/s) flush/frame avg %lu us max %lu us, %lu us/block (%lu blocks) | "
       "lv_timer_handler %lu calls avg %lu us, busy %lu calls avg %lu us, max %lu us | display_err %lu touch int %lu "
-      "i2c_err %lu\n",
+      "i2c_err %lu recoveries %lu%s\n",
       (unsigned long)(millis() / 1000), (unsigned long)s.frames, (unsigned long)(s.frames * 1000 / secs),
       (unsigned long)((s.frames * 10000 / secs) % 10), (unsigned long)frameAvgUs, (unsigned long)s.frameFlushMaxUs,
       (unsigned long)blockAvgUs, (unsigned long)s.flushes, (unsigned long)s.handlerCalls,
       (unsigned long)handlerAvgUs, (unsigned long)s.busyCalls, (unsigned long)busyAvgUs, (unsigned long)s.handlerMaxUs,
-      (unsigned long)s.displayErrors, (unsigned long)touch_interrupt_count(), (unsigned long)touch_i2c_error_count());
+      (unsigned long)s.displayErrors, (unsigned long)touch_interrupt_count(), (unsigned long)touch_i2c_error_count(), (unsigned long)touch_recovery_count(),
+      touch_in_backoff() ? " BACKOFF" : "");
 
   lv_mem_monitor_t mon;
   if (lvgl_lock(100)) {

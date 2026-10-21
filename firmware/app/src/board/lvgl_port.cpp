@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include <esp_heap_caps.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/semphr.h>
@@ -40,11 +41,30 @@ uint32_t s_frameFlushUs = 0;
 volatile int64_t s_flushStartUs = 0;
 volatile bool s_flushIsLast = false;
 
-[[noreturn]] void fatal(const char* what) {
-  for (;;) {
-    Serial.printf("[port] FATAL: %s\n", what);
-    delay(2000);
+constexpr int kFatalPrints = 5;
+constexpr uint32_t kFatalPrintGapMs = 2000;
+
+const char* s_lastError = nullptr;
+
+// Records the reason, prints it and returns false (for `return fail(...)`).
+bool fail(const char* what) {
+  s_lastError = what;
+  Serial.printf("[port] ERROR: %s\n", what);
+  return false;
+}
+
+// Bounded fatal behaviour: print the reason 5 times over about 10 s so a
+// serial monitor attached late still sees it, then restart. A permanent fault
+// therefore reboots no faster than about every 10 s plus the boot time (the
+// backlight stays off meanwhile; GPIO7 stays held so the board does not power
+// off and the USB port stays reachable for a re-flash).
+[[noreturn]] void fatalRestart(const char* what) {
+  for (int i = 0; i < kFatalPrints; ++i) {
+    Serial.printf("[port] FATAL (%d/%d): %s; restarting\n", i + 1, kFatalPrints, what);
+    delay(kFatalPrintGapMs);
   }
+  esp_restart();
+  for (;;) delay(1000);  // not reached
 }
 
 uint32_t lvglTickMs() { return (uint32_t)(esp_timer_get_time() / 1000); }
@@ -108,12 +128,12 @@ void lvglTask(void*) {
 
 }  // namespace
 
-void lvgl_port_start() {
-  if (s_started) return;
+bool lvgl_port_try_start() {
+  if (s_started) return s_lastError == nullptr;
   s_started = true;
 
   s_lock = xSemaphoreCreateRecursiveMutex();
-  if (!s_lock) fatal("cannot create the LVGL mutex");
+  if (!s_lock) return fail("cannot create the LVGL mutex");
 
   lv_init();
   lv_tick_set_cb(lvglTickMs);
@@ -121,15 +141,15 @@ void lvgl_port_start() {
   // Draw buffers: internal DMA-capable RAM, null-checked.
   void* buf1 = heap_caps_malloc(kBufBytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
   void* buf2 = heap_caps_malloc(kBufBytes, MALLOC_CAP_DMA | MALLOC_CAP_INTERNAL);
-  if (!buf1 || !buf2) fatal("not enough internal DMA RAM for the two 240 x 40 draw buffers");
+  if (!buf1 || !buf2) return fail("not enough internal DMA RAM for the two 240 x 40 draw buffers");
 
   s_disp = lv_display_create(kDisplayWidth, kDisplayHeight);
-  if (!s_disp) fatal("lv_display_create failed (out of memory)");
+  if (!s_disp) return fail("lv_display_create failed (out of memory)");
   lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
   lv_display_set_buffers(s_disp, buf1, buf2, (uint32_t)kBufBytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(s_disp, flushCb);
 
-  if (!display_begin(onFlushDone, nullptr)) fatal("display init failed (see [display] lines above)");
+  if (!display_begin(onFlushDone, nullptr)) return fail("display init failed (see [display] lines above)");
 
   const TouchController controller = touch_begin();
   Serial.printf("[display] ok [touch] %s\n", touch_controller_name(controller));
@@ -141,7 +161,7 @@ void lvgl_port_start() {
   }
 
   lv_indev_t* indev = lv_indev_create();
-  if (!indev) fatal("lv_indev_create failed (out of memory)");
+  if (!indev) return fail("lv_indev_create failed (out of memory)");
   lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(indev, touchReadCb);
   lv_timer_t* readTimer = lv_indev_get_read_timer(indev);
@@ -149,8 +169,15 @@ void lvgl_port_start() {
 
   if (xTaskCreatePinnedToCore(lvglTask, "lvgl", kLvglTaskStackBytes, nullptr, kLvglTaskPriority, nullptr,
                               kLvglTaskCore) != pdPASS) {
-    fatal("cannot create the LVGL task");
+    return fail("cannot create the LVGL task");
   }
+  return true;
+}
+
+const char* lvgl_port_last_error() { return s_lastError; }
+
+void lvgl_port_start() {
+  if (!lvgl_port_try_start()) fatalRestart(s_lastError ? s_lastError : "unknown error");
 }
 
 bool lvgl_lock(uint32_t timeoutMs) {

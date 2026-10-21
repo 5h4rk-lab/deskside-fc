@@ -9,11 +9,19 @@
 #include <stdint.h>
 
 // Initialises LVGL, the display and the touch controller, then starts the LVGL
-// task (core 1, 12 KB stack). A failure of the display, a draw buffer or the
-// task is fatal: it is printed on the serial console every 2 s and this
-// function never returns. A missing touch controller is not fatal (printed,
-// the screen just does not react). Prints `[display] ok [touch] <name>`.
+// task (core 1, 12 KB stack). Prints `[display] ok [touch] <name>`.
+// A failure of the display, a draw buffer or the task is fatal here: the reason
+// is printed 5 times over about 10 s, then the board restarts (so a permanent
+// fault reboots every ~10 s plus boot time, never faster). A missing touch
+// controller is not fatal (printed; the screen just does not react).
 void lvgl_port_start();
+
+// Same start-up, but returns false instead of restarting, for code that can
+// carry on without a screen (headless features). On false the port is
+// half-initialised and unusable: do not call lvgl_* again, retry is not
+// supported; lvgl_port_last_error() says why (static string, also printed).
+bool lvgl_port_try_start();
+const char* lvgl_port_last_error();
 
 // Takes the LVGL lock (recursive). Returns false on timeout. Always pair a
 // successful call with lvgl_unlock(). Never call from an interrupt.

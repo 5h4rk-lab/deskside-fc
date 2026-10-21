@@ -34,3 +34,8 @@ bool touch_poll(TouchPoint& out);
 
 uint32_t touch_interrupt_count();  // rising edges seen on the INT pin
 uint32_t touch_i2c_error_count();
+
+// Bus recoveries run since boot, and whether the I2C bus is currently failing
+// (polling slowed down). See touch_health.h for the rules.
+uint32_t touch_recovery_count();
+bool touch_in_backoff();

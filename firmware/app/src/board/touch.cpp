@@ -18,6 +18,7 @@
 
 #include "display_st7789.h"
 #include "pins.h"
+#include "touch_health.h"
 
 namespace {
 
@@ -52,6 +53,14 @@ bool s_pressed = false;
 int s_missingPolls = 0;
 uint32_t s_lastInterrupts = 0;
 TouchPoint s_last = {0, 0};
+
+// I2C health: failure streak, poll backoff, bus recovery (touch_health.h).
+TouchHealth s_health;
+uint32_t s_recoveries = 0;
+
+// Bound on one I2C transaction (default 50 ms): a stuck bus then stalls the
+// LVGL task for less time per poll.
+constexpr uint16_t kI2cTimeoutMs = 20;
 
 void IRAM_ATTR onTouchInt() { s_interrupts = s_interrupts + 1; }
 
@@ -207,6 +216,48 @@ int readCst3530(TouchPoint* first) {
   return count;
 }
 
+// Frees a bus held by a device that is stuck in the middle of a byte: with SDA
+// low, clock SCL up to 9 times until the device lets go, then generate a STOP.
+// Open-drain with the board's pull-ups; the touch pins are used by nothing else.
+void clockOutBus() {
+  pinMode(pins::kTouchSda, INPUT_PULLUP);
+  pinMode(pins::kTouchScl, OUTPUT_OPEN_DRAIN);
+  digitalWrite(pins::kTouchScl, HIGH);
+  delayMicroseconds(5);
+  for (int i = 0; i < 9 && digitalRead(pins::kTouchSda) == LOW; ++i) {
+    digitalWrite(pins::kTouchScl, LOW);
+    delayMicroseconds(5);
+    digitalWrite(pins::kTouchScl, HIGH);
+    delayMicroseconds(5);
+  }
+  // STOP: SDA low -> high while SCL is high.
+  pinMode(pins::kTouchSda, OUTPUT_OPEN_DRAIN);
+  digitalWrite(pins::kTouchSda, LOW);
+  delayMicroseconds(5);
+  digitalWrite(pins::kTouchScl, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(pins::kTouchSda, HIGH);
+  delayMicroseconds(5);
+}
+
+// Re-initialises Wire1 and the controller. Blocks the caller (the LVGL task)
+// for the controller reset time: about 0.1 s (CST328) or 0.6 s (CST3530).
+void recoverBus() {
+  ++s_recoveries;
+  Wire1.end();
+  clockOutBus();
+  if (!Wire1.begin(pins::kTouchSda, pins::kTouchScl, pins::kTouchI2cHz)) {
+    Serial.println("[touch] bus recovery: Wire1.begin failed");
+    return;
+  }
+  Wire1.setTimeOut(kI2cTimeoutMs);
+  if (s_controller == TouchController::CST328) {
+    cst328Reset();
+  } else {
+    cst3530Reset();
+  }
+}
+
 }  // namespace
 
 const char* touch_controller_name(TouchController c) {
@@ -224,6 +275,7 @@ TouchController touch_begin() {
     Serial.printf("[touch] ERROR: Wire1.begin(SDA=%d, SCL=%d) failed\n", pins::kTouchSda, pins::kTouchScl);
     return s_controller = TouchController::None;
   }
+  Wire1.setTimeOut(kI2cTimeoutMs);
 
   if (detectCst328()) {
     s_controller = TouchController::CST328;
@@ -243,12 +295,36 @@ bool touch_poll(TouchPoint& out) {
   out = s_last;
   if (s_controller == TouchController::None) return false;
 
+  const uint32_t now = millis();
+  // Failing bus: poll slowly (the press, if any, was already released below).
+  if (!s_health.shouldPoll(now)) return false;
+
   const uint32_t interrupts = s_interrupts;
   const bool intSeen = interrupts != s_lastInterrupts;
   s_lastInterrupts = interrupts;
 
+  const uint32_t errorsBefore = s_i2cErrors;
   TouchPoint p = {0, 0};
   const int count = s_controller == TouchController::CST328 ? readCst328(&p) : readCst3530(&p);
+  const bool ok = s_i2cErrors == errorsBefore;
+
+  const TouchHealth::Result h = s_health.onPoll(ok, now);
+  if (h.enteredBackoff) {
+    Serial.printf("[touch] I2C failing (%lu polls in a row): polling every %lu ms until it recovers\n",
+                  (unsigned long)s_health.failStreak, (unsigned long)TouchHealth::kBackoffPollMs);
+  }
+  if (h.leftBackoff) Serial.println("[touch] I2C ok again, back to normal polling");
+  if (h.recover) {
+    Serial.printf("[touch] I2C still failing (%lu in a row): recovering the bus\n", (unsigned long)s_health.failStreak);
+    recoverBus();
+  }
+  if (s_health.backoff) {
+    // A touch cannot be tracked on a failing bus: end any press now.
+    s_pressed = false;
+    s_missingPolls = 0;
+    return false;
+  }
+
   // A point outside the panel is a bad read, not a touch.
   const bool valid = count > 0 && p.x < kDisplayWidth && p.y < kDisplayHeight;
 
@@ -276,3 +352,5 @@ bool touch_poll(TouchPoint& out) {
 
 uint32_t touch_interrupt_count() { return s_interrupts; }
 uint32_t touch_i2c_error_count() { return s_i2cErrors; }
+uint32_t touch_recovery_count() { return s_recoveries; }
+bool touch_in_backoff() { return s_health.backoff; }
