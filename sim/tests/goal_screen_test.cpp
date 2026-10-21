@@ -2,6 +2,8 @@
 
 #include <stdint.h>
 
+#include <algorithm>
+
 #include <functional>
 #include <string>
 #include <vector>
@@ -1004,6 +1006,78 @@ struct AppFixture {
 };
 
 }  // namespace
+
+TEST_CASE("goal overlay: the fade's picture of the screen shows the real Live screen (colours, text, crests)") {
+  AppFixture f;
+  f.poll();  // the live match: team colours, score, crests (placeholders)
+  run_for(200);
+  lv_obj_t* screen = lv_screen_active();
+
+  // The Live screen as it is before the celebration.
+  constexpr int kStep = 12;
+  std::vector<uint32_t> before;
+  for (int y = 6; y < 320; y += kStep) {
+    for (int x = 6; x < 240; x += kStep) before.push_back(lv_color_to_u32(pixel_at(screen, x, y)));
+  }
+
+  goal_celebrate(goal_event(), f.images);
+  run_for(3900);  // the picture was taken at 3.6 s, the fade started at 3.75 s
+  REQUIRE(goal_active());
+  REQUIRE(lv_obj_get_child_count(lv_layer_top()) == 2);
+  lv_obj_t* picture = lv_obj_get_child(lv_layer_top(), 0);
+  REQUIRE_FALSE(lv_obj_has_flag(picture, LV_OBJ_FLAG_HIDDEN));
+  lv_obj_add_flag(goal_parts()->overlay, LV_OBJ_FLAG_HIDDEN);  // nothing but the picture is left on the top layer
+
+  std::vector<uint32_t> after;
+  for (int y = 6; y < 320; y += kStep) {
+    for (int x = 6; x < 240; x += kStep) after.push_back(lv_color_to_u32(pixel_at(lv_layer_top(), x, y)));
+  }
+  REQUIRE(before.size() == after.size());
+
+  // The same colours as the screen itself.
+  size_t exact = 0;
+  for (size_t i = 0; i < before.size(); ++i) exact += before[i] == after[i];
+  CHECK(exact * 100 >= before.size() * 99);
+
+  // Not blank: many different colours, not black, and the specific places hold what the screen holds.
+  std::vector<uint32_t> distinct = after;
+  std::sort(distinct.begin(), distinct.end());
+  distinct.erase(std::unique(distinct.begin(), distinct.end()), distinct.end());
+  CHECK(distinct.size() > 25);
+  auto at = [&](const std::vector<uint32_t>& v, int x, int y) { return v[static_cast<size_t>((y - 6) / kStep) * 20 + (x - 6) / kStep]; };
+  const lv_color_t home = lv_color_hex(at(after, 6, 150));   // team-coloured half
+  const lv_color_t away = lv_color_hex(at(after, 234, 150));
+  CHECK(home.red > home.blue + 40);    // Arsenal red
+  CHECK(away.blue > away.red + 30);    // Chelsea blue
+  CHECK(at(after, 6, 150) == at(before, 6, 150));
+  CHECK(at(after, 234, 150) == at(before, 234, 150));
+  // The score digits (text): bright chalk pixels in the middle of the screen, as on the screen itself.
+  int bright = 0;
+  int brightBefore = 0;
+  for (int y = 100; y < 180; y += kStep) {
+    for (int x = 66; x < 180; x += kStep) {
+      const lv_color_t a = lv_color_hex(at(after, x, y));
+      const lv_color_t b = lv_color_hex(at(before, x, y));
+      bright += a.red > 200 && a.green > 200 && a.blue > 200;
+      brightBefore += b.red > 200 && b.green > 200 && b.blue > 200;
+    }
+  }
+  CHECK(bright > 0);
+  CHECK(bright == brightBefore);
+  // The crest area (placeholders and the halo behind them) matches pixel for pixel.
+  size_t crestSame = 0;
+  size_t crestTotal = 0;
+  for (int y = 30; y < 110; y += kStep) {
+    for (int x = 10; x < 230; x += kStep) {
+      ++crestTotal;
+      crestSame += at(after, x, y) == at(before, x, y);
+    }
+  }
+  CHECK(crestSame == crestTotal);
+
+  run_for(500);
+  CHECK_FALSE(goal_active());
+}
 
 TEST_CASE("app goal path: first sight is silent, a favourite goal celebrates and names the scorer") {
   AppFixture f;
