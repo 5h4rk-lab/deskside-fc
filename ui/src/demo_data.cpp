@@ -110,9 +110,10 @@ std::vector<MatchSummary> demo_matches(int64_t now) {
   return out;
 }
 
-std::vector<NewsItem> demo_news(int64_t now) {
+std::vector<NewsItem> demo_news(const std::string& newsJson, int64_t now) {
   std::vector<NewsItem> items;
-  MockSource source(CONTRACT_FIXTURES_DIR);
+  MockSource source;
+  source.load_json("", "", newsJson, "");
   source.fetch_news([&](bool ok, std::vector<NewsItem> news) {
     if (ok) items = std::move(news);
   });
@@ -132,9 +133,10 @@ Team league_team(const char* id, const char* abbr, const char* name, std::string
 
 }  // namespace
 
-std::vector<Team> demo_teams() {
+std::vector<Team> demo_teams(const std::string& teamsJson) {
   std::vector<Team> teams;
-  MockSource source(CONTRACT_FIXTURES_DIR);
+  MockSource source;
+  source.load_json("", "", "", teamsJson);
   source.fetch_teams([&](bool ok, std::vector<Team> t) {
     if (ok) teams = std::move(t);
   });
@@ -244,3 +246,96 @@ MatchDetail demo_detail(const std::string& matchId) {
   };
   return d;
 }
+
+namespace {
+
+// The favourite's live match in the source, or false.
+bool favourite_live(MockSource& source, const std::string& fav, MatchSummary& out, Side& side) {
+  bool found = false;
+  source.fetch_matches([&](bool ok, std::vector<MatchSummary> matches) {
+    if (!ok) return;
+    for (const MatchSummary& m : matches) {
+      if (m.state != MatchState::Live || (m.home.id != fav && m.away.id != fav)) continue;
+      out = m;
+      side = m.home.id == fav ? Side::Home : Side::Away;
+      found = true;
+      return;
+    }
+  });
+  return found;
+}
+
+// Keeps the source's detail of `m` in step with its summary, adding `event`
+// when given.
+void update_detail(MockSource& source, const MatchSummary& m, const MatchEvent* event) {
+  MatchDetail d;
+  source.fetch_detail(m.id, [&](bool ok, MatchDetail detail) {
+    if (ok) d = std::move(detail);
+  });
+  d.match = m;
+  if (event != nullptr) d.events.push_back(*event);
+  source.set_detail(std::move(d));
+}
+
+}  // namespace
+
+void demo_load(MockSource& source, int64_t now, const std::string& newsJson,
+               const std::string& teamsJson) {
+  const std::vector<MatchSummary> matches = demo_matches(now);
+  source.set_matches(matches);
+  source.set_news(demo_news(newsJson, now));
+  source.set_teams(demo_teams(teamsJson));
+  for (const MatchSummary& m : matches) {
+    MatchDetail d = demo_detail(m.id);
+    if (d.match.home.abbr.empty()) continue;  // no detail for this demo match
+    d.match = m;
+    source.set_detail(std::move(d));
+  }
+}
+
+// The favourite scores in its live match: the score goes up and the detail
+// gets a goal by one of the team's players with a photo, in turn.
+bool demo_goal(MockSource& source, const std::string& fav) {
+  MatchSummary m;
+  Side side = Side::Home;
+  if (!favourite_live(source, fav, m, side)) return false;
+  source.advance_score(m.id, side);
+  favourite_live(source, fav, m, side);
+
+  MatchDetail d;
+  source.fetch_detail(m.id, [&](bool ok, MatchDetail detail) {
+    if (ok) d = std::move(detail);
+  });
+  const Lineup& lineup = side == Side::Home ? d.home : d.away;
+  std::vector<std::string> candidates;
+  for (const LineupPlayer& p : lineup.players) {
+    if (!p.photo.empty()) candidates.push_back(p.name);
+  }
+  static size_t turn = 0;
+  const std::string scorer = candidates.empty() ? "Bukayo Saka" : candidates[turn++ % candidates.size()];
+  const MatchEvent goal{m.clock.empty() ? "90'" : m.clock, EventType::Goal, side, scorer, ""};
+  update_detail(source, m, &goal);
+  return true;
+}
+
+// The favourite's live match ends with the favourite ahead.
+DemoWin demo_win(MockSource& source, const std::string& fav) {
+  MatchSummary m;
+  Side side = Side::Home;
+  if (!favourite_live(source, fav, m, side)) return DemoWin::NoLiveMatch;
+  const int favScore = (side == Side::Home ? m.homeScore : m.awayScore).value_or(0);
+  const int oppScore = (side == Side::Home ? m.awayScore : m.homeScore).value_or(0);
+  if (favScore <= oppScore) return DemoWin::NotAhead;
+  std::vector<MatchSummary> matches;
+  source.fetch_matches([&](bool, std::vector<MatchSummary> ms) { matches = std::move(ms); });
+  for (MatchSummary& x : matches) {
+    if (x.id != m.id) continue;
+    x.state = MatchState::Post;
+    x.clock = "FT";
+    m = x;
+  }
+  source.set_matches(std::move(matches));
+  update_detail(source, m, nullptr);
+  return DemoWin::Ok;
+}
+

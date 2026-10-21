@@ -1,5 +1,7 @@
-// Scriptable DataSource for the simulator and tests. Callbacks run
-// synchronously. Defaults come from the contract fixtures directory.
+// Scriptable DataSource for the simulator, the tests and the firmware's demo
+// build. Callbacks run synchronously. No file access: the fixtures come in as
+// JSON text (the simulator reads them from contract/fixtures, see
+// sim/fixture_source.h; the firmware embeds them).
 #pragma once
 
 #include <map>
@@ -10,9 +12,13 @@
 
 class MockSource : public DataSource {
  public:
-  // Loads matches/detail/news/teams from `fixturesDir`. Files that are missing
-  // or fail to parse leave the corresponding default empty.
-  explicit MockSource(const std::string& fixturesDir);
+  MockSource() = default;
+
+  // Loads the contract's *-normalised.json documents (matches, the default
+  // detail, news, teams). An empty or unparsable text leaves that default
+  // empty.
+  void load_json(const std::string& matches, const std::string& detail, const std::string& news,
+                 const std::string& teams);
 
   void fetch_matches(std::function<void(bool, std::vector<MatchSummary>)> cb) override;
   void fetch_detail(const std::string& id, std::function<void(bool, MatchDetail)> cb) override;

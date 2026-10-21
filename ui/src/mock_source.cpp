@@ -1,33 +1,14 @@
 #include "mock_source.h"
 
-#include <fstream>
-#include <sstream>
-
 #include "json_parse.h"
 
-namespace {
-
-bool read_file(const std::string& path, std::string& out) {
-  std::ifstream in(path, std::ios::binary);
-  if (!in.good()) return false;
-  std::stringstream ss;
-  ss << in.rdbuf();
-  out = ss.str();
-  return true;
-}
-
-}  // namespace
-
-MockSource::MockSource(const std::string& fixturesDir) {
-  const std::string dir = fixturesDir + "/";
-  std::string body;
+void MockSource::load_json(const std::string& matches, const std::string& detail,
+                           const std::string& news, const std::string& teams) {
   int64_t updated = 0;
-  if (read_file(dir + "matches-normalised.json", body)) parse_matches(body, matches_, updated);
-  if (read_file(dir + "detail-normalised.json", body)) {
-    hasDefaultDetail_ = parse_detail(body, defaultDetail_);
-  }
-  if (read_file(dir + "news-normalised.json", body)) parse_news(body, news_, updated);
-  if (read_file(dir + "teams-normalised.json", body)) parse_teams(body, teams_);
+  if (!matches.empty()) parse_matches(matches, matches_, updated);
+  if (!detail.empty()) hasDefaultDetail_ = parse_detail(detail, defaultDetail_);
+  if (!news.empty()) parse_news(news, news_, updated);
+  if (!teams.empty()) parse_teams(teams, teams_);
 }
 
 void MockSource::fetch_matches(std::function<void(bool, std::vector<MatchSummary>)> cb) {

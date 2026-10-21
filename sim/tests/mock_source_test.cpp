@@ -1,9 +1,10 @@
 #include <doctest/doctest.h>
 
+#include "fixture_source.h"
 #include "mock_source.h"
 
 TEST_CASE("MockSource serves the fixture by default") {
-  MockSource src(CONTRACT_FIXTURES_DIR);
+  FixtureSource src(CONTRACT_FIXTURES_DIR);
   bool called = false;
   src.fetch_matches([&](bool ok, std::vector<MatchSummary> v) {
     called = true;
@@ -40,7 +41,7 @@ TEST_CASE("MockSource serves the fixture by default") {
 }
 
 TEST_CASE("MockSource set_fail gives ok=false and empty data") {
-  MockSource src(CONTRACT_FIXTURES_DIR);
+  FixtureSource src(CONTRACT_FIXTURES_DIR);
   src.set_fail(true);
   int calls = 0;
   src.fetch_matches([&](bool ok, std::vector<MatchSummary> v) {
@@ -69,7 +70,7 @@ TEST_CASE("MockSource set_fail gives ok=false and empty data") {
 }
 
 TEST_CASE("MockSource advance_score increments and starts a Pre match") {
-  MockSource src(CONTRACT_FIXTURES_DIR);
+  FixtureSource src(CONTRACT_FIXTURES_DIR);
   MatchSummary m;
   m.id = "p";
   m.state = MatchState::Pre;
@@ -92,7 +93,7 @@ TEST_CASE("MockSource advance_score increments and starts a Pre match") {
 }
 
 TEST_CASE("MockSource returns scripted detail, news and teams") {
-  MockSource src(CONTRACT_FIXTURES_DIR);
+  FixtureSource src(CONTRACT_FIXTURES_DIR);
   MatchDetail d;
   d.match.id = "scripted";
   src.set_detail(d);

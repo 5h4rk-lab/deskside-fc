@@ -7,6 +7,7 @@
 #include <vector>
 
 #include "demo_data.h"
+#include "fixture_source.h"
 #include "fonts.h"
 #include "screens/live.h"
 #include "snapshot.h"

@@ -98,6 +98,7 @@
 #include "curl_transport.h"
 #include "data_source.h"
 #include "demo_data.h"
+#include "fixture_source.h"
 #include "file_prefs.h"
 #include "http_source.h"
 #include "mock_image_provider.h"
@@ -145,7 +146,7 @@ struct Options {
   bool demoGoal = false;
   std::string prefs;  // empty: the default file (memory for snapshots)
   bool resetPrefs = false;
-  std::string fav;  // --fav ABBR: favourite from demo_teams()
+  std::string fav;  // --fav ABBR: favourite from the demo teams
   std::string liveHome;  // --live-vs H,A
   std::string liveAway;
   std::string tz;
@@ -465,16 +466,7 @@ uint32_t fake_ms() { return g_fakeMs; }
 // A MockSource holding the demo data, so the demo can be changed while it
 // runs (goals, full time). Kick-off and news times are relative to `now`.
 void load_demo(MockSource& source, int64_t now) {
-  const std::vector<MatchSummary> matches = demo_matches(now);
-  source.set_matches(matches);
-  source.set_news(demo_news(now));
-  source.set_teams(demo_teams());
-  for (const MatchSummary& m : matches) {
-    MatchDetail d = demo_detail(m.id);
-    if (d.match.home.abbr.empty()) continue;  // no detail for this demo match
-    d.match = m;
-    source.set_detail(std::move(d));
-  }
+  demo_load(source, now, fixture_text("news-normalised.json"), fixture_text("teams-normalised.json"));
 }
 
 // --offline-test: the demo source, down most of the time. Only every
@@ -502,83 +494,6 @@ class FlakySource : public DataSource {
   MockSource& inner_;
   int polls_ = 0;
 };
-
-// The favourite's live match in the source, or false.
-bool favourite_live(MockSource& source, const std::string& fav, MatchSummary& out, Side& side) {
-  bool found = false;
-  source.fetch_matches([&](bool ok, std::vector<MatchSummary> matches) {
-    if (!ok) return;
-    for (const MatchSummary& m : matches) {
-      if (m.state != MatchState::Live || (m.home.id != fav && m.away.id != fav)) continue;
-      out = m;
-      side = m.home.id == fav ? Side::Home : Side::Away;
-      found = true;
-      return;
-    }
-  });
-  return found;
-}
-
-// Keeps the source's detail of `m` in step with its summary, adding `event`
-// when given.
-void update_detail(MockSource& source, const MatchSummary& m, const MatchEvent* event) {
-  MatchDetail d;
-  source.fetch_detail(m.id, [&](bool ok, MatchDetail detail) {
-    if (ok) d = std::move(detail);
-  });
-  d.match = m;
-  if (event != nullptr) d.events.push_back(*event);
-  source.set_detail(std::move(d));
-}
-
-// The favourite scores in its live match: the score goes up and the detail
-// gets a goal by one of the team's players with a photo, in turn.
-bool demo_goal(MockSource& source, const std::string& fav) {
-  MatchSummary m;
-  Side side = Side::Home;
-  if (!favourite_live(source, fav, m, side)) return false;
-  source.advance_score(m.id, side);
-  favourite_live(source, fav, m, side);
-
-  MatchDetail d;
-  source.fetch_detail(m.id, [&](bool ok, MatchDetail detail) {
-    if (ok) d = std::move(detail);
-  });
-  const Lineup& lineup = side == Side::Home ? d.home : d.away;
-  std::vector<std::string> candidates;
-  for (const LineupPlayer& p : lineup.players) {
-    if (!p.photo.empty()) candidates.push_back(p.name);
-  }
-  static size_t turn = 0;
-  const std::string scorer = candidates.empty() ? "Bukayo Saka" : candidates[turn++ % candidates.size()];
-  const MatchEvent goal{m.clock.empty() ? "90'" : m.clock, EventType::Goal, side, scorer, ""};
-  update_detail(source, m, &goal);
-  return true;
-}
-
-// The favourite's live match ends with the favourite ahead.
-bool demo_win(MockSource& source, const std::string& fav) {
-  MatchSummary m;
-  Side side = Side::Home;
-  if (!favourite_live(source, fav, m, side)) return false;
-  const int favScore = (side == Side::Home ? m.homeScore : m.awayScore).value_or(0);
-  const int oppScore = (side == Side::Home ? m.awayScore : m.homeScore).value_or(0);
-  if (favScore <= oppScore) {
-    std::printf("the favourite is not ahead: press g first\n");
-    return false;
-  }
-  std::vector<MatchSummary> matches;
-  source.fetch_matches([&](bool, std::vector<MatchSummary> ms) { matches = std::move(ms); });
-  for (MatchSummary& x : matches) {
-    if (x.id != m.id) continue;
-    x.state = MatchState::Post;
-    x.clock = "FT";
-    m = x;
-  }
-  source.set_matches(std::move(matches));
-  update_detail(source, m, nullptr);
-  return true;
-}
 
 // Keys pressed in the SDL window, collected by an event watch (LVGL's own SDL
 // driver consumes the event queue) and handled in the main loop.
@@ -690,7 +605,7 @@ int main(int argc, char** argv) {
 
   // Data: the real helper (--helper), or the demo data / contract fixtures in
   // a MockSource (optionally flaky). The Poller drives all of them.
-  MockSource mock(opt.fixtures ? CONTRACT_FIXTURES_DIR : "/nonexistent-fixtures");
+  FixtureSource mock(opt.fixtures ? CONTRACT_FIXTURES_DIR : "/nonexistent-fixtures");
   if (!opt.fixtures) load_demo(mock, start);
   if (!opt.liveHome.empty() && !opt.fixtures && !set_live_teams(mock, opt.liveHome, opt.liveAway)) {
     std::fprintf(stderr, "unknown --live-vs team (abbreviations from the demo teams)\n");
@@ -816,7 +731,14 @@ int main(int argc, char** argv) {
       std::fflush(stdout);
       return;
     }
-    const bool ok = win ? demo_win(mock, store.favourite()) : demo_goal(mock, store.favourite());
+    bool ok = false;
+    if (win) {
+      const DemoWin r = demo_win(mock, store.favourite());
+      if (r == DemoWin::NotAhead) std::printf("the favourite is not ahead: press g first\n");
+      ok = r == DemoWin::Ok;
+    } else {
+      ok = demo_goal(mock, store.favourite());
+    }
     if (!ok) {
       std::printf("no live match of the favourite\n");
       std::fflush(stdout);

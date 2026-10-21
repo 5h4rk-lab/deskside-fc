@@ -31,7 +31,7 @@ class NullImages : public ImageProvider {
 // MockSource without fixtures that counts detail fetches.
 class CountingSource : public MockSource {
  public:
-  CountingSource() : MockSource("/nonexistent-fixtures") {}
+  CountingSource() = default;
   void fetch_detail(const std::string& id, std::function<void(bool, MatchDetail)> cb) override {
     details.push_back(id);
     MockSource::fetch_detail(id, std::move(cb));

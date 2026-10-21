@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "data_source.h"
+#include "fixture_source.h"
 #include "mock_source.h"
 #include "model.h"
 #include "poller.h"
@@ -498,7 +499,7 @@ TEST_CASE("poller: a new watch with nothing cached fetches at once; same id twic
 
 TEST_CASE("poller: works with a synchronous source (MockSource)") {
   Store store;
-  MockSource source(CONTRACT_FIXTURES_DIR);
+  FixtureSource source(CONTRACT_FIXTURES_DIR);
   int changed = 0;
   Poller poller(store, source, [&](int64_t) { ++changed; });
   poller.tick(0, kEpoch);
@@ -533,7 +534,7 @@ TEST_CASE("poller: a source calling back from inside fetch can be asked again fr
   // onMatchesChanged asks for a refresh (as a host might after a goal): no
   // recursion, the fetch happens at the next tick.
   Store store;
-  MockSource source(CONTRACT_FIXTURES_DIR);
+  FixtureSource source(CONTRACT_FIXTURES_DIR);
   int changed = 0;
   Poller* self = nullptr;
   Poller poller(store, source, [&](int64_t) {

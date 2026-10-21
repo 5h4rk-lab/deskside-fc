@@ -734,6 +734,7 @@ TEST_CASE("app: the News tab hosts the news screen and follows app_refresh") {
 // -------------------------------------------------------------------- demo data
 
 #include "demo_data.h"
+#include "fixture_source.h"
 
 TEST_CASE("demo data: six news articles of varied age, and results for the News tiles") {
   init_test_display();

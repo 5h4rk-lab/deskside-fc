@@ -10,6 +10,7 @@
 #include "app.h"
 #include "fake_transport.h"
 #include "http_source.h"
+#include "fixture_source.h"
 #include "mock_source.h"
 #include "poller.h"
 #include "prefs.h"
@@ -108,7 +109,7 @@ std::string score(const LiveParts* p) {
 }  // namespace
 
 TEST_CASE("offline: the Live screen keeps the last score and shows the stale marker") {
-  MockSource source("/nonexistent-fixtures");
+  MockSource source;
   source.set_matches({arsenal_live()});
   Host h(source);
   h.at(0);
@@ -178,7 +179,7 @@ TEST_CASE("offline: a 401 from the helper shows 'Helper rejected the token' in S
 }
 
 TEST_CASE("app_open_match_id names the open detail, for the poller's detail watch") {
-  MockSource source(CONTRACT_FIXTURES_DIR);
+  FixtureSource source(CONTRACT_FIXTURES_DIR);
   Host h(source);
   h.at(0);
   CHECK(app_open_match_id(h.app).empty());
