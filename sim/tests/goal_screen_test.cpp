@@ -507,6 +507,39 @@ TEST_CASE("goal overlay: a light brand colour is darkened like a light accent") 
         q565(darken(lv_color_hex(0xFDE100), goal::kLightDarken)));
 }
 
+TEST_CASE("goal background: a very dark brand is toned up like the Live split") {
+  const lv_color_t navy = lv_color_hex(0x132257);
+  CHECK(lv_color_to_u32(goal_background(navy)) == lv_color_to_u32(background_tone(navy)));
+  const lv_color_t black = lv_color_hex(0x000000);
+  CHECK(lv_color_to_u32(goal_background(black)) == lv_color_to_u32(background_tone(black)));
+}
+
+TEST_CASE("goal overlay: a dark brand (Spurs navy, Fulham black) is lifted but stays dark") {
+  {
+    Fixture f;
+    theme_set_team(0xFFFFFF, 0xEF0107, 0x132257);
+    goal_set_reduced_motion(true);
+    goal_celebrate(goal_event(), f.images);
+    test_advance(0);
+    const lv_color_t px = pixel_at(lv_layer_top(), 0, 0);
+    CHECK(lv_color_to_u32(px) == q565(background_tone(lv_color_hex(0x132257))));
+    CHECK(relative_luminance(px) >= kBackgroundMinLuminance - 0.005f);  // RGB565 rounding
+    CHECK(relative_luminance(px) < 0.08f);
+    CHECK(px.blue > px.red + 50);  // still navy
+  }
+  {
+    Fixture f;
+    theme_set_team(0xFFFFFF, 0xEF0107, 0x000000);
+    goal_set_reduced_motion(true);
+    goal_celebrate(goal_event(), f.images);
+    test_advance(0);
+    const lv_color_t px = pixel_at(lv_layer_top(), 0, 0);
+    CHECK(lv_color_to_u32(px) == q565(background_tone(lv_color_hex(0x000000))));
+    CHECK(relative_luminance(px) >= kBackgroundMinLuminance - 0.005f);
+    CHECK(relative_luminance(px) < 0.08f);
+  }
+}
+
 TEST_CASE("goal overlay: a light accent darkens the background") {
   Fixture f;
   theme_set_team(0xFFFFFF, 0x034694);

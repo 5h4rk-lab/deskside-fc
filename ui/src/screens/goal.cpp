@@ -69,8 +69,9 @@ std::string goal_waiting_line(const GoalEvent& event) {
   return (event.side == Side::Home ? event.homeAbbr : event.awayAbbr) + " scored";
 }
 
-lv_color_t goal_background(lv_color_t accent) {
-  return relative_luminance(accent) > kLightAccent ? darken(accent, kLightDarken) : accent;
+lv_color_t goal_background(lv_color_t brand) {
+  const lv_color_t c = background_tone(brand);
+  return relative_luminance(c) > kLightAccent ? darken(c, kLightDarken) : c;
 }
 
 // ------------------------------------------------------------ overlay

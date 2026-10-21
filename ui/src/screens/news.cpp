@@ -342,7 +342,7 @@ void create_lead(NewsState* st) {
   p.lead = plain(p.list);
   lv_obj_set_size(p.lead, kScreenWidth, kLeadHeight);
   lv_obj_set_style_bg_opa(p.lead, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(p.lead, pal.brand, 0);
+  lv_obj_set_style_bg_color(p.lead, background_tone(pal.brand), 0);
 
   st->leadCover = make_cover(p.lead, kScreenWidth, kLeadHeight);
   p.leadImage = st->leadCover.img;
@@ -538,17 +538,19 @@ void apply_lead(NewsState* st, const View& v) {
   const bool first = !st->leadApplied;
   if (first || v.brand != st->shownBrand) {
     // Fallback while the picture is missing or loading: dark to the favourite's
-    // brand colour (a large surface, so the real club colour, not the accent).
+    // brand colour (a large surface, so the real club colour, not the accent),
+    // toned like the Live split so navy or black clubs are not a flat black.
+    const lv_color_t brand = background_tone(theme().brand);
     memset(&st->fallback, 0, sizeof(st->fallback));
     st->fallback.dir = LV_GRAD_DIR_HOR;
     st->fallback.stops_count = 2;
-    st->fallback.stops[0].color = darken(theme().brand, 140);
+    st->fallback.stops[0].color = darken(brand, 140);
     st->fallback.stops[0].opa = LV_OPA_COVER;
     st->fallback.stops[0].frac = 0;
-    st->fallback.stops[1].color = theme().brand;
+    st->fallback.stops[1].color = brand;
     st->fallback.stops[1].opa = LV_OPA_COVER;
     st->fallback.stops[1].frac = 200;
-    lv_obj_set_style_bg_color(p.lead, theme().brand, 0);
+    lv_obj_set_style_bg_color(p.lead, brand, 0);
     lv_obj_set_style_bg_grad(p.lead, &st->fallback, 0);
     st->shownBrand = v.brand;
   }

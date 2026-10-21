@@ -30,6 +30,9 @@
 //   --fav ABBR       make the team with this abbreviation (from the demo team
 //                    list, e.g. CHE or TOT) the favourite before start, saved
 //                    like a choice in the team picker
+//   --live-vs H,A    demo data: the live match is H v A (abbreviations from the
+//                    demo team list, e.g. CHE,EVE); H is the favourite unless
+//                    --fav is given
 //   --tz ZONE        time zone id (for example Europe/London), saved like a
 //                    choice in Settings. Without a saved zone the window
 //                    picks the zone matching the computer's current offset.
@@ -123,6 +126,8 @@ struct Options {
   std::string prefs;  // empty: the default file (memory for snapshots)
   bool resetPrefs = false;
   std::string fav;  // --fav ABBR: favourite from demo_teams()
+  std::string liveHome;  // --live-vs H,A
+  std::string liveAway;
   std::string tz;
   bool hasNow = false;
   int64_t now = 0;
@@ -164,7 +169,8 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
       "           [--screen live|live-last|live-last-away|matches|news|detail|summary|pitch|stats|goal|goal-win]\n"
       "           [--match ID] [--at-ms N] [--reduced-motion] [--demo-goal]\n"
       "           [--screen settings|zone|picker|picker-search]\n"
-      "           [--prefs FILE|memory] [--reset-prefs] [--fav ABBR] [--tz ZONE] [--now EPOCH]\n"
+      "           [--prefs FILE|memory] [--reset-prefs] [--fav ABBR] [--live-vs H,A]\n"
+      "           [--tz ZONE] [--now EPOCH]\n"
       "           [--wifi none|demo] [--wifi-saved none]\n"
       "           [--screen wifi|wifi-first|wifi-password|wifi-failed|wifi-connecting]\n"
       "           [--helper URL --token T] [--offline-test]\n"
@@ -255,6 +261,15 @@ Options parse_args(int argc, char** argv) {
       o.wifiSaved = false;
     } else if (std::strcmp(argv[i], "--fav") == 0 && hasValue) {
       o.fav = argv[++i];
+    } else if (std::strcmp(argv[i], "--live-vs") == 0 && hasValue) {
+      const std::string v = argv[++i];
+      const size_t comma = v.find(',');
+      if (comma == std::string::npos || comma == 0 || comma + 1 == v.size()) {
+        std::fprintf(stderr, "invalid --live-vs '%s' (HOME,AWAY abbreviations)\n", v.c_str());
+        std::exit(2);
+      }
+      o.liveHome = v.substr(0, comma);
+      o.liveAway = v.substr(comma + 1);
     } else if (std::strcmp(argv[i], "--fixtures") == 0) {
       o.fixtures = true;
     } else if (std::strcmp(argv[i], "--helper") == 0 && hasValue) {
@@ -333,6 +348,35 @@ void keep_only_past_of_favourite(MockSource& source, const std::string& fav, boo
     }
   });
   source.set_matches(std::move(kept));
+}
+
+// --live-vs: the demo live match becomes home v away (demo team list).
+bool set_live_teams(MockSource& source, const std::string& home, const std::string& away) {
+  const std::vector<Team> teams = demo_teams();
+  auto find = [&](const std::string& abbr, Team& out) {
+    for (const Team& t : teams) {
+      if (t.abbr == abbr) {
+        out = t;
+        out.league.clear();
+        return true;
+      }
+    }
+    return false;
+  };
+  Team h;
+  Team a;
+  if (!find(home, h) || !find(away, a)) return false;
+  std::vector<MatchSummary> all;
+  source.fetch_matches([&](bool ok, std::vector<MatchSummary> ms) {
+    if (ok) all = std::move(ms);
+  });
+  for (MatchSummary& m : all) {
+    if (m.id != demo::kLiveMatchId) continue;
+    m.home = h;
+    m.away = a;
+  }
+  source.set_matches(std::move(all));
+  return true;
 }
 
 // Milliseconds since start on a monotonic clock (for the Poller).
@@ -561,10 +605,11 @@ int main(int argc, char** argv) {
     }
   }
 
-  if (!opt.fav.empty()) {
+  const std::string favAbbr = !opt.fav.empty() ? opt.fav : opt.liveHome;
+  if (!favAbbr.empty()) {
     bool found = false;
     for (const Team& t : demo_teams()) {
-      if (t.abbr != opt.fav) continue;
+      if (t.abbr != favAbbr) continue;
       Settings s = load_settings(*prefs);
       s.favourite = t;
       save_settings(*prefs, s);
@@ -572,8 +617,8 @@ int main(int argc, char** argv) {
       break;
     }
     if (!found) {
-      std::fprintf(stderr, "unknown --fav '%s' (an abbreviation from the demo teams, e.g. CHE)\n",
-                   opt.fav.c_str());
+      std::fprintf(stderr, "unknown team '%s' (an abbreviation from the demo teams, e.g. CHE)\n",
+                   favAbbr.c_str());
       return 2;
     }
   }
@@ -585,6 +630,10 @@ int main(int argc, char** argv) {
   // a MockSource (optionally flaky). The Poller drives all of them.
   MockSource mock(opt.fixtures ? CONTRACT_FIXTURES_DIR : "/nonexistent-fixtures");
   if (!opt.fixtures) load_demo(mock, start);
+  if (!opt.liveHome.empty() && !opt.fixtures && !set_live_teams(mock, opt.liveHome, opt.liveAway)) {
+    std::fprintf(stderr, "unknown --live-vs team (abbreviations from the demo teams)\n");
+    return 2;
+  }
   FlakySource flaky(mock);
   std::unique_ptr<CurlTransport> transport;
   std::unique_ptr<HttpSource> http;

@@ -613,6 +613,115 @@ TEST_CASE("app: the favourite's brand colour is applied, saved and restored") {
   CHECK(u32(theme().brand) == u32(lv_color_hex(0x132257)));
 }
 
+// ------------------------------------------------------------ saved favourite vs team list
+
+namespace {
+
+Team chelsea_listed() {
+  return make_team("363", "CHE", "Chelsea", 0xDBA111, "eng.1", 0x034694);
+}
+
+// Prefs as an older build saved them: no fav.primary.
+void save_old_chelsea(MemoryPrefs& p, const char* color) {
+  p.set("fav.id", "363");
+  p.set("fav.abbr", "CHE");
+  p.set("fav.name", "Chelsea FC");
+  p.set("fav.color", color);
+  p.set("fav.crest", "/old-crest");
+  p.set("fav.league", "eng.1");
+}
+
+}  // namespace
+
+TEST_CASE("app: a saved favourite without a primary is refreshed from the team list") {
+  Host h(false);
+  save_old_chelsea(h.prefs, "034694");  // an old accent, no primary
+  h.make();
+  CHECK(u32(theme().brand) == u32(lv_color_hex(0x034694)));
+  lv_obj_t* oldLive = h.tab_screen(0);
+
+  h.store.set_teams({arsenal(), chelsea_listed()});
+  app_refresh(h.app, kSummer);
+  h.settle();
+  const Settings* s = app_settings(h.app);
+  REQUIRE(s != nullptr);
+  CHECK(s->favourite.color == 0xDBA111u);
+  CHECK(s->favourite.primary == 0x034694u);
+  CHECK(s->favourite.name == "Chelsea");
+  CHECK(s->favourite.crest == chelsea_listed().crest);
+  CHECK(u32(theme().accent) == u32(lv_color_hex(0xDBA111)));
+  CHECK(u32(theme().brand) == u32(lv_color_hex(0x034694)));
+  CHECK(pref(h.prefs, "fav.color") == "DBA111");
+  CHECK(pref(h.prefs, "fav.primary") == "034694");
+  CHECK(pref(h.prefs, "fav.name") == "Chelsea");
+  // The screens were rebuilt in the new colours.
+  CHECK(h.tab_screen(0) != oldLive);
+  CHECK(u32(lv_obj_get_style_text_color(h.tab_icon(0), 0)) == u32(lv_color_hex(0xDBA111)));
+}
+
+TEST_CASE("app: an old gold-only Chelsea gets its blue brand once the teams arrive") {
+  Host h(false);
+  save_old_chelsea(h.prefs, "DBA111");  // primary defaults to the gold accent
+  h.make();
+  CHECK(u32(theme().brand) == u32(lv_color_hex(0xDBA111)));
+  h.store.set_teams({chelsea_listed()});
+  app_refresh(h.app, kSummer);
+  CHECK(app_settings(h.app)->favourite.primary == 0x034694u);
+  CHECK(u32(theme().brand) == u32(lv_color_hex(0x034694)));
+  CHECK(u32(theme().accent) == u32(lv_color_hex(0xDBA111)));
+  CHECK(pref(h.prefs, "fav.primary") == "034694");
+}
+
+TEST_CASE("app: a favourite equal to its list entry is not saved or rebuilt") {
+  Host h(false);
+  Settings s;
+  s.favourite = chelsea_listed();
+  save_settings(h.prefs, s);
+  h.make();
+  app_refresh(h.app, kSummer);
+  h.settle();
+  lv_obj_t* live = h.tab_screen(0);
+  const int writes = h.prefs.writes;
+  h.store.set_teams({arsenal(), chelsea_listed()});
+  app_refresh(h.app, kSummer);
+  app_refresh(h.app, kSummer + 1);
+  CHECK(h.prefs.writes == writes);
+  CHECK(h.tab_screen(0) == live);
+}
+
+TEST_CASE("app: a favourite missing from the team list is left untouched") {
+  Host h(false);
+  save_old_chelsea(h.prefs, "034694");
+  h.make();
+  app_refresh(h.app, kSummer);
+  h.settle();
+  lv_obj_t* live = h.tab_screen(0);
+  const int writes = h.prefs.writes;
+  h.store.set_teams({arsenal(), liverpool()});
+  app_refresh(h.app, kSummer);
+  CHECK(h.prefs.writes == writes);
+  CHECK(h.tab_screen(0) == live);
+  CHECK(app_settings(h.app)->favourite.color == 0x034694u);
+  CHECK(app_settings(h.app)->favourite.primary == 0x034694u);
+  CHECK(app_settings(h.app)->favourite.crest == "/old-crest");
+}
+
+TEST_CASE("app: a name or crest change is saved without rebuilding the screens") {
+  Host h(false);
+  Settings s;
+  s.favourite = chelsea_listed();
+  s.favourite.crest = "/old-crest";
+  save_settings(h.prefs, s);
+  h.make();
+  app_refresh(h.app, kSummer);
+  h.settle();
+  lv_obj_t* live = h.tab_screen(0);
+  h.store.set_teams({chelsea_listed()});
+  app_refresh(h.app, kSummer);
+  CHECK(pref(h.prefs, "fav.crest") == chelsea_listed().crest);
+  CHECK(h.tab_screen(0) == live);
+}
+
 TEST_CASE("app: a white accent keeps the active tab icon at the accent") {
   Host h;
   app_apply_team(h.app, tottenham());

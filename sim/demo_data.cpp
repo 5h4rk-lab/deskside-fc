@@ -23,22 +23,25 @@ std::string fd_crest(const char* id) {
 // otherwise the football-data.org crest. Colours are {accent, primary} as the
 // helper sends them (helper/src/colors.ts): Chelsea's accent is gold, its
 // primary royal blue; Tottenham's accent is white, its primary navy.
+// Abbreviations and colours follow the helper's tables (helper/src/colors.ts)
+// and contract/fixtures/teams-normalised.json: Bayern is MUN and Marseille OLM
+// as ESPN has them. Names stay short for the demo rows.
 Team arsenal() { return {"359", "ARS", "Arsenal", espn_crest("359"), 0xEF0107, 0xEF0107, ""}; }
 Team chelsea() { return {"363", "CHE", "Chelsea", espn_crest("363"), 0xDBA111, 0x034694, ""}; }
 Team man_city() { return {"382", "MNC", "Manchester City", espn_crest("382"), 0x6CABDD, 0x6CABDD, ""}; }
 Team liverpool() { return {"364", "LIV", "Liverpool", espn_crest("364"), 0xC8102E, 0xC8102E, ""}; }
-Team real_madrid() { return {"86", "RMA", "Real Madrid", fd_crest("86"), 0xFEBE10, 0x00529F, ""}; }
-Team barcelona() { return {"83", "BAR", "Barcelona", fd_crest("81"), 0xA50044, 0xA50044, ""}; }
-Team bayern() { return {"132", "BAY", "Bayern Munich", fd_crest("5"), 0xDC052D, 0xDC052D, ""}; }
+Team real_madrid() { return {"86", "RMA", "Real Madrid", fd_crest("86"), 0xFFFFFF, 0x00529F, ""}; }
+Team barcelona() { return {"83", "BAR", "Barcelona", fd_crest("81"), 0xEDBB00, 0xA50044, ""}; }
+Team bayern() { return {"132", "MUN", "Bayern Munich", fd_crest("5"), 0xDC052D, 0xDC052D, ""}; }
 Team dortmund() { return {"124", "DOR", "Borussia Dortmund", fd_crest("4"), 0xFDE100, 0xFDE100, ""}; }
 Team psg() { return {"160", "PSG", "Paris Saint-Germain", fd_crest("524"), 0xDA291C, 0x004170, ""}; }
 Team inter() { return {"110", "INT", "Inter Milan", fd_crest("108"), 0x0068A8, 0x0068A8, ""}; }
 Team milan() { return {"103", "MIL", "AC Milan", fd_crest("98"), 0xFB090B, 0xFB090B, ""}; }
 Team atletico() { return {"1068", "ATM", "Atletico Madrid", fd_crest("78"), 0xCB3524, 0xCB3524, ""}; }
-Team sevilla() { return {"243", "SEV", "Sevilla", fd_crest("559"), 0xD6001C, 0xD81022, ""}; }
+Team sevilla() { return {"243", "SEV", "Sevilla", fd_crest("559"), 0xD81022, 0xD81022, ""}; }
 Team brighton() { return {"331", "BHA", "Brighton", espn_crest("331"), 0x0057B8, 0x0057B8, ""}; }
 Team tottenham() { return {"367", "TOT", "Tottenham Hotspur", espn_crest("367"), 0xFFFFFF, 0x132257, ""}; }
-Team marseille() { return {"176", "MAR", "Marseille", fd_crest("516"), 0x2FAEE0, 0x2FAEE0, ""}; }
+Team marseille() { return {"176", "OLM", "Marseille", fd_crest("516"), 0x2FAEE0, 0x2FAEE0, ""}; }
 
 MatchSummary match(const char* id, const char* league, MatchState state, const char* clock,
                    int64_t kickoff, Team home, Team away) {

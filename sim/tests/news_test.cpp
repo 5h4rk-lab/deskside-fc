@@ -573,6 +573,14 @@ TEST_CASE("without a picture the lead is an accent gradient, never empty") {
   grad = lv_obj_get_style_bg_grad(p->lead, 0);
   CHECK(rgb(grad->stops[1].color) == 0x034694);
   CHECK(u32(grad->stops[0].color) == u32(darken(lv_color_hex(0x034694), 140)));
+
+  // A very dark brand is toned up first, like the Live split (Spurs navy).
+  theme_set_team(0xFFFFFF, 0xEF0107, 0x132257);
+  f.load({article("e", 300)});
+  grad = lv_obj_get_style_bg_grad(p->lead, 0);
+  const lv_color_t toned = background_tone(lv_color_hex(0x132257));
+  CHECK(u32(grad->stops[1].color) == u32(toned));
+  CHECK(u32(grad->stops[0].color) == u32(darken(toned, 140)));
   theme_reset();
 }
 

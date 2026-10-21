@@ -21,15 +21,25 @@
 #include "image_provider.h"
 #include "store.h"
 
-// The split uses each team's Team::primary (the real club colour), passed
-// through background_tone() so a very dark primary still shows under the
-// vignette. split_colors() separates clashing colours:
 // Colours for the home (left) and away (right) halves of the split. When the
 // two are too close to tell apart (RGB distance below kSplitMinDistance), the
 // away half becomes theme().opponent; if that is also too close to home, a
 // darkened home colour (or, for very dark home colours, a lightened one).
 constexpr int kSplitMinDistance = 80;  // on the 0..441 RGB distance scale
 std::pair<lv_color_t, lv_color_t> split_colors(lv_color_t home, lv_color_t away);
+
+// The Live background halves for two teams' primaries (Team::primary,
+// 0xRRGGBB): each primary goes through background_tone() (theme.h) so a very
+// dark one still shows under the vignette, then split_colors() separates
+// them. The result is used as is (never toned again), so the two halves stay
+// at least kSplitMinDistance apart whenever split_colors() can manage it.
+std::pair<lv_color_t, lv_color_t> live_background_colors(uint32_t homePrimary, uint32_t awayPrimary);
+
+// A crest on a half darker than this (relative luminance of its
+// live_background_colors() side) gets a soft light halo behind it, so dark
+// crests (Spurs, Fulham, Juventus...) read as emblems on a lit disc.
+constexpr float kHaloMaxLuminance = 0.06f;
+bool crest_needs_halo(lv_color_t side);
 
 // Builds the screen as a child of `parent`, filling it. `onOpen` is called
 // with the match id when the score area is tapped. The screen shows
@@ -56,6 +66,8 @@ struct LiveParts {
   lv_obj_t* message;      // "Connecting...", "No matches soon" or "Next: ..."
   lv_obj_t* countdown;    // under the next-match message: "Kick-off in ..."
   lv_obj_t* scoreArea;    // tap target holding crests, pill, score and names
+  lv_obj_t* homeHalo;     // light disc behind the crest, shown on a dark half only
+  lv_obj_t* awayHalo;
   lv_obj_t* homeCrest;
   lv_obj_t* awayCrest;
   lv_obj_t* pill;         // amber minute pill

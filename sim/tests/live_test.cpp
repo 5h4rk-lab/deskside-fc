@@ -1,5 +1,8 @@
 #include <doctest/doctest.h>
 
+#include <math.h>
+#include <cstdlib>
+
 #include <string>
 #include <vector>
 
@@ -542,4 +545,167 @@ TEST_CASE("demo data carries brand primaries next to the accents") {
     if (t.abbr == "RMA") CHECK(t.primary == 0x00529Fu);
     if (t.abbr == "JUV") CHECK(t.primary == 0x000000u);
   }
+}
+
+// ---------------------------------------------------------------- similar primaries
+
+namespace {
+
+int rgb_distance(lv_color_t a, lv_color_t b) {
+  const int dr = a.red - b.red, dg = a.green - b.green, db = a.blue - b.blue;
+  return static_cast<int>(sqrtf(static_cast<float>(dr * dr + dg * dg + db * db)) + 0.5f);
+}
+
+struct Pair {
+  const char* name;
+  uint32_t home;
+  uint32_t away;
+};
+
+// Pairings whose real primaries are close: blues against Chelsea, black
+// against black, and clubs whose white kit was replaced by a dark colour.
+const Pair kSimilar[] = {
+    {"CHE v EVE", 0x034694, 0x003399}, {"CHE v CRY", 0x034694, 0x1B458F},
+    {"CHE v BHA", 0x034694, 0x0057B8}, {"CHE v TOT", 0x034694, 0x132257},
+    {"EVE v CHE", 0x003399, 0x034694}, {"CRY v CHE", 0x1B458F, 0x034694},
+    {"TOT v CHE", 0x132257, 0x034694}, {"FUL v JUV", 0x000000, 0x000000},
+    {"FUL v NEW", 0x000000, 0x241F20}, {"TOT v LEE", 0x132257, 0x1D428A},
+    {"RMA v LEE", 0x00529F, 0x1D428A}, {"LEE v TOT", 0x1D428A, 0x132257},
+    {"JUV v UDI", 0x000000, 0x000000},
+};
+
+// Rendered halves are mixed into the turf (opacity .9) and sit under the
+// vignette, which roughly halves colour differences at the sample points, so
+// the colour rule (>= kSplitMinDistance = 80) cannot hold pixel for pixel.
+// Measured at (6,150)/(234,150): 38 (LEE v TOT, colours 86 apart) to 77
+// (TOT v CHE); CHE v EVE/CRY/BHA/TOT 39 (colours 89). Black v black (FUL v
+// JUV, JUV v UDI) cannot be separated by shade: split_colors falls back to the
+// opponent blue for the away half (colours 109, pixels 49).
+constexpr int kRenderedMinDistance = 35;
+
+}  // namespace
+
+TEST_CASE("live_background_colors tones the primaries, then separates them") {
+  // Distinct primaries are only toned.
+  auto cheArs = live_background_colors(0x034694, 0xEF0107);
+  CHECK(u32(cheArs.first) == u32(lv_color_hex(0x034694)));
+  CHECK(u32(cheArs.second) == u32(lv_color_hex(0xEF0107)));
+  auto totArs = live_background_colors(0x132257, 0xEF0107);
+  CHECK(u32(totArs.first) == u32(background_tone(lv_color_hex(0x132257))));
+
+  for (const Pair& p : kSimilar) {
+    INFO(p.name);
+    auto c = live_background_colors(p.home, p.away);
+    // Home is always its own toned primary.
+    CHECK(u32(c.first) == u32(background_tone(lv_color_hex(p.home))));
+    CHECK(rgb_distance(c.first, c.second) >= kSplitMinDistance);
+  }
+}
+
+TEST_CASE("live match: similar primaries still give two distinct halves") {
+  for (const Pair& p : kSimilar) {
+    INFO(p.name);
+    Fixture f;
+    MatchSummary m = live_match();
+    m.home = team("359", "HOM", "Home", 0xEF0107, p.home);
+    m.away = team("363", "AWY", "Away", 0x6CABDD, p.away);
+    m.home.primary = p.home;  // black is a real primary, not "unset"
+    m.away.primary = p.away;
+    f.store.set_matches({m}, kNow);
+    f.refresh();
+    const lv_color_t left = pixel_at(f.live, 6, 150);
+    const lv_color_t right = pixel_at(f.live, 234, 150);
+    CHECK(rgb_distance(left, right) >= kRenderedMinDistance);
+  }
+}
+
+// ---------------------------------------------------------------- crest halo
+
+TEST_CASE("crest_needs_halo: dark halves only") {
+  CHECK(crest_needs_halo(background_tone(lv_color_hex(0x132257))));  // Spurs navy
+  CHECK(crest_needs_halo(background_tone(lv_color_hex(0x000000))));  // black
+  CHECK(crest_needs_halo(background_tone(lv_color_hex(0x241F20))));  // Newcastle
+  CHECK_FALSE(crest_needs_halo(lv_color_hex(0xEF0107)));             // Arsenal red
+  CHECK_FALSE(crest_needs_halo(lv_color_hex(0x6CABDD)));             // City sky blue
+  CHECK_FALSE(crest_needs_halo(lv_color_hex(0xFDE100)));             // Dortmund yellow
+}
+
+namespace {
+
+lv_point_t centre(lv_obj_t* obj) {
+  lv_area_t a;
+  lv_obj_get_coords(obj, &a);
+  return {(a.x1 + a.x2) / 2, (a.y1 + a.y2) / 2};
+}
+
+int32_t index_of(lv_obj_t* obj) { return lv_obj_get_index(obj); }
+
+}  // namespace
+
+TEST_CASE("live match: a dark half gets a light halo behind its crest, a light half none") {
+  Fixture f;
+  f.store.set_favourite("367");
+  MatchSummary m = live_match();
+  m.home = team("367", "TOT", "Tottenham Hotspur", 0xFFFFFF, 0x132257);
+  m.away = team("359", "ARS", "Arsenal", 0xEF0107, 0xEF0107);
+  f.store.set_matches({m}, kNow);
+  f.refresh();
+  const LiveParts* p = f.parts();
+  REQUIRE(p->homeHalo != nullptr);
+  REQUIRE(p->awayHalo != nullptr);
+  CHECK(visible(p->homeHalo));
+  CHECK_FALSE(visible(p->awayHalo));
+  // Centred on the crest and drawn behind it.
+  const lv_point_t h = centre(p->homeHalo);
+  const lv_point_t c = centre(p->homeCrest);
+  CHECK(std::abs(h.x - c.x) <= 1);
+  CHECK(std::abs(h.y - c.y) <= 1);
+  CHECK(lv_obj_get_parent(p->homeHalo) == lv_obj_get_parent(p->homeCrest));
+  CHECK(index_of(p->homeHalo) < index_of(p->homeCrest));
+  CHECK(lv_obj_get_width(p->homeHalo) >= 100);
+
+  // The lit disc shows: just outside the crest box the pixel is lighter with
+  // the halo than without it, and it stays a subtle tint (still navy-dark).
+  const lv_area_t box = [&] {
+    lv_area_t a;
+    lv_obj_get_coords(p->homeCrest, &a);
+    return a;
+  }();
+  const int32_t sx = c.x;
+  const int32_t sy = box.y2 + 8;
+  const lv_color_t lit = pixel_at(f.live, sx, sy);
+  lv_obj_add_flag(p->homeHalo, LV_OBJ_FLAG_HIDDEN);
+  const lv_color_t plain = pixel_at(f.live, sx, sy);
+  lv_obj_remove_flag(p->homeHalo, LV_OBJ_FLAG_HIDDEN);
+  const int litSum = lit.red + lit.green + lit.blue;
+  const int plainSum = plain.red + plain.green + plain.blue;
+  CHECK(litSum >= plainSum + 15);
+  CHECK(relative_luminance(lit) < 0.2f);
+
+  // The match changes: Arsenal at home, Spurs away: the halos follow.
+  m.home = team("359", "ARS", "Arsenal", 0xEF0107, 0xEF0107);
+  m.away = team("367", "TOT", "Tottenham Hotspur", 0xFFFFFF, 0x132257);
+  f.store.set_matches({m}, kNow);
+  f.refresh();
+  CHECK_FALSE(visible(p->homeHalo));
+  CHECK(visible(p->awayHalo));
+  const lv_point_t ah = centre(p->awayHalo);
+  const lv_point_t ac = centre(p->awayCrest);
+  CHECK(std::abs(ah.x - ac.x) <= 1);
+  CHECK(std::abs(ah.y - ac.y) <= 1);
+  CHECK(index_of(p->awayHalo) < index_of(p->awayCrest));
+
+  // No split (no matches): no halo.
+  f.store.set_matches({}, kNow);
+  f.refresh();
+  CHECK_FALSE(visible(p->homeHalo));
+  CHECK_FALSE(visible(p->awayHalo));
+}
+
+TEST_CASE("live match: two light halves have no halo") {
+  Fixture f;
+  f.store.set_matches({live_match()}, kNow);  // Arsenal red v Chelsea blue
+  f.refresh();
+  CHECK_FALSE(visible(f.parts()->homeHalo));
+  CHECK_FALSE(visible(f.parts()->awayHalo));
 }

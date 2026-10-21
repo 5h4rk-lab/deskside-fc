@@ -733,10 +733,13 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   return tabview;
 }
 
+static void sync_favourite_from_teams(AppState* st);
+
 void app_refresh(lv_obj_t* appRoot, int64_t now) {
   AppState* st = app_state(appRoot);
   if (st == nullptr) return;
   st->now = now;
+  sync_favourite_from_teams(st);
   // Every screen's local times follow the zone, daylight saving included.
   st->store->set_tz_offset(offset_seconds(st->settings.zoneId, now));
   drive_backlight(st, now);
@@ -809,17 +812,11 @@ lv_obj_t* app_wifi_view(lv_obj_t* appRoot) {
   return st != nullptr ? st->wifiView : nullptr;
 }
 
-void app_apply_team(lv_obj_t* appRoot, const Team& team) {
-  AppState* st = app_state(appRoot);
-  if (st == nullptr) return;
-  end_preview(st);
-  st->settings.favourite = team;
-  save(st);
-  st->store->set_favourite(team.id);
+// Applies the favourite's colours to the theme and rebuilds what is drawn in
+// them: the tabs, the tab icons and an open Settings screen.
+static void recolour(AppState* st) {
+  const Team& team = st->settings.favourite;
   theme_set_team(team.color, kOpponentHex, team.primary);
-
-  // Usually called from a row of the picker: it goes on the next cycle.
-  close_picker(st, true);
   build_tabs(st);
   refresh_icons(st->tabview);
   if (st->settingsView != nullptr) {
@@ -831,6 +828,39 @@ void app_apply_team(lv_obj_t* appRoot, const Team& team) {
     sync_settings_wifi(st);
     sync_settings_data(st);
   }
+}
+
+// A favourite saved by an older build (no fav.primary) or before the helper
+// changed a colour, crest or name: once the team list holds the favourite,
+// its entry wins. Saved when anything differs; rebuilt only when a colour does.
+static void sync_favourite_from_teams(AppState* st) {
+  Team& fav = st->settings.favourite;
+  for (const Team& t : st->store->teams()) {
+    if (t.id != fav.id) continue;
+    const bool colours = t.color != fav.color || t.primary != fav.primary;
+    const bool other = t.name != fav.name || t.abbr != fav.abbr || t.crest != fav.crest ||
+                       (!t.league.empty() && t.league != fav.league);
+    if (!colours && !other) return;
+    const std::string league = t.league.empty() ? fav.league : t.league;
+    fav = t;
+    fav.league = league;
+    save(st);
+    if (colours) recolour(st);
+    return;
+  }
+}
+
+void app_apply_team(lv_obj_t* appRoot, const Team& team) {
+  AppState* st = app_state(appRoot);
+  if (st == nullptr) return;
+  end_preview(st);
+  st->settings.favourite = team;
+  save(st);
+  st->store->set_favourite(team.id);
+
+  // Usually called from a row of the picker: it goes on the next cycle.
+  close_picker(st, true);
+  recolour(st);
   app_refresh(appRoot, st->now);
 }
 

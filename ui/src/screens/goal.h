@@ -2,7 +2,8 @@
 // favourite team scores (about 4 s) or wins at full time (about 8 s). Mockup:
 // screen 5 of docs/superpowers/specs/assets/ui-mockup-v2.html.
 //
-// The screen floods with the accent colour, light rays turn slowly behind the
+// The screen floods with the favourite's brand colour (theme().brand, the real
+// club colour; see goal_background()), light rays turn slowly behind the
 // player, "GOAL!" (or "WIN!") stamps in, the scorer's cutout rises from the
 // bottom over a dark strip with the name and the score, and a few confetti
 // pieces fall. A tap dismisses it at once.
@@ -42,7 +43,7 @@ constexpr int kConfettiCount = 14;
 constexpr int32_t kCutoutSize = 190;      // shown size (px), bottom aligned
 constexpr int kCutoutRequest = 192;       // requested size of the cutout picture
 constexpr float kLightAccent = 0.6f;      // relative luminance above which the background darkens
-constexpr uint8_t kLightDarken = 40;      // darken() amount for a light accent
+constexpr uint8_t kLightDarken = 40;      // darken() amount for a light brand colour
 
 }  // namespace goal
 
@@ -72,10 +73,11 @@ std::string goal_headline(const GoalEvent& event);
 std::string goal_score_line(const GoalEvent& event);
 std::string goal_waiting_line(const GoalEvent& event);
 
-// Overlay background for a colour: the colour itself, or darken(colour, 40)
-// when its relative luminance is above 0.6 (chalk text stays legible). The
-// overlay passes theme().brand (the favourite's real club colour), not the accent.
-lv_color_t goal_background(lv_color_t accent);
+// Overlay background for a brand colour (the overlay passes theme().brand):
+// background_tone(brand), so navy or black clubs do not flood the screen
+// near-black, then darken(..., 40) when its relative luminance is above 0.6
+// (chalk text stays legible on white or yellow).
+lv_color_t goal_background(lv_color_t brand);
 
 // Shows the celebration on lv_layer_top() for a favourite event; events with
 // favourite == false are ignored (nothing shown, a showing overlay is left as

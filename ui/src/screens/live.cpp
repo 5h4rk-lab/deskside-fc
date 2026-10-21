@@ -1,5 +1,7 @@
 #include "screens/live.h"
 
+#include <string.h>
+
 #include "fonts.h"
 #include "format.h"
 #include "screens/widgets.h"
@@ -29,6 +31,8 @@ constexpr uint8_t kTeamOpa = 230;  // .live-bg opacity: .9
 constexpr int32_t kCrestSize = 84;
 constexpr int32_t kCrestTop = 26;
 constexpr int32_t kCrestInset = 8;
+constexpr int32_t kHaloRadius = 60;     // light disc behind a crest on a dark half
+constexpr lv_opa_t kHaloOpa = 46;       // chalk at 18 % in the middle
 constexpr int32_t kPillTop = 84;
 constexpr int32_t kScoreCenterY = 136;  // middle of the digits (mockup: 97..174)
 constexpr int32_t kScoreMaxWidth = 200;
@@ -64,8 +68,10 @@ struct View {
   std::string matchId;
   std::string homeCrest;
   std::string awayCrest;
-  uint32_t homeColor = 0;
+  uint32_t homeColor = 0;  // primaries; the split is live_background_colors() of them
   uint32_t awayColor = 0;
+  bool homeHalo = false;   // a light halo behind the crest on a dark half
+  bool awayHalo = false;
   std::string pill;
   std::string scoreHome;
   std::string scoreAway;
@@ -81,7 +87,8 @@ struct View {
     return mode == o.mode && league == o.league && status == o.status && message == o.message && countdown == o.countdown &&
            lastOpponent == o.lastOpponent && lastWhen == o.lastWhen &&
            matchId == o.matchId && homeCrest == o.homeCrest && awayCrest == o.awayCrest &&
-           homeColor == o.homeColor && awayColor == o.awayColor && pill == o.pill &&
+           homeColor == o.homeColor && awayColor == o.awayColor && homeHalo == o.homeHalo &&
+           awayHalo == o.awayHalo && pill == o.pill &&
            scoreHome == o.scoreHome && scoreAway == o.scoreAway && homeName == o.homeName &&
            awayName == o.awayName && hasEvent == o.hasEvent && eventCaption == o.eventCaption &&
            eventPlayer == o.eventPlayer && eventCutout == o.eventCutout &&
@@ -137,6 +144,48 @@ lv_obj_t* crest(lv_obj_t* parent, int32_t x) {
   lv_obj_t* img = widgets::crest_image(parent, kCrestSize);
   lv_obj_set_pos(img, x, kCrestTop);
   return img;
+}
+
+// The halo's gradient: chalk at about 18 % out to roughly the crest's radius
+// (so it shows through the crest's transparent corners and just around it),
+// fading to nothing at the halo's edge. Shared by every halo; styles keep a pointer to it.
+const lv_grad_dsc_t* halo_grad() {
+  static lv_grad_dsc_t g = [] {
+    lv_grad_dsc_t d;
+    memset(&d, 0, sizeof(d));
+#if LV_USE_DRAW_SW_COMPLEX_GRADIENTS
+    lv_grad_radial_init(&d, LV_GRAD_CENTER, LV_GRAD_CENTER, LV_GRAD_RIGHT, LV_GRAD_CENTER,
+                        LV_GRAD_EXTEND_PAD);
+#endif
+    d.stops_count = 2;
+    d.stops[0].color = theme().chalk;
+    d.stops[0].opa = kHaloOpa;
+    d.stops[0].frac = 140;  // flat out to about the crest's edge, then fading
+    d.stops[1].color = theme().chalk;
+    d.stops[1].opa = LV_OPA_TRANSP;
+    d.stops[1].frac = 255;
+    return d;
+  }();
+  return &g;
+}
+
+// A soft lit disc centred on the crest at `crestX` (one object, drawn below
+// the crest). Hidden until a dark half needs it.
+lv_obj_t* halo(lv_obj_t* parent, int32_t crestX) {
+  lv_obj_t* o = plain(parent);
+  lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_size(o, kHaloRadius * 2, kHaloRadius * 2);
+  lv_obj_set_pos(o, crestX + kCrestSize / 2 - kHaloRadius, kCrestTop + kCrestSize / 2 - kHaloRadius);
+  lv_obj_set_style_radius(o, LV_RADIUS_CIRCLE, 0);
+  lv_obj_set_style_bg_color(o, theme().chalk, 0);
+#if LV_USE_DRAW_SW_COMPLEX_GRADIENTS
+  lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+  lv_obj_set_style_bg_grad(o, halo_grad(), 0);
+#else
+  lv_obj_set_style_bg_opa(o, kHaloOpa / 2, 0);  // flat fallback: a faint disc
+#endif
+  lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+  return o;
 }
 
 void load_image(LiveState* st, lv_obj_t* img, const std::string& path) {
@@ -271,6 +320,13 @@ const lv_font_t* score_font(const View& v) {
 
 // ---------------------------------------------------------------- view
 
+// Halos behind the crests whose half is dark (see crest_needs_halo).
+void set_halos(View& v) {
+  const auto bg = live_background_colors(v.homeColor, v.awayColor);
+  v.homeHalo = crest_needs_halo(bg.first);
+  v.awayHalo = crest_needs_halo(bg.second);
+}
+
 View compute_view(const Store& store, int64_t now) {
   View v;
   const int tz = store.tz_offset();
@@ -304,6 +360,7 @@ View compute_view(const Store& store, int64_t now) {
         v.eventColor = ev.team == Side::Home ? m->home.color : m->away.color;
       }
     }
+    set_halos(v);
     return v;
   }
   if (const MatchSummary* m = store.next_for(fav, now)) {
@@ -318,6 +375,7 @@ View compute_view(const Store& store, int64_t now) {
     const int64_t local = m->kickoff + tz;
     v.message = "Next: " + opponent.abbr + " " + weekday(local) + " " + hh_mm(local);
     v.countdown = countdown_text(m->kickoff - now);
+    set_halos(v);
     return v;
   }
   if (const MatchSummary* m = store.last_for(fav, now)) {
@@ -338,6 +396,7 @@ View compute_view(const Store& store, int64_t now) {
     v.scoreAway = std::to_string((home ? m->awayScore : m->homeScore).value_or(0));
     v.lastOpponent = "vs " + them.abbr;
     v.lastWhen = relative_time(now, m->kickoff, tz);
+    set_halos(v);
     return v;
   }
   v.mode = Mode::NoMatches;
@@ -360,15 +419,14 @@ void apply(LiveState* st, const View& v) {
   if (split != st->splitVisible || (split && (first || v.homeColor != old.homeColor ||
                                               v.awayColor != old.awayColor))) {
     st->splitVisible = split;
-    // Large surface: the teams' primaries, lifted where too dark to show
-    // under the vignette, then separated if they clash. The away side is toned
-    // again because the clash fallback may darken it.
-    auto colors = split_colors(background_tone(lv_color_hex(v.homeColor)),
-                               background_tone(lv_color_hex(v.awayColor)));
+    const auto colors = live_background_colors(v.homeColor, v.awayColor);
     st->splitHome = colors.first;
-    st->splitAway = background_tone(colors.second);
+    st->splitAway = colors.second;
     lv_obj_invalidate(p.background);
   }
+
+  show(p.homeHalo, split && v.homeHalo);
+  show(p.awayHalo, split && v.awayHalo);
 
   // Crests are shared by the live and next layouts.
   show(p.homeCrest, split);
@@ -434,6 +492,15 @@ std::pair<lv_color_t, lv_color_t> split_colors(lv_color_t home, lv_color_t away)
   return {home, mix(home, theme().chalk, 140)};
 }
 
+std::pair<lv_color_t, lv_color_t> live_background_colors(uint32_t homePrimary, uint32_t awayPrimary) {
+  // Tone first, then separate, and use the result as is: toning the clash
+  // fallback again would pull it back towards home.
+  return split_colors(background_tone(lv_color_hex(homePrimary)),
+                      background_tone(lv_color_hex(awayPrimary)));
+}
+
+bool crest_needs_halo(lv_color_t side) { return relative_luminance(side) < kHaloMaxLuminance; }
+
 lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
                       std::function<void(std::string matchId)> onOpen) {
   auto* st = new LiveState();
@@ -461,6 +528,9 @@ lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
   p.staleDot = st->status.staleDot;
   p.staleLabel = st->status.staleLabel;
 
+  // Halos first, so they draw below the crests.
+  p.homeHalo = halo(root, kCrestInset);
+  p.awayHalo = halo(root, 240 - kCrestInset - kCrestSize);
   p.homeCrest = crest(root, kCrestInset);
   p.awayCrest = crest(root, 240 - kCrestInset - kCrestSize);
 

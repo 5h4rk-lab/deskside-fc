@@ -53,7 +53,7 @@ Approved mockup: `docs/superpowers/specs/assets/ui-mockup-v2.html` (open in a br
 
 **Not mocked yet:** Match detail Summary and Stats sub-tabs, Settings, Wi-Fi setup with keyboard, favourite-team picker, offline and empty states. The builder designs these in the same style (same palette, type and spacing as the five approved screens). The user reviews them in the simulator.
 
-- Concept: "floodlit turf". Base `#0A1410` (night turf), panel `#0F1D17`, line `#1B3B2C`, chalk text `#F1EFE4`, dim text `#7C8F84`, floodlight amber `#FFC857` for live indicators, plus one accent that is the **favourite team's primary colour** (default Arsenal red `#EF0107`). Changing team recolours the whole UI.
+- Concept: "floodlit turf". Base `#0A1410` (night turf), panel `#0F1D17`, line `#1B3B2C`, chalk text `#F1EFE4`, dim text `#7C8F84`, floodlight amber `#FFC857` for live indicators, plus two colours from the favourite team (default Arsenal red `#EF0107` for both): an **accent** for small details (tab icon, ticks, dots, switches, links, highlights), kept readable on the dark turf (a navy or black club uses a brighter secondary, e.g. Chelsea gold), and the **brand/primary** colour, the club's real colour (Chelsea blue, Spurs navy), for large surfaces (the Live split, the goal flood, the News lead fallback, pitch markers; very dark primaries are lifted slightly, and dark crests get a soft light halo). Changing team recolours the whole UI.
 - Type: Big Shoulders Display (scores, team names, headings), Hanken Grotesk (small text). Both converted to LVGL bitmap fonts at the needed sizes.
 - Navigation: three bottom tabs: Live, Matches, News. Settings behind a small gear in the corner of the Live tab (location is the builder's call).
 - **Live (home):** background diagonally split in home and away team colours, large crests, very large score, amber minute pill with a pulsing dot, and a glass strip showing the latest event with the player's face.
@@ -84,7 +84,7 @@ A small free serverless function (platform is the builder's call; Cloudflare Wor
 - Detail left to builder: captive-portal fallback if the on-screen keyboard proves hard to use.
 
 ### Favourite team
-Picked in Settings from a searchable list of teams in the supported leagues. Stored in flash. Drives the accent colour, the Live home screen, the dot in the Matches list and the goal celebration.
+Picked in Settings from a searchable list of teams in the supported leagues. Stored in flash. Drives the accent and brand colours, the Live home screen, the dot in the Matches list and the goal celebration.
 
 ### Time
 Times shown in his local timezone, set once in Settings (or inferred from the network). Clock comes from NTP.
