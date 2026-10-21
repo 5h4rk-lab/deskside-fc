@@ -297,7 +297,7 @@ int frames_drawn(int& draws, uint32_t ms, uint32_t step = 10) {
 
 }  // namespace
 
-TEST_CASE("goal overlay: full frame rate for the entrance, then throttled repaints") {
+TEST_CASE("goal overlay: full frame rate for the entrance, then repaints every kIdleFrameMs (25 fps)") {
   Fixture f;
   goal_celebrate(goal_event(), f.images);
   int draws = 0;
@@ -314,7 +314,7 @@ TEST_CASE("goal overlay: full frame rate for the entrance, then throttled repain
   const int expected = static_cast<int>(1000 / goal::kIdleFrameMs);
   CHECK(idle >= expected - 2);
   CHECK(idle <= expected + 2);
-  CHECK(idle < 1000 / refreshMs / 2 + 2);
+  CHECK(idle <= 1000 / refreshMs + 2);  // never faster than the display refresh
 }
 
 TEST_CASE("goal overlay: a full-time win stays about 8 s") {
@@ -548,6 +548,166 @@ TEST_CASE("goal overlay: a light accent darkens the background") {
   test_advance(0);
   CHECK(lv_color_to_u32(pixel_at(lv_layer_top(), 0, 0)) ==
         q565(darken(lv_color_hex(0xFFFFFF), goal::kLightDarken)));
+}
+
+TEST_CASE("goal overlay: the screen under it is hidden while it animates and shown again at the fade, a tap or a replacement") {
+  Fixture f;
+  lv_obj_t* screen = lv_screen_active();
+  CHECK_FALSE(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+
+  goal_celebrate(goal_event(), f.images);
+  run_for(1000);
+  CHECK(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+  run_for(2600);  // 3.6 s: the fade starts at 3.75 s
+  CHECK(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+  run_for(300);   // the fade shows what is below
+  CHECK_FALSE(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+  run_for(600);
+  CHECK_FALSE(goal_active());
+  CHECK_FALSE(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+
+  // A replacement keeps it hidden; a dismissal brings it back at once.
+  goal_celebrate(goal_event(), f.images);
+  run_for(200);
+  goal_celebrate(goal_event(true), f.images);
+  run_for(200);
+  CHECK(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+  goal_dismiss();
+  CHECK_FALSE(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+  run_for(100);
+
+  // Reduced motion hides it too (the overlay covers it all the same).
+  goal_set_reduced_motion(true);
+  goal_celebrate(goal_event(), f.images);
+  run_for(100);
+  CHECK(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+  run_for(4200);
+  CHECK_FALSE(goal_active());
+  CHECK_FALSE(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+}
+
+TEST_CASE("goal overlay: a screen that was hidden before stays hidden") {
+  Fixture f;
+  lv_obj_t* screen = lv_screen_active();
+  lv_obj_add_flag(screen, LV_OBJ_FLAG_HIDDEN);
+  goal_celebrate(goal_event(), f.images);
+  run_for(4500);
+  CHECK_FALSE(goal_active());
+  CHECK(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+}
+
+namespace {
+
+// Hides everything of the overlay except the flood and the rays.
+void leave_rays_only(const GoalParts* p) {
+  for (lv_obj_t* c : p->confetti) lv_obj_add_flag(c, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(p->stamp, LV_OBJ_FLAG_HIDDEN);
+  if (p->stampImage != nullptr) lv_obj_add_flag(p->stampImage, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(p->cutout, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_add_flag(p->strip, LV_OBJ_FLAG_HIDDEN);
+}
+
+std::vector<uint32_t> probe_rays() {
+  std::vector<uint32_t> out;
+  for (int y = 8; y < 220; y += 11) {
+    for (int x = 3; x < 240; x += 17) out.push_back(lv_color_to_u32(pixel_at(lv_layer_top(), x, y)));
+  }
+  return out;
+}
+
+int differing(const std::vector<uint32_t>& a, const std::vector<uint32_t>& b) {
+  int n = 0;
+  for (size_t i = 0; i < a.size(); ++i) n += a[i] != b[i];
+  return n;
+}
+
+}  // namespace
+
+TEST_CASE("goal overlay: the rays turn and repeat every 15 degrees (250 ms), and sit on the flood colour") {
+  Fixture f;
+  goal_celebrate(goal_event(), f.images);
+  run_for(1000);  // all ray pictures are made by now
+  const GoalParts* p = goal_parts();
+  REQUIRE(p != nullptr);
+  leave_rays_only(p);
+  run_for(100);
+  const uint32_t flood = q565(theme().accent);
+  // Only two colours appear besides edge pixels: the flood and the lit ray.
+  std::vector<uint32_t> a = probe_rays();
+  int plain = 0;
+  int lit = 0;
+  for (uint32_t c : a) {
+    if (c == flood) ++plain;
+    else ++lit;
+  }
+  CHECK(plain > static_cast<int>(a.size()) / 4);
+  CHECK(lit > static_cast<int>(a.size()) / 4);  // half the area is lit, give or take edges and the flood's own tint
+
+  // Settle on a frame boundary, then compare one period (250 ms) and half a period apart.
+  run_for(40);
+  const std::vector<uint32_t> base = probe_rays();
+  run_for(250);
+  const std::vector<uint32_t> period = probe_rays();
+  run_for(125);
+  const std::vector<uint32_t> half = probe_rays();
+  CHECK(differing(base, period) < static_cast<int>(base.size()) / 20);
+  CHECK(differing(period, half) > static_cast<int>(base.size()) / 10);
+}
+
+TEST_CASE("goal overlay: the settled stamp is baked into a picture that looks like the live one") {
+  Fixture f;
+  goal_celebrate(goal_event(), f.images);
+  run_for(100);
+  const GoalParts* p = goal_parts();
+  REQUIRE(p != nullptr);
+  CHECK(p->stampImage == nullptr);  // still the live, animated stamp
+  CHECK(visible(p->headline));
+  for (lv_obj_t* c : p->confetti) lv_obj_add_flag(c, LV_OBJ_FLAG_HIDDEN);
+  // Rays are a different picture every few frames: compare with them still.
+  lv_obj_add_flag(p->rays, LV_OBJ_FLAG_HIDDEN);
+  run_for(380);  // 480 ms: settled, not yet baked (the bake comes at 500 ms)
+  std::vector<uint32_t> before;
+  for (int y = 16; y < 112; y += 3) {
+    for (int x = 20; x < 220; x += 3) before.push_back(lv_color_to_u32(pixel_at(lv_layer_top(), x, y)));
+  }
+  run_for(120);
+  REQUIRE(p->stampImage != nullptr);
+  CHECK_FALSE(visible(p->headline));  // its box is hidden now
+  CHECK(visible(p->stampImage));
+  std::vector<uint32_t> after;
+  for (int y = 16; y < 112; y += 3) {
+    for (int x = 20; x < 220; x += 3) after.push_back(lv_color_to_u32(pixel_at(lv_layer_top(), x, y)));
+  }
+  REQUIRE(before.size() == after.size());
+  int far = 0;
+  for (size_t i = 0; i < before.size(); ++i) {
+    const lv_color_t a = lv_color_hex(before[i]);
+    const lv_color_t b = lv_color_hex(after[i]);
+    const int d = abs(a.red - b.red) + abs(a.green - b.green) + abs(a.blue - b.blue);
+    if (d > 36) ++far;
+  }
+  CHECK(far < static_cast<int>(before.size()) / 100);
+  // The picture sits where the live stamp was: the headline's colour is there.
+  const lv_color_t chalk = theme().chalk;
+  int chalky = 0;
+  for (uint32_t c : after) {
+    const lv_color_t px = lv_color_hex(c);
+    if (abs(px.red - chalk.red) + abs(px.green - chalk.green) + abs(px.blue - chalk.blue) < 60) ++chalky;
+  }
+  CHECK(chalky > 40);
+  run_for(4000);
+  CHECK_FALSE(goal_active());
+}
+
+TEST_CASE("goal overlay: reduced motion has no baked stamp and no ray pictures") {
+  Fixture f;
+  goal_set_reduced_motion(true);
+  goal_celebrate(goal_event(), f.images);
+  run_for(1000);
+  const GoalParts* p = goal_parts();
+  REQUIRE(p != nullptr);
+  CHECK(p->stampImage == nullptr);
+  CHECK(visible(p->headline));
 }
 
 TEST_CASE("goal overlay: deleted with the display, no state left behind") {

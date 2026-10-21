@@ -57,7 +57,7 @@ add_library(ui STATIC "${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp"
   "${UI_DIR}/src/json_parse.cpp" "${UI_DIR}/src/store.cpp" "${UI_DIR}/src/goal_detector.cpp" "${UI_DIR}/src/image_provider.cpp"
   "${UI_DIR}/src/screens/live.cpp" "${UI_DIR}/src/format.cpp" "${UI_DIR}/src/screens/detail.cpp"
   "${UI_DIR}/src/screens/widgets.cpp" "${UI_DIR}/src/screens/matches.cpp" "${UI_DIR}/src/screens/news.cpp"
-  "${UI_DIR}/src/screens/goal.cpp"
+  "${UI_DIR}/src/screens/goal.cpp" "${UI_DIR}/src/ray_fan.cpp"
   "${UI_DIR}/src/prefs.cpp" "${UI_DIR}/src/settings.cpp" "${UI_DIR}/src/timezone.cpp" "${UI_DIR}/src/dim_schedule.cpp"
   "${UI_DIR}/src/screens/settings.cpp" "${UI_DIR}/src/screens/zone_list.cpp" "${UI_DIR}/src/screens/team_picker.cpp"
   "${UI_DIR}/src/screens/wifi.cpp"
@@ -71,7 +71,7 @@ set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" "$
   "${UI_DIR}/src/store.cpp" "${UI_DIR}/src/goal_detector.cpp" "${UI_DIR}/src/image_provider.cpp"
   "${UI_DIR}/src/screens/live.cpp" "${UI_DIR}/src/format.cpp" "${UI_DIR}/src/screens/detail.cpp"
   "${UI_DIR}/src/screens/widgets.cpp" "${UI_DIR}/src/screens/matches.cpp" "${UI_DIR}/src/screens/news.cpp"
-  "${UI_DIR}/src/screens/goal.cpp" "${UI_DIR}/src/prefs.cpp" "${UI_DIR}/src/settings.cpp"
+  "${UI_DIR}/src/screens/goal.cpp" "${UI_DIR}/src/ray_fan.cpp" "${UI_DIR}/src/prefs.cpp" "${UI_DIR}/src/settings.cpp"
   "${UI_DIR}/src/timezone.cpp" "${UI_DIR}/src/dim_schedule.cpp" "${UI_DIR}/src/screens/settings.cpp"
   "${UI_DIR}/src/screens/zone_list.cpp" "${UI_DIR}/src/screens/team_picker.cpp"
   "${UI_DIR}/src/screens/wifi.cpp"
@@ -103,7 +103,7 @@ add_executable(sim_tests tests/test_main.cpp tests/smoke_test.cpp tests/theme_te
   tests/refresh_test.cpp tests/http_source_test.cpp tests/poller_test.cpp tests/offline_test.cpp
   tests/curl_transport_test.cpp curl_transport.cpp
   tests/battery_model_test.cpp tests/battery_ui_test.cpp
-  tests/mock_power_test.cpp mock_power.cpp tests/host_loop_test.cpp tests/demo_data_test.cpp)
+  tests/mock_power_test.cpp mock_power.cpp tests/host_loop_test.cpp tests/demo_data_test.cpp tests/ray_fan_test.cpp)
 target_include_directories(sim_tests PRIVATE tests "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(sim_tests PRIVATE
   CONTRACT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../contract/fixtures")

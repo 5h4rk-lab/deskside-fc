@@ -36,7 +36,7 @@ constexpr uint32_t kRiseDelayMs = 120;    // cutout starts rising after the stam
 constexpr uint32_t kRiseMs = 280;         // cutout rise duration (ease out)
 constexpr uint32_t kRayTurnMs = 6000;     // one full turn of the rays
 constexpr uint32_t kEntranceMs = 500;     // stamp and rise: rays and confetti at full frame rate
-constexpr uint32_t kIdleFrameMs = 80;     // afterwards they move (and repaint) in steps of this
+constexpr uint32_t kIdleFrameMs = 40;     // afterwards they move (and repaint) in steps of this (25 fps)
 constexpr int kRayCount = 24;             // wedges of 7.5 degrees with equal gaps
 constexpr lv_opa_t kRayOpa = 31;          // about 12 percent white
 constexpr int kConfettiCount = 14;
@@ -111,6 +111,7 @@ struct GoalParts {
   lv_obj_t* overlay;      // full screen, background goal_background(theme().brand)
   lv_obj_t* rays;         // custom-drawn rotating wedges
   lv_obj_t* stamp;        // transformed box holding the headline and its shadow
+  lv_obj_t* stampImage;   // the settled stamp baked into a picture, nullptr until then (the stamp's box is then hidden)
   lv_obj_t* headline;     // "GOAL!" / "WIN!"
   lv_obj_t* headlineShadow;
   lv_obj_t* cutout;       // scorer picture, silhouette drawn while it has no source

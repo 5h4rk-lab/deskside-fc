@@ -8,6 +8,7 @@
 
 #include "fonts.h"
 #include "format.h"
+#include "ray_fan.h"
 #include "theme.h"
 #include "widgets.h"
 
@@ -89,6 +90,10 @@ constexpr int32_t kRayRadius = 320;      // reaches past every corner
 constexpr float kRayCentreY = 0.715f;    // fraction of the height (mockup: 62 % of a 180 % box)
 constexpr int32_t kTextWidth = 224;
 constexpr uint8_t kSilhouetteDarken = 70;
+constexpr int64_t kRayBitsMaxBytes = 200 * 1024;  // one phase: 240 x 320 x 2 = 150 KB
+constexpr int kRayPhases = 6;             // pictures per 15 degree period: 2.5 degrees each, one per 42 ms at 60 degrees a second
+constexpr float kPi = 3.14159265f;
+constexpr int32_t kStampMargin = 24;     // transparent border of the baked stamp
 constexpr int32_t kConfettiMargin = 12;  // pieces wrap this far outside the screen
 
 const lv_color_t kAmber = lv_color_hex(0xFFC857);
@@ -128,6 +133,34 @@ struct State {
   int32_t lastAnimValue = 0;
   bool reduced = false;
   bool dismissed = false;          // hidden, deletion scheduled
+
+  // The screen under the overlay is hidden while the overlay animates: LVGL
+  // repaints everything below an opaque overlay too (84 ms for the Live
+  // screen on the device).
+  lv_obj_t* hiddenScreen = nullptr;
+
+  // Rays: the flood colour with the rays on it, as kRayPhases RGB565 bitmaps
+  // (the fan repeats every 15 degrees, so one period in a few steps is every
+  // picture there is). Drawing one is a copy instead of a per-pixel blend of a
+  // mask (28 ms per frame on the device) and rendering one per frame would
+  // cost 9 ms, so they are rendered once, one per frame during the entrance.
+  // rayCount is how many could be allocated (0: the rays are left out; in
+  // reduced motion they are drawn once as triangles instead).
+  uint16_t* rayPixels[kRayPhases] = {};
+  lv_image_dsc_t rayImages[kRayPhases]{};
+  uint16_t rayLut[kRayOpa + 1] = {};
+  int rayCount = 0;      // allocated phases
+  int rayRendered = 0;   // phases filled so far
+  int rayShown = 0;      // phase drawn
+  bool raysDrawn = false;  // a motion frame has asked for the rays to be repainted
+
+  // Stamp: after the entrance the tilted headline is baked into a bitmap
+  // (ARGB8888) so each frame draws one image instead of re-rendering and
+  // rotating two text layers (about 25 ms). Null while not baked or when out
+  // of memory (the live stamp then stays).
+  lv_obj_t* stampHost = nullptr;   // transparent box holding `stamp`; what is baked
+  lv_obj_t* stampImage = nullptr;
+  bool stampBaked = false;
 };
 
 State* g_current = nullptr;      // the showing overlay
@@ -141,9 +174,93 @@ void delete_pending(void* obj) {
   lv_obj_delete(static_cast<lv_obj_t*>(obj));
 }
 
+// Renders phase `j`: the fan turned by j / rayCount of its 15 degree period.
+void render_ray_phase(State* st, int j) {
+  const int32_t w = static_cast<int32_t>(st->rayImages[j].header.w);
+  const int32_t h = static_cast<int32_t>(st->rayImages[j].header.h);
+  const float period = 2.0f * kPi / static_cast<float>(kRayCount);
+  const float angle = period / 2.0f + period * static_cast<float>(j) / static_cast<float>(st->rayCount);
+  ray_fan_render_rgb565(st->rayPixels[j], w, h, static_cast<uint32_t>(w), static_cast<float>(w) / 2.0f,
+                        static_cast<float>(h) * kRayCentreY, angle, kRayCount, kRayOpa, st->rayLut);
+}
+
+// The phase that shows the rays at `rayAngle` (0.1 degree units), as far as it is rendered.
+int ray_phase_for(const State* st) {
+  if (st->rayRendered == 0) return 0;
+  const int32_t periodUnits = 3600 / kRayCount;
+  const int phase = static_cast<int>((st->rayAngle % periodUnits) * st->rayCount / periodUnits);
+  return phase < st->rayRendered ? phase : st->rayRendered - 1;
+}
+
+// Allocates the ray bitmaps (bounded: kRayPhases times the overlay's size at two
+// bytes per pixel) and renders the first. Stops at the first allocation that fails.
+void make_ray_bits(State* st, int32_t w, int32_t h) {
+  if (w <= 0 || h <= 0 || w > kRayFanMaxWidth || static_cast<int64_t>(w) * h * 2 > kRayBitsMaxBytes) return;
+  // The colour of a ray pixel with coverage i: white at opacity i over the
+  // flood colour, blended per RGB565 channel and truncated as LVGL's own blend
+  // does, so the picture matches what the per-frame blend used to give.
+  const uint16_t bg = lv_color_to_u16(st->background);
+  for (int i = 0; i <= kRayOpa; ++i) {
+    const uint32_t k = static_cast<uint32_t>(i);
+    const uint32_t r = (31u * k + ((bg >> 11) & 31u) * (255u - k)) / 255u;
+    const uint32_t g = (63u * k + ((bg >> 5) & 63u) * (255u - k)) / 255u;
+    const uint32_t b = (31u * k + (bg & 31u) * (255u - k)) / 255u;
+    st->rayLut[i] = static_cast<uint16_t>((r << 11) | (g << 5) | b);
+  }
+  for (int j = 0; j < kRayPhases; ++j) {
+    uint16_t* px = static_cast<uint16_t*>(lv_malloc(static_cast<size_t>(w) * static_cast<size_t>(h) * 2));
+    if (px == nullptr) break;
+    st->rayPixels[j] = px;
+    lv_image_dsc_t& d = st->rayImages[j];
+    d.header.magic = LV_IMAGE_HEADER_MAGIC;
+    d.header.cf = LV_COLOR_FORMAT_RGB565;
+    d.header.flags = 0;
+    d.header.w = static_cast<uint32_t>(w);
+    d.header.h = static_cast<uint32_t>(h);
+    d.header.stride = static_cast<uint32_t>(w) * 2;
+    d.data_size = static_cast<uint32_t>(w) * static_cast<uint32_t>(h) * 2;
+    d.data = reinterpret_cast<const uint8_t*>(px);
+    st->rayCount = j + 1;
+  }
+  if (st->rayCount > 0) {
+    render_ray_phase(st, 0);
+    st->rayRendered = 1;
+  }
+}
+
+void free_ray_bits(State* st) {
+  for (uint16_t*& px : st->rayPixels) {
+    if (px != nullptr) lv_free(px);
+    px = nullptr;
+  }
+  st->rayCount = 0;
+  st->rayRendered = 0;
+}
+
+void hide_screen_below(State* st) {
+  lv_obj_t* screen = lv_screen_active();
+  if (screen == nullptr || st->hiddenScreen != nullptr || lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN)) return;
+  lv_obj_add_flag(screen, LV_OBJ_FLAG_HIDDEN);
+  st->hiddenScreen = screen;
+}
+
+void show_screen_below(State* st) {
+  lv_obj_t* screen = st->hiddenScreen;
+  st->hiddenScreen = nullptr;
+  if (screen == nullptr || !lv_obj_is_valid(screen)) return;
+  lv_obj_remove_flag(screen, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_invalidate(screen);
+}
+
+void on_stamp_image_delete(lv_event_t* e) {
+  lv_draw_buf_destroy(static_cast<lv_draw_buf_t*>(lv_event_get_user_data(e)));
+}
+
 void on_overlay_delete(lv_event_t* e) {
   lv_obj_t* overlay = static_cast<lv_obj_t*>(lv_event_get_target(e));
   State* st = state_of(overlay);
+  show_screen_below(st);
+  free_ray_bits(st);
   lv_async_call_cancel(delete_pending, overlay);
   if (g_pending == overlay) g_pending = nullptr;
   if (g_current == st) g_current = nullptr;
@@ -156,6 +273,7 @@ void on_overlay_delete(lv_event_t* e) {
 void dismiss(State* st) {
   if (st == nullptr || st->dismissed) return;  // for example a tap during the fade
   st->dismissed = true;
+  show_screen_below(st);
   if (g_current == st) g_current = nullptr;
   if (st->lifetime != nullptr) {
     lv_timer_delete(st->lifetime);
@@ -195,6 +313,7 @@ void on_lifetime(lv_timer_t* t) {
     dismiss(st);
     return;
   }
+  show_screen_below(st);  // the fade shows what is under the overlay
   lv_anim_t a;
   lv_anim_init(&a);
   lv_anim_set_var(&a, st->parts.overlay);
@@ -214,6 +333,15 @@ void draw_rays(lv_event_t* e) {
   lv_layer_t* layer = lv_event_get_layer(e);
   lv_area_t a;
   lv_obj_get_coords(obj, &a);
+  if (st->rayCount > 0) {
+    lv_draw_image_dsc_t img;
+    lv_draw_image_dsc_init(&img);
+    img.src = &st->rayImages[st->rayShown];
+    lv_draw_image(layer, &img, &a);
+    return;
+  }
+  if (!st->reduced) return;  // out of memory: the rays are left out
+  // Reduced motion: one still frame, drawn as triangles (cost does not matter).
   const float cx = static_cast<float>(a.x1) + static_cast<float>(lv_area_get_width(&a)) / 2.0f;
   const float cy = static_cast<float>(a.y1) + static_cast<float>(lv_area_get_height(&a)) * kRayCentreY;
 
@@ -222,7 +350,6 @@ void draw_rays(lv_event_t* e) {
   dsc.bg_color = lv_color_white();
   dsc.bg_opa = kRayOpa;
 
-  constexpr float kPi = 3.14159265f;
   const float period = 2.0f * kPi / static_cast<float>(kRayCount);
   const float width = period / 2.0f;  // wedges and gaps of equal width
   // Offset by half a period so the still frame leaves the top corners plain.
@@ -268,6 +395,30 @@ void place_confetti(State* st) {
   }
 }
 
+// Renders the settled stamp (tilted, with its shadow) into a bitmap and shows
+// that instead. Once per celebration; out of memory keeps the live stamp.
+void bake_stamp(State* st) {
+  st->stampBaked = true;  // one try only
+  GoalParts& p = st->parts;
+  lv_obj_t* host = st->stampHost;
+  if (host == nullptr) return;
+  lv_draw_buf_t* snap = lv_snapshot_take(host, LV_COLOR_FORMAT_ARGB8888);
+  if (snap == nullptr) return;
+  lv_obj_t* img = lv_image_create(p.overlay);
+  if (img == nullptr) {
+    lv_draw_buf_destroy(snap);
+    return;
+  }
+  lv_image_set_src(img, snap);
+  lv_obj_set_pos(img, lv_obj_get_x(host), lv_obj_get_y(host));
+  lv_obj_remove_flag(img, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(img, on_stamp_image_delete, LV_EVENT_DELETE, snap);
+  lv_obj_move_to_index(img, lv_obj_get_index(host) + 1);  // same layer order as the live stamp
+  lv_obj_add_flag(host, LV_OBJ_FLAG_HIDDEN);
+  st->stampImage = img;
+  p.stampImage = img;
+}
+
 // One animation drives the steady motion: rays and confetti.
 void on_motion(void* var, int32_t v) {
   State* st = state_of(static_cast<lv_obj_t*>(var));
@@ -284,8 +435,18 @@ void on_motion(void* var, int32_t v) {
   st->moved = true;
   st->frameMs = frame;
   st->rayAngle = static_cast<int32_t>(static_cast<int64_t>(frame % kRayTurnMs) * 3600 / kRayTurnMs);
-  lv_obj_invalidate(st->parts.rays);
+  if (st->rayRendered < st->rayCount) {  // one more phase per frame until all are there
+    render_ray_phase(st, st->rayRendered);
+    ++st->rayRendered;
+  }
+  const int phase = ray_phase_for(st);
+  if (phase != st->rayShown || !st->raysDrawn) {
+    st->rayShown = phase;
+    st->raysDrawn = true;
+    lv_obj_invalidate(st->parts.rays);
+  }
   place_confetti(st);
+  if (!st->stampBaked && st->clockMs >= kEntranceMs) bake_stamp(st);
 }
 
 // --- stamp and cutout
@@ -371,8 +532,11 @@ void build(State* st, const GoalEvent& event) {
   lv_obj_add_event_cb(p.overlay, on_tap, LV_EVENT_CLICKED, st);
   lv_obj_add_event_cb(p.overlay, on_overlay_delete, LV_EVENT_DELETE, nullptr);
 
+  hide_screen_below(st);
+
   p.rays = widgets::plain(p.overlay);
   lv_obj_set_size(p.rays, w, h);
+  if (!st->reduced) make_ray_bits(st, w, h);
   lv_obj_add_event_cb(p.rays, draw_rays, LV_EVENT_DRAW_MAIN, st);
 
   if (!st->reduced) {
@@ -391,7 +555,18 @@ void build(State* st, const GoalEvent& event) {
   }
 
   // Headline and its shadow share one transformed box: one layer per frame.
-  p.stamp = widgets::plain(p.overlay);
+  // Motion: the stamp sits in a transparent box so it can be baked later
+  // (bake_stamp). The box is full width and as tall as the stamp plus a margin;
+  // it lets the entrance's 2.2 x scale spill out.
+  lv_obj_t* stampParent = p.overlay;
+  if (!st->reduced) {
+    st->stampHost = widgets::plain(p.overlay);
+    lv_obj_set_pos(st->stampHost, 0, 0);
+    lv_obj_set_size(st->stampHost, w, kStampTop + lv_font_get_line_height(&bigshoulders_72) + kShadowOffset + kStampMargin);
+    lv_obj_add_flag(st->stampHost, LV_OBJ_FLAG_OVERFLOW_VISIBLE);
+    stampParent = st->stampHost;
+  }
+  p.stamp = widgets::plain(stampParent);
   lv_obj_set_size(p.stamp, LV_SIZE_CONTENT, LV_SIZE_CONTENT);
   p.headlineShadow = widgets::label(p.stamp, &bigshoulders_72, lv_color_black());
   lv_obj_set_style_text_opa(p.headlineShadow, kShadowOpa, 0);
