@@ -9,9 +9,11 @@
 #include <string>
 
 #include "backlight.h"
+#include "battery_model.h"
 #include "data_source.h"
 #include "image_provider.h"
 #include "model.h"
+#include "power_service.h"
 #include "prefs.h"
 #include "settings.h"
 #include "store.h"
@@ -42,6 +44,11 @@ struct AppDeps {
   // never for failed or replaced attempts, nor after the app is deleted.
   // The host asks for fresh data here (Poller::request_all_now()).
   std::function<void()> onWifiConnected = nullptr;
+  // Optional: the battery. app_refresh() reads it once per call into the
+  // Store (Store::power()); the status rows show the battery icon, Settings a
+  // Battery line, and a banner warns when it runs low. Without it there is no
+  // battery anywhere in the UI.
+  PowerService* power = nullptr;
 };
 
 // Night dimming lifts for this long after the last touch.
@@ -58,7 +65,10 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps);
 // zone at `now` (daylight saving included) and drives the backlight: the day
 // brightness, or the night level inside the night window unless the screen
 // was touched in the last kTouchWakeMs. The backlight is only told about
-// changes (and once at the first call).
+// changes (and once at the first call). With a PowerService it reads the
+// battery once (into the Store; widgets change only when it does) and drives
+// the low-battery banner (BatteryAlert: at most once per level and discharge
+// cycle, held back while the goal celebration shows).
 void app_refresh(lv_obj_t* appRoot, int64_t now);
 
 // The settings in use.
@@ -125,3 +135,12 @@ std::string app_open_match_id(lv_obj_t* appRoot);
 // match).
 // `now` is epoch seconds, used to refresh the screens when the detail arrives.
 void app_matches_changed(lv_obj_t* appRoot, int64_t now);
+
+// The low-battery banner while it shows (above the status row and above any
+// overlay), or nullptr. It goes by itself after the alert's duration or when
+// tapped.
+lv_obj_t* app_battery_banner(lv_obj_t* appRoot);
+
+// Shows the banner for `alert` now, replacing one that shows (screenshots
+// and tests; app_refresh() decides by itself otherwise).
+void app_show_battery_banner(lv_obj_t* appRoot, const Alert& alert);

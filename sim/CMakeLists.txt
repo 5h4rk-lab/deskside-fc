@@ -62,7 +62,7 @@ add_library(ui STATIC "${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp"
   "${UI_DIR}/src/screens/settings.cpp" "${UI_DIR}/src/screens/zone_list.cpp" "${UI_DIR}/src/screens/team_picker.cpp"
   "${UI_DIR}/src/screens/wifi.cpp"
   "${UI_DIR}/src/refresh_policy.cpp" "${UI_DIR}/src/http_source.cpp" "${UI_DIR}/src/poller.cpp"
-  "${UI_DIR}/src/http_image_provider.cpp"
+  "${UI_DIR}/src/http_image_provider.cpp" "${UI_DIR}/src/battery_model.cpp" "${UI_DIR}/src/screens/battery_banner.cpp"
   ${UI_FONT_SOURCES})
 target_include_directories(ui PUBLIC "${UI_DIR}/src" "${UI_DIR}/fonts")
 target_link_libraries(ui PUBLIC lvgl ArduinoJson)
@@ -75,12 +75,12 @@ set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" "$
   "${UI_DIR}/src/screens/zone_list.cpp" "${UI_DIR}/src/screens/team_picker.cpp"
   "${UI_DIR}/src/screens/wifi.cpp"
   "${UI_DIR}/src/refresh_policy.cpp" "${UI_DIR}/src/http_source.cpp" "${UI_DIR}/src/poller.cpp"
-  "${UI_DIR}/src/http_image_provider.cpp"
+  "${UI_DIR}/src/http_image_provider.cpp" "${UI_DIR}/src/battery_model.cpp" "${UI_DIR}/src/screens/battery_banner.cpp"
   PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # --- Simulator executable ----------------------------------------------------
 add_executable(sim main.cpp mock_source.cpp mock_image_provider.cpp lvgl_image_decoder.cpp demo_data.cpp snapshot.cpp
-  file_prefs.cpp sim_backlight.cpp mock_wifi.cpp curl_transport.cpp)
+  file_prefs.cpp sim_backlight.cpp mock_wifi.cpp curl_transport.cpp mock_power.cpp)
 # Defaults for the simulator's --assets and --fixtures flags.
 target_compile_definitions(sim PRIVATE
   SIM_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
@@ -99,7 +99,9 @@ add_executable(sim_tests tests/test_main.cpp tests/smoke_test.cpp tests/theme_te
   tests/settings_screen_test.cpp tests/team_picker_test.cpp tests/app_settings_test.cpp
   tests/file_prefs_test.cpp file_prefs.cpp tests/wifi_screen_test.cpp mock_wifi.cpp
   tests/refresh_test.cpp tests/http_source_test.cpp tests/poller_test.cpp tests/offline_test.cpp
-  tests/curl_transport_test.cpp curl_transport.cpp)
+  tests/curl_transport_test.cpp curl_transport.cpp
+  tests/battery_model_test.cpp tests/battery_ui_test.cpp
+  tests/mock_power_test.cpp mock_power.cpp)
 target_include_directories(sim_tests PRIVATE tests "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(sim_tests PRIVATE
   CONTRACT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../contract/fixtures")

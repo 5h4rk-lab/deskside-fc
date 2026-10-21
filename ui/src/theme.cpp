@@ -16,6 +16,8 @@ Palette default_palette() {
   p.opponent = lv_color_hex(0x034694);  // Chelsea blue
   p.brand = lv_color_hex(0xEF0107);     // Arsenal red until a team is picked
   p.tabBar = lv_color_hex(0x050907);
+  p.warn = lv_color_hex(0xFF6B4A);
+  p.charging = lv_color_hex(0x5ED39B);
   return p;
 }
 

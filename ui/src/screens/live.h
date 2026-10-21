@@ -19,6 +19,7 @@
 #include <utility>
 
 #include "image_provider.h"
+#include "screens/widgets.h"
 #include "store.h"
 
 // Colours for the home (left) and away (right) halves of the split. When the
@@ -47,8 +48,8 @@ bool crest_needs_halo(lv_color_t side);
 lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
                       std::function<void(std::string matchId)> onOpen);
 
-// Shows the gear at the top right of the status row (the clock moves left to
-// make room) and calls `onSettings` when it is tapped. An empty function hides
+// Shows the gear at the top right, in the room the status row leaves on every
+// screen (widgets::kStatusRightInset), and calls `onSettings` when it is tapped. An empty function hides
 // the gear again.
 void live_set_on_settings(lv_obj_t* screen, std::function<void()> onSettings);
 
@@ -89,6 +90,7 @@ struct LiveParts {
   lv_obj_t* lastFt;       // "FT" inside an outlined tag
   lv_obj_t* lastWhen;     // relative_time() of the kick-off: "yesterday"
   lv_obj_t* gear;         // settings button (32x32), hidden until live_set_on_settings()
+  widgets::StatusRow status;  // the whole status row (league left; stale, clock, battery right)
 };
 
 // Parts of a screen made by live_create(), or nullptr for any other object.

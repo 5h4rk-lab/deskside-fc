@@ -20,8 +20,9 @@
 //                    animation time (default 900)
 //   --reduced-motion static goal celebration
 //   --demo-goal      the favourite scores 6 s after start (no keyboard needed)
-//   --screen settings|zone|picker|picker-search
-//                    Settings, the time zone list, the team picker, or the
+//   --screen settings|settings-about|zone|picker|picker-search
+//                    Settings (settings-about: scrolled to the About area
+//                    with the Battery and data lines), the time zone list, the team picker, or the
 //                    picker with "ars" typed and the keyboard up
 //   --prefs FILE     settings file (default ~/.config/soccer-display-sim/prefs.txt,
 //                    created on demand); "memory" keeps them for this run only.
@@ -58,10 +59,25 @@
 //   --offline-test   the demo source is down most of the time (only every
 //                    5th match poll succeeds), to see the stale marker and the
 //                    Settings data line
+//   --battery P[,charging]|none
+//                    the battery: P percent (0-100) on battery or charging, or
+//                    none (no battery: no icon, "No battery detected" in
+//                    Settings). Default: 78 percent on battery
+//   --battery-mv MV  a pretend ADC reading MV millivolts, fed once a second
+//                    through the real BatteryModel (smoothing, percent,
+//                    charging inferred from the trend); + and - in the window
+//                    raise or lower it by 50 mV (a charger plugged or pulled)
+//   --banner low|critical|none
+//                    with a snapshot: force the low-battery banner, or remove
+//                    one the battery state raised at start (to see the icon)
+//   --stale-min N    with a snapshot: render N minutes after the last update,
+//                    as if the helper had gone quiet (the stale marker shows)
 // Data is fetched by the Poller (ui/src/poller.h) in every mode: every 25 s
 // while a match is live, every 3 min otherwise, backing off after failures.
 // Keys in the window (demo data only): g = the favourite scores in its live
-// match, w = that match ends with the favourite ahead (full-time win).
+// match, w = that match ends with the favourite ahead (full-time win),
+// b = the next demo battery state (78 %, 40 %, 18 % low, 8 % critical,
+// 55 % charging, 100 % charging, no battery), printed in the terminal.
 #include <SDL2/SDL.h>
 #include <lvgl.h>
 
@@ -84,6 +100,7 @@
 #include "file_prefs.h"
 #include "http_source.h"
 #include "mock_image_provider.h"
+#include "mock_power.h"
 #include "mock_source.h"
 #include "mock_wifi.h"
 #include "poller.h"
@@ -91,6 +108,7 @@
 #include "settings.h"
 #include "screens/detail.h"
 #include "screens/goal.h"
+#include "screens/settings.h"
 #include "screens/team_picker.h"
 #include "screens/wifi.h"
 #include "sim_backlight.h"
@@ -136,6 +154,10 @@ struct Options {
   std::string helper;  // empty: the demo / fixtures
   std::string token;
   bool offlineTest = false;
+  PowerStatus battery = MockPower().status();
+  int batteryMv = 0;  // --battery-mv: 0 is off
+  std::string banner;  // --banner: "", low, critical or none
+  int staleMin = 0;    // --stale-min
 };
 
 bool goal_screen(const std::string& screen) { return screen == "goal" || screen == "goal-win"; }
@@ -168,14 +190,17 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
       "usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]\n"
       "           [--screen live|live-last|live-last-away|matches|news|detail|summary|pitch|stats|goal|goal-win]\n"
       "           [--match ID] [--at-ms N] [--reduced-motion] [--demo-goal]\n"
-      "           [--screen settings|zone|picker|picker-search]\n"
+      "           [--screen settings|settings-about|zone|picker|picker-search]\n"
       "           [--prefs FILE|memory] [--reset-prefs] [--fav ABBR] [--live-vs H,A]\n"
       "           [--tz ZONE] [--now EPOCH]\n"
       "           [--wifi none|demo] [--wifi-saved none]\n"
       "           [--screen wifi|wifi-first|wifi-password|wifi-failed|wifi-connecting]\n"
       "           [--helper URL --token T] [--offline-test]\n"
+      "           [--battery P[,charging]|none] [--battery-mv MV] [--banner low|critical|none]\n"
+      "           [--stale-min N]\n"
       "env: HELPER_URL, HELPER_TOKEN (when the flags are absent)\n"
-      "keys: g = favourite scores, w = favourite wins at full time (demo data)\n");
+      "keys: g = favourite scores, w = favourite wins at full time (demo data),\n"
+      "      b = next demo battery state, + / - = 50 mV up / down (--battery-mv)\n");
   std::exit(code);
 }
 
@@ -205,7 +230,7 @@ Options parse_args(int argc, char** argv) {
       o.screen = argv[++i];
       const char* const kScreens[] = {"live",     "live-last", "live-last-away", "matches",  "news",   "detail",
                                       "summary",  "pitch",    "stats",  "goal",
-                                      "goal-win", "settings", "zone",   "picker",
+                                      "goal-win", "settings", "settings-about", "zone",   "picker",
                                       "picker-search", "wifi", "wifi-first", "wifi-password",
                                       "wifi-failed", "wifi-connecting"};
       bool known = false;
@@ -278,6 +303,29 @@ Options parse_args(int argc, char** argv) {
       o.token = argv[++i];
     } else if (std::strcmp(argv[i], "--offline-test") == 0) {
       o.offlineTest = true;
+    } else if (std::strcmp(argv[i], "--battery") == 0 && hasValue) {
+      if (!MockPower::parse(argv[++i], o.battery)) {
+        std::fprintf(stderr, "invalid --battery '%s' (PERCENT, PERCENT,charging or none)\n", argv[i]);
+        std::exit(2);
+      }
+    } else if (std::strcmp(argv[i], "--battery-mv") == 0 && hasValue) {
+      o.batteryMv = std::atoi(argv[++i]);
+      if (o.batteryMv < 1 || o.batteryMv > 5000) {
+        std::fprintf(stderr, "invalid --battery-mv '%s' (1-5000)\n", argv[i]);
+        std::exit(2);
+      }
+    } else if (std::strcmp(argv[i], "--banner") == 0 && hasValue) {
+      o.banner = argv[++i];
+      if (o.banner != "low" && o.banner != "critical" && o.banner != "none") {
+        std::fprintf(stderr, "invalid --banner '%s' (low, critical or none)\n", o.banner.c_str());
+        std::exit(2);
+      }
+    } else if (std::strcmp(argv[i], "--stale-min") == 0 && hasValue) {
+      o.staleMin = std::atoi(argv[++i]);
+      if (o.staleMin < 1 || o.staleMin > 100000) {
+        std::fprintf(stderr, "invalid --stale-min '%s' (1-100000)\n", argv[i]);
+        std::exit(2);
+      }
     } else if (std::strcmp(argv[i], "--help") == 0) {
       usage(0);
     } else {
@@ -529,6 +577,8 @@ bool demo_win(MockSource& source, const std::string& fav) {
 struct Keys {
   bool goal = false;
   bool win = false;
+  bool battery = false;
+  int millivolts = 0;  // + / -: steps of 50 mV
 };
 
 int watch_keys(void* userdata, SDL_Event* e) {
@@ -536,6 +586,10 @@ int watch_keys(void* userdata, SDL_Event* e) {
     auto* keys = static_cast<Keys*>(userdata);
     if (e->key.keysym.sym == SDLK_g) keys->goal = true;
     if (e->key.keysym.sym == SDLK_w) keys->win = true;
+    if (e->key.keysym.sym == SDLK_b) keys->battery = true;
+    const SDL_Keycode k = e->key.keysym.sym;
+    if (k == SDLK_PLUS || k == SDLK_EQUALS || k == SDLK_KP_PLUS) keys->millivolts += 50;
+    if (k == SDLK_MINUS || k == SDLK_KP_MINUS) keys->millivolts -= 50;
   }
   return 1;
 }
@@ -675,6 +729,17 @@ int main(int argc, char** argv) {
   load_demo_wifi(wifi, opt.wifiSaved && opt.screen != "wifi-first");
   wifi.set_async(!headless || opt.screen == "wifi-connecting");
 
+  // Battery: scripted (--battery, the b key) or raw millivolts through the
+  // real model (--battery-mv), sampled once a second like the firmware's ADC.
+  MockPower mockPower;
+  mockPower.set(opt.battery);
+  ModelPower modelPower(opt.batteryMv);
+  PowerService* power = &mockPower;
+  if (opt.batteryMv > 0) {
+    power = &modelPower;
+    modelPower.sample(start);
+  }
+
   lv_obj_t* app = nullptr;
   bool matchesChanged = false;
   Poller poller(store, *source, [&app, &matchesChanged](int64_t now) {
@@ -706,7 +771,7 @@ int main(int argc, char** argv) {
                },
                *prefs, &backlight, opt.wifi ? &wifi : nullptr,
                // Connected at last: fetch everything now, not at the next due time.
-               [&poller] { poller.request_all_now(); }};
+               [&poller] { poller.request_all_now(); }, power};
   app = app_create(lv_screen_active(), deps);
   // A session-only override of the saved setting.
   if (opt.reducedMotion) goal_set_reduced_motion(true);
@@ -754,8 +819,13 @@ int main(int argc, char** argv) {
     app_refresh(app, start);
   } else if (goal_screen(opt.screen)) {
     demo_change(opt.screen == "goal-win");
-  } else if (opt.screen == "settings") {
+  } else if (opt.screen == "settings" || opt.screen == "settings-about") {
     app_open_settings(app);
+    if (opt.screen == "settings-about") {  // scrolled to the end: the About area
+      const SettingsParts* sp = settings_parts(app_settings_view(app));
+      lv_obj_update_layout(lv_screen_active());
+      if (sp != nullptr) lv_obj_scroll_to_y(sp->list, LV_COORD_MAX, LV_ANIM_OFF);
+    }
   } else if (opt.screen == "zone") {
     app_open_zones(app);
   } else if (opt.screen == "picker" || opt.screen == "picker-search") {
@@ -791,6 +861,22 @@ int main(int argc, char** argv) {
     if (opt.screen == "summary") detail_select_tab(view, DetailTab::Summary, false);
     if (opt.screen == "pitch") detail_select_tab(view, DetailTab::Pitch, false);
     if (opt.screen == "stats") detail_select_tab(view, DetailTab::Stats, false);
+  }
+
+  if (headless && opt.staleMin > 0) {
+    // The helper went quiet: no more polls, the clock moves on.
+    app_refresh(app, start + static_cast<int64_t>(opt.staleMin) * 60);
+  }
+
+  if (headless && !opt.banner.empty()) {
+    if (opt.banner == "none") {
+      if (lv_obj_t* b = app_battery_banner(app)) lv_obj_delete(b);
+    } else if (opt.banner == "low") {
+      app_show_battery_banner(app, Alert{Alert::Level::Low, battery::kAlertLowText, battery::kAlertLowMs});
+    } else {
+      app_show_battery_banner(
+          app, Alert{Alert::Level::Critical, battery::kAlertCriticalText, battery::kAlertCriticalMs});
+    }
   }
 
   if (headless && httpImages) {
@@ -837,6 +923,7 @@ int main(int argc, char** argv) {
   SDL_AddEventWatch(watch_keys, &keys);
   bool demoGoalDone = !opt.demoGoal;
   int64_t lastRefresh = start;
+  PowerStatus lastModelStatus = modelPower.status();
   uint32_t lastWifiMs = SDL_GetTicks();
   for (;;) {
     lv_timer_handler();
@@ -853,7 +940,36 @@ int main(int argc, char** argv) {
       demo_change(true);
     }
     const int64_t now = clock_now();
+    if (keys.battery) {
+      keys.battery = false;
+      if (opt.batteryMv > 0) {
+        std::printf("the b key cycles the scripted battery (not with --battery-mv)\n");
+      } else {
+        std::printf("%s\n", MockPower::describe(mockPower.next_demo()).c_str());
+        app_refresh(app, now);
+      }
+      std::fflush(stdout);
+    }
+    if (keys.millivolts != 0) {
+      if (opt.batteryMv > 0) {
+        modelPower.set_millivolts(std::max(0, modelPower.millivolts() + keys.millivolts));
+        std::printf("ADC now reads %d mV\n", modelPower.millivolts());
+      } else {
+        std::printf("+ and - work with --battery-mv only\n");
+      }
+      keys.millivolts = 0;
+      std::fflush(stdout);
+    }
     pump(now);
+    if (now != lastRefresh && opt.batteryMv > 0) {
+      modelPower.sample(now);
+      const PowerStatus s = modelPower.status();
+      if (s != lastModelStatus) {  // the model's view changed: say so
+        std::printf("ADC %d mV -> %s\n", modelPower.millivolts(), MockPower::describe(s).c_str());
+        std::fflush(stdout);
+        lastModelStatus = s;
+      }
+    }
     if (now != lastRefresh || matchesChanged) {
       app_refresh(app, now);
       lastRefresh = now;

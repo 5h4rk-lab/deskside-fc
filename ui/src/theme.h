@@ -17,6 +17,8 @@ struct Palette {
   lv_color_t opponent;  // opposing team colour (Chelsea blue by default)
   lv_color_t brand;     // favourite's real brand colour, for large surfaces (Arsenal red by default)
   lv_color_t tabBar;    // bottom bar backdrop
+  lv_color_t warn;      // critical warnings (battery very low): warm red-orange
+  lv_color_t charging;  // battery charging: a green kept clear of team accents
 };
 
 // The active palette. Mutable so the favourite team can recolour the UI.

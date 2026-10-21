@@ -10,6 +10,7 @@
 #include "fonts.h"
 #include "format.h"
 #include "goal_detector.h"
+#include "screens/battery_banner.h"
 #include "screens/detail.h"
 #include "screens/goal.h"
 #include "screens/live.h"
@@ -25,7 +26,7 @@
 namespace {
 
 enum class Shown { None, Loading, Error, Detail };
-enum class OverlayKind { Detail, Settings, Picker, Wifi };
+enum class OverlayKind { Detail, Settings, Picker, Wifi, Banner };
 enum class TeamsLoad { Idle, Loading, Failed };
 
 constexpr uint32_t kOpponentHex = 0x034694;  // Chelsea blue, the default opponent colour
@@ -83,6 +84,11 @@ struct AppState {
   // the score); app_refresh() looks at the Store's detail for it.
   std::optional<GoalEvent> awaitingScorer;
   std::function<void()> onWifiConnected;
+
+  // Battery: the service (optional), the banner's state machine and the banner.
+  PowerService* power = nullptr;
+  BatteryAlert batteryAlert;
+  lv_obj_t* banner = nullptr;
 
   // Cleared when the tab view is deleted, for callbacks that outlive it.
   std::shared_ptr<bool> alive = std::make_shared<bool>(true);
@@ -207,6 +213,8 @@ void on_overlay_delete(lv_event_t* e) {
     } else if (link->kind == OverlayKind::Wifi && st->wifiOverlay == obj) {
       st->wifiOverlay = nullptr;
       st->wifiView = nullptr;
+    } else if (link->kind == OverlayKind::Banner && st->banner == obj) {
+      st->banner = nullptr;
     }
   }
   delete link;
@@ -230,6 +238,7 @@ lv_obj_t* make_overlay(AppState* st, OverlayKind kind, bool coverTabBar) {
   lv_obj_add_flag(o, LV_OBJ_FLAG_CLICKABLE);
   lv_obj_remove_flag(o, LV_OBJ_FLAG_GESTURE_BUBBLE);
   lv_obj_add_event_cb(o, on_overlay_delete, LV_EVENT_DELETE, new OverlayLink{st, st->alive, kind});
+  if (st->banner != nullptr) lv_obj_move_foreground(st->banner);  // the warning stays on top
   return o;
 }
 
@@ -349,6 +358,38 @@ void sync_settings_data(AppState* st) {
                            st->store->last_error() != FetchError::None);
 }
 
+// The About area's battery line (hosts with a battery only).
+void sync_settings_battery(AppState* st) {
+  if (st->settingsView == nullptr || st->power == nullptr) return;
+  settings_set_battery(st->settingsView, st->store->power());
+}
+
+// ---------------------------------------------------------------- battery
+
+void show_banner(AppState* st, const Alert& alert) {
+  if (st->banner != nullptr) {
+    lv_obj_t* old = st->banner;
+    st->banner = nullptr;
+    lv_obj_delete(old);
+  }
+  lv_obj_t* screen = lv_obj_get_parent(st->tabview);
+  st->banner = battery_banner_create(screen, alert);
+  lv_obj_add_event_cb(st->banner, on_overlay_delete, LV_EVENT_DELETE,
+                      new OverlayLink{st, st->alive, OverlayKind::Banner});
+}
+
+// Reads the battery once: into the Store (the screens' status rows follow it
+// in their own refresh, touching only what changed), the Settings line and
+// the low-battery banner.
+void sync_power(AppState* st, int64_t now) {
+  if (st->power == nullptr) return;
+  const PowerStatus p = st->power->status();
+  st->store->set_power(p);
+  sync_settings_battery(st);
+  const std::optional<Alert> alert = st->batteryAlert.update(p, goal_active(), now);
+  if (alert) show_banner(st, *alert);
+}
+
 void save(AppState* st) {
   save_settings(*st->prefs, st->settings);
   st->saved = st->settings;
@@ -412,6 +453,7 @@ void open_settings(AppState* st) {
                                      settings_callbacks(st), st->now);
   sync_settings_wifi(st);
   sync_settings_data(st);
+  sync_settings_battery(st);
 }
 
 // ---------------------------------------------------------------- wifi
@@ -666,6 +708,7 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   st->backlight = deps.backlight;
   st->wifi = deps.wifi;
   st->onWifiConnected = deps.onWifiConnected;
+  st->power = deps.power;
 
   // Saved settings first: the screens capture the accent colour as they are built.
   st->settings = load_settings(deps.prefs);
@@ -743,6 +786,7 @@ void app_refresh(lv_obj_t* appRoot, int64_t now) {
   // Every screen's local times follow the zone, daylight saving included.
   st->store->set_tz_offset(offset_seconds(st->settings.zoneId, now));
   drive_backlight(st, now);
+  sync_power(st, now);
   check_scorer(st);
   if (st->live != nullptr) live_refresh(st->live, now);
   if (st->matches != nullptr) matches_refresh(st->matches, now);
@@ -827,6 +871,7 @@ static void recolour(AppState* st) {
     lv_obj_move_to_index(st->settingsView, 0);
     sync_settings_wifi(st);
     sync_settings_data(st);
+    sync_settings_battery(st);
   }
 }
 
@@ -918,4 +963,16 @@ void app_matches_changed(lv_obj_t* appRoot, int64_t now) {
     st->store->set_detail(std::move(detail));
     app_refresh(st->tabview, now);  // names the scorer when this detail has the goal
   });
+}
+
+lv_obj_t* app_battery_banner(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  if (st == nullptr || st->banner == nullptr) return nullptr;
+  // A tapped banner is hidden at once and deleted on the next cycle.
+  return lv_obj_has_flag(st->banner, LV_OBJ_FLAG_HIDDEN) ? nullptr : st->banner;
+}
+
+void app_show_battery_banner(lv_obj_t* appRoot, const Alert& alert) {
+  AppState* st = app_state(appRoot);
+  if (st != nullptr) show_banner(st, alert);
 }

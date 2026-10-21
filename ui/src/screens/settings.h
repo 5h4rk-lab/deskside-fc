@@ -15,6 +15,7 @@
 #include <string>
 
 #include "../settings.h"  // the Settings model (not this file)
+#include "battery_model.h"
 #include "image_provider.h"
 
 struct SettingsCallbacks {
@@ -59,6 +60,12 @@ void settings_set_wifi_status(lv_obj_t* screen, const std::string& text);
 // Empty until the host sets it.
 void settings_set_data_status(lv_obj_t* screen, const std::string& text, bool problem);
 
+// The Battery line in the About area, between the version and the data line:
+// battery_status_text() ("78% · On battery", "Low: 18% · On battery", ...)
+// with battery_voltage_text() after it in smaller dim text. Amber when low on
+// battery. Hidden until the host sets it (hosts without a battery never do).
+void settings_set_battery(lv_obj_t* screen, const PowerStatus& power);
+
 // The settings the screen currently shows (its copy).
 const Settings* settings_current(lv_obj_t* screen);
 
@@ -99,6 +106,9 @@ struct SettingsParts {
   lv_obj_t* wifiRow = nullptr;     // nullptr when there is no Wi-Fi row
   lv_obj_t* wifiStatus = nullptr;  // "Connected to <ssid>" / "Not connected", one line
   lv_obj_t* about = nullptr;    // "Soccer display 0.1"
+  lv_obj_t* batteryLine = nullptr;     // under about: status and voltage, hidden until set
+  lv_obj_t* batteryStatus = nullptr;   // "78% · On battery"
+  lv_obj_t* batteryVoltage = nullptr;  // "3.92 V", hidden without a battery
   lv_obj_t* dataStatus = nullptr;  // under about: "Live data is up to date", ...
 };
 

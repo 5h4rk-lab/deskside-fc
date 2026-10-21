@@ -364,9 +364,12 @@ TEST_CASE("settings: the data status line sits under the version, dim or amber")
   REQUIRE(p->dataStatus != nullptr);
   // Before the host says anything: empty, so no false claim.
   CHECK(text(p->dataStatus).empty());
-  // Directly under the About line, in the same list.
+  // Under the About line, in the same list, with only the Battery line
+  // between them (hidden until the host has a battery to report).
   CHECK(lv_obj_get_parent(p->dataStatus) == lv_obj_get_parent(p->about));
-  CHECK(lv_obj_get_index(p->dataStatus) == lv_obj_get_index(p->about) + 1);
+  CHECK(lv_obj_get_index(p->batteryLine) == lv_obj_get_index(p->about) + 1);
+  CHECK(lv_obj_get_index(p->dataStatus) == lv_obj_get_index(p->about) + 2);
+  CHECK(lv_obj_has_flag(p->batteryLine, LV_OBJ_FLAG_HIDDEN));
 
   settings_set_data_status(s.obj, "Live data is up to date", false);
   s.settle();

@@ -7,6 +7,7 @@
 
 #include <string>
 
+#include "battery_model.h"
 #include "image_provider.h"
 #include "store.h"
 
@@ -80,32 +81,78 @@ struct StatusInfo {
   bool connecting = true; // no data yet: no stale marker, no freshness dot
   bool stale = false;
   std::string staleText;  // "Updated N min ago" while stale
+  // Battery (from Store::power()); the icon is hidden while !battery.
+  bool battery = false;
+  int batteryPercent = 0;
+  bool charging = false;
 
   bool operator==(const StatusInfo& o) const {
     return clock == o.clock && connecting == o.connecting && stale == o.stale &&
-           staleText == o.staleText;
+           staleText == o.staleText && battery == o.battery &&
+           batteryPercent == o.batteryPercent && charging == o.charging;
   }
   bool operator!=(const StatusInfo& o) const { return !(*this == o); }
 };
 
 // Local clock, "connecting" until the Store has data, stale marker when the
-// last success is older than the Store's limit.
+// last success is older than the Store's limit, and the battery.
 StatusInfo status_info(const Store& store, int64_t now);
 
-// Top row of a screen: free text on the left; stale marker (amber dot and
-// "Updated N min ago") and local clock on the right, with a quiet dot while
-// the data is fresh.
+// The status row's right-hand group ends this far from the screen's right
+// edge on every screen, so the clock and the battery stay put when the tabs
+// change (the Live gear sits in the space on its screen).
+constexpr int32_t kStatusRightInset = 32;
+constexpr int32_t kStatusSide = 10;   // left margin of the left text
+constexpr int32_t kStatusTop = 4;
+constexpr int32_t kStatusRowHeight = 13;
+constexpr int32_t kStatusGap = 6;     // least room between the left text and the right group
+
+// Battery icon geometry (px): a 22 x 11 outline with a 1 px border and a
+// 2 x 5 terminal, four 3 x 7 segments inside with 2 px gaps.
+constexpr int32_t kBatteryBodyW = 22;
+constexpr int32_t kBatteryH = 11;
+constexpr int32_t kBatteryTipW = 2;
+constexpr int32_t kBatteryTipH = 5;
+constexpr int32_t kBatterySegW = 3;
+constexpr int32_t kBatterySegH = 7;
+constexpr int32_t kBatterySegGap = 2;
+constexpr int kBatterySegments = 4;
+constexpr int32_t kBoltW = 7;
+constexpr int32_t kBoltH = 11;
+
+// Top row of a screen: free text on the left; on the right, in one
+// right-aligned row: the stale marker (amber dot and "Updated N min ago"),
+// the local clock with a quiet dot while the data is fresh, then the battery
+// (percent text when low, charge bolt while charging, the icon). The left
+// text is shortened with "..." rather than run into the right group.
 struct StatusRow {
   lv_obj_t* left = nullptr;
+  lv_obj_t* right = nullptr;  // the right-hand group (fixed box, children right-aligned)
   lv_obj_t* clock = nullptr;
   lv_obj_t* staleDot = nullptr;
   lv_obj_t* staleLabel = nullptr;
   lv_obj_t* freshDot = nullptr;
+  lv_obj_t* batteryPercent = nullptr;  // "18%", only when low
+  lv_obj_t* batteryBolt = nullptr;     // drawn charge bolt, only while charging
+  lv_obj_t* battery = nullptr;         // the icon: body + terminal, hidden without a battery
+  lv_obj_t* batteryBody = nullptr;
+  lv_obj_t* batteryTip = nullptr;
+  lv_obj_t* batterySegments[kBatterySegments] = {nullptr, nullptr, nullptr, nullptr};
 };
 
-// Creates the row at the top of `parent` (10 px side margins, y = 4). The
-// stale and freshness markers start hidden.
+// Creates the row at the top of `parent` (left text at x = 10, right group
+// ending kStatusRightInset from the right edge, y = 4). The stale and
+// freshness markers and the battery start hidden.
 StatusRow status_row_create(lv_obj_t* parent);
 void status_row_apply(const StatusRow& row, const std::string& left, const StatusInfo& info);
+
+// The screen x where the right group's first visible item starts (brings
+// the layout up to date first). Screens use it to keep their own top-row
+// texts clear of it.
+int32_t status_row_right_start(const StatusRow& row);
+
+// Colour of the battery icon for a level (chalk, amber, warn; charging: the
+// segments in the charging green).
+lv_color_t battery_color(BatteryLevel level);
 
 }  // namespace widgets

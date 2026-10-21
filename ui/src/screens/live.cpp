@@ -51,7 +51,6 @@ const lv_font_t* const kNameFont = &bigshoulders_16;
 
 constexpr int32_t kGearSize = 32;     // tap target
 constexpr int32_t kGearIconTop = 2;   // glyph centred on the status row text
-constexpr int32_t kStatusRightGear = -32;  // status row's right edge with the gear
 
 enum class Mode { Connecting, NoMatches, Last, Next, Live };
 
@@ -453,7 +452,28 @@ void apply(LiveState* st, const View& v) {
   show(p.awayName, live);
   set_text(p.pillLabel, v.pill);
   if (live || last) set_score_font(p, score_font(v));
-  show(p.lastCaption, last);
+  // "Last result" shares the status row's line: centred when the right group
+  // (stale marker, clock, battery) leaves room, else in the left text's slot
+  // (empty for a last result), else it gives way.
+  bool captionFits = false;
+  if (last) {
+    const int32_t start = widgets::status_row_right_start(st->status);
+    for (const bool centred : {true, false}) {
+      if (centred) {
+        lv_obj_align(p.lastCaption, LV_ALIGN_TOP_MID, 0, kLastCaptionTop);
+      } else {
+        lv_obj_align(p.lastCaption, LV_ALIGN_TOP_LEFT, widgets::kStatusSide, kLastCaptionTop);
+      }
+      lv_obj_update_layout(p.lastCaption);
+      lv_area_t cap;
+      lv_obj_get_coords(p.lastCaption, &cap);
+      if (cap.x2 + widgets::kStatusGap < start) {
+        captionFits = true;
+        break;
+      }
+    }
+  }
+  show(p.lastCaption, captionFits);
   show(p.lastLine, last);
   show(p.lastWhen, last);
   set_text(p.lastOpponent, v.lastOpponent);
@@ -527,6 +547,7 @@ lv_obj_t* live_create(lv_obj_t* parent, Store& store, ImageProvider& images,
   p.statusClock = st->status.clock;
   p.staleDot = st->status.staleDot;
   p.staleLabel = st->status.staleLabel;
+  p.status = st->status;
 
   // Halos first, so they draw below the crests.
   p.homeHalo = halo(root, kCrestInset);
@@ -700,9 +721,7 @@ void live_set_on_settings(lv_obj_t* screen, std::function<void()> onSettings) {
   LiveState* st = state_of(screen);
   const bool on = static_cast<bool>(onSettings);
   st->onSettings = std::move(onSettings);
-  show(st->parts.gear, on);
-  // The clock and stale marker make room for the gear.
-  lv_obj_align(lv_obj_get_parent(st->status.clock), LV_ALIGN_TOP_RIGHT, on ? kStatusRightGear : -10, 4);
+  show(st->parts.gear, on);  // in the room the status row leaves on every screen
 }
 
 void live_refresh(lv_obj_t* screen, int64_t now) {

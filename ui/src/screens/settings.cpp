@@ -32,6 +32,7 @@ constexpr int32_t kStepButton = 28;
 constexpr int32_t kStepValueW = 54;
 constexpr int32_t kStepLineH = 30;
 constexpr int32_t kSliderExtraHit = 12;
+constexpr lv_opa_t kVoltageOpa = 160;  // the voltage a step quieter than the status
 
 enum Step { FromMinus, FromPlus, ToMinus, ToPlus, PctMinus, PctPlus };
 
@@ -372,6 +373,16 @@ void build(SettingsState* st, lv_obj_t* root) {
   lv_obj_set_style_text_align(p.about, LV_TEXT_ALIGN_CENTER, 0);
   lv_obj_set_style_pad_top(p.about, 6, 0);
   lv_label_set_text(p.about, (std::string(kAppName) + " " + kAppVersion).c_str());
+  // Battery: one centred line, the status then the voltage a step quieter.
+  p.batteryLine = plain(p.list);
+  lv_obj_set_size(p.batteryLine, LV_PCT(100), hanken_10.line_height);
+  lv_obj_set_flex_flow(p.batteryLine, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(p.batteryLine, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_END);
+  lv_obj_set_style_pad_column(p.batteryLine, 6, 0);
+  p.batteryStatus = label(p.batteryLine, &hanken_10, pal.dim);
+  p.batteryVoltage = label(p.batteryLine, &hanken_10, pal.dim);
+  lv_obj_set_style_text_opa(p.batteryVoltage, kVoltageOpa, 0);
+  lv_obj_add_flag(p.batteryLine, LV_OBJ_FLAG_HIDDEN);
   p.dataStatus = label(p.list, &hanken_10, pal.dim);
   lv_obj_set_width(p.dataStatus, LV_PCT(100));
   lv_label_set_long_mode(p.dataStatus, LV_LABEL_LONG_WRAP);
@@ -471,6 +482,22 @@ void settings_set_data_status(lv_obj_t* screen, const std::string& text, bool pr
   const lv_color_t color = problem ? theme().amber : theme().dim;
   if (lv_color_to_u32(lv_obj_get_style_text_color(l, 0)) != lv_color_to_u32(color)) {
     lv_obj_set_style_text_color(l, color, 0);
+  }
+}
+
+void settings_set_battery(lv_obj_t* screen, const PowerStatus& power) {
+  SettingsState* st = settings_state(screen);
+  if (st == nullptr) return;
+  const SettingsParts& p = st->parts;
+  show(p.batteryLine, true);
+  set_text(p.batteryStatus, battery_status_text(power));
+  const std::string volts = battery_voltage_text(power);
+  set_text(p.batteryVoltage, volts);
+  show(p.batteryVoltage, !volts.empty());
+  const bool low = power.present && !power.charging && power.percent <= battery::kLowPercent;
+  const lv_color_t color = low ? theme().amber : theme().dim;
+  if (lv_color_to_u32(lv_obj_get_style_text_color(p.batteryStatus, 0)) != lv_color_to_u32(color)) {
+    lv_obj_set_style_text_color(p.batteryStatus, color, 0);
   }
 }
 

@@ -228,40 +228,193 @@ StatusInfo status_info(const Store& store, int64_t now) {
     s.stale = store.stale(now);
     if (s.stale) s.staleText = stale_text(now - store.last_success());
   }
+  const PowerStatus& power = store.power();
+  s.battery = power.present;
+  if (power.present) {
+    s.batteryPercent = power.percent < 0 ? 0 : power.percent > 100 ? 100 : power.percent;
+    s.charging = power.charging;
+  }
   return s;
 }
+
+lv_color_t battery_color(BatteryLevel level) {
+  const Palette& pal = theme();
+  switch (level) {
+    case BatteryLevel::Low: return pal.amber;
+    case BatteryLevel::Critical: return pal.warn;
+    case BatteryLevel::Charging: return pal.charging;
+    case BatteryLevel::Normal: break;
+  }
+  return pal.chalk;
+}
+
+namespace {
+
+constexpr lv_opa_t kOutlineOpa = 190;  // the outline a little quieter than the charge
+
+// A lightning bolt in kBoltW x kBoltH, from two triangles meeting in the
+// middle (crisper than a 14 px symbol glyph squeezed into the 13 px row).
+void draw_bolt(lv_event_t* e) {
+  lv_obj_t* obj = static_cast<lv_obj_t*>(lv_event_get_target(e));
+  lv_layer_t* layer = lv_event_get_layer(e);
+  lv_area_t a;
+  lv_obj_get_coords(obj, &a);
+  lv_draw_triangle_dsc_t tri;
+  lv_draw_triangle_dsc_init(&tri);
+  tri.bg_color = theme().charging;
+  tri.bg_opa = LV_OPA_COVER;
+  // Upper stroke: from the top right down to the left of the waist.
+  tri.p[0].x = a.x1 + 5;
+  tri.p[0].y = a.y1;
+  tri.p[1].x = a.x1;
+  tri.p[1].y = a.y1 + 6;
+  tri.p[2].x = a.x1 + 4;
+  tri.p[2].y = a.y1 + 6;
+  lv_draw_triangle(layer, &tri);
+  // Lower stroke: from the right of the waist down to the bottom left.
+  tri.p[0].x = a.x1 + 3;
+  tri.p[0].y = a.y1 + 5;
+  tri.p[1].x = a.x1 + 7;
+  tri.p[1].y = a.y1 + 5;
+  tri.p[2].x = a.x1 + 2;
+  tri.p[2].y = a.y1 + 11;
+  lv_draw_triangle(layer, &tri);
+}
+
+void set_bg(lv_obj_t* o, lv_color_t c) {
+  if (lv_color_to_u32(lv_obj_get_style_bg_color(o, 0)) != lv_color_to_u32(c)) {
+    lv_obj_set_style_bg_color(o, c, 0);
+  }
+}
+
+void set_border(lv_obj_t* o, lv_color_t c) {
+  if (lv_color_to_u32(lv_obj_get_style_border_color(o, 0)) != lv_color_to_u32(c)) {
+    lv_obj_set_style_border_color(o, c, 0);
+  }
+}
+
+int32_t text_width(const char* text, const lv_font_t* font) {
+  lv_point_t size;
+  lv_text_get_size(&size, text, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+  return size.x;
+}
+
+}  // namespace
 
 StatusRow status_row_create(lv_obj_t* parent) {
   const Palette& pal = theme();
   StatusRow r;
   r.left = label(parent, &hanken_10, pal.dim);
-  lv_obj_set_pos(r.left, 10, 4);
+  lv_label_set_long_mode(r.left, LV_LABEL_LONG_DOT);
+  lv_obj_set_pos(r.left, kStatusSide, kStatusTop);
   // Fixed-size box with right-aligned children: a content-sized flex row does
   // not always re-measure when a label's text changes.
-  lv_obj_t* right = plain(parent);
-  lv_obj_set_size(right, 150, 13);
-  lv_obj_set_flex_flow(right, LV_FLEX_FLOW_ROW);
-  lv_obj_set_flex_align(right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-  lv_obj_set_style_pad_column(right, 4, 0);
-  lv_obj_align(right, LV_ALIGN_TOP_RIGHT, -10, 4);
-  r.staleDot = dot(right, 5, pal.amber);
-  r.staleLabel = label(right, &hanken_10, pal.amber);
-  lv_obj_set_style_pad_right(r.staleLabel, 3, 0);
-  r.clock = label(right, &hanken_10, pal.dim);
+  r.right = plain(parent);
+  lv_obj_set_size(r.right, 240 - kStatusSide - kStatusRightInset, kStatusRowHeight);
+  lv_obj_set_flex_flow(r.right, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(r.right, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(r.right, 4, 0);
+  lv_obj_align(r.right, LV_ALIGN_TOP_RIGHT, -kStatusRightInset, kStatusTop);
+  r.staleDot = dot(r.right, 5, pal.amber);
+  r.staleLabel = label(r.right, &hanken_10, pal.amber);
+  lv_obj_set_style_pad_right(r.staleLabel, 1, 0);
+  r.clock = label(r.right, &hanken_10, pal.dim);
   // The mockup's "09:42 ●": a quiet dot while data is fresh; when stale the
   // amber dot before the age takes its place.
-  r.freshDot = dot(right, 4, pal.dim);
-  for (lv_obj_t* o : {r.staleDot, r.staleLabel, r.freshDot}) lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+  r.freshDot = dot(r.right, 4, pal.dim);
+
+  // Battery: "18%" (when low), the bolt (while charging), the icon. The
+  // worst case (stale, low and charging) just fits the row: keep paddings tight.
+  r.batteryPercent = label(r.right, &hanken_10, pal.dim);
+  lv_obj_set_style_pad_left(r.batteryPercent, 2, 0);
+  r.batteryBolt = plain(r.right);
+  lv_obj_set_size(r.batteryBolt, kBoltW, kBoltH);
+  lv_obj_set_style_pad_left(r.batteryBolt, 0, 0);
+  lv_obj_add_event_cb(r.batteryBolt, draw_bolt, LV_EVENT_DRAW_MAIN, nullptr);
+  r.battery = plain(r.right);
+  lv_obj_set_size(r.battery, kBatteryBodyW + kBatteryTipW, kBatteryH);
+  r.batteryBody = plain(r.battery);
+  lv_obj_set_size(r.batteryBody, kBatteryBodyW, kBatteryH);
+  lv_obj_set_pos(r.batteryBody, 0, 0);
+  lv_obj_set_style_radius(r.batteryBody, 2, 0);
+  lv_obj_set_style_border_width(r.batteryBody, 1, 0);
+  lv_obj_set_style_border_color(r.batteryBody, pal.chalk, 0);
+  lv_obj_set_style_border_opa(r.batteryBody, kOutlineOpa, 0);
+  r.batteryTip = plain(r.battery);
+  lv_obj_set_size(r.batteryTip, kBatteryTipW, kBatteryTipH);
+  lv_obj_set_pos(r.batteryTip, kBatteryBodyW, (kBatteryH - kBatteryTipH) / 2);
+  lv_obj_set_style_bg_color(r.batteryTip, pal.chalk, 0);
+  lv_obj_set_style_bg_opa(r.batteryTip, kOutlineOpa, 0);
+  lv_obj_set_style_radius(r.batteryTip, 1, 0);
+  for (int i = 0; i < kBatterySegments; ++i) {
+    lv_obj_t* seg = plain(r.batteryBody);
+    lv_obj_set_size(seg, kBatterySegW, kBatterySegH);
+    // Positions are inside the 1 px border: 1 px of air, then segments.
+    lv_obj_set_pos(seg, 1 + i * (kBatterySegW + kBatterySegGap), 1);
+    lv_obj_set_style_bg_color(seg, pal.chalk, 0);
+    lv_obj_set_style_bg_opa(seg, LV_OPA_COVER, 0);
+    r.batterySegments[i] = seg;
+  }
+  for (lv_obj_t* o : {r.staleDot, r.staleLabel, r.freshDot, r.batteryPercent, r.batteryBolt, r.battery}) {
+    lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN);
+  }
   return r;
 }
 
 void status_row_apply(const StatusRow& row, const std::string& left, const StatusInfo& info) {
-  set_text(row.left, left);
   set_text(row.clock, info.clock);
   show(row.staleDot, info.stale);
   show(row.staleLabel, info.stale);
   show(row.freshDot, !info.stale && !info.connecting);
   set_text(row.staleLabel, info.staleText);
+
+  const PowerStatus power{info.battery, info.batteryPercent, info.charging, 0};
+  show(row.battery, info.battery);
+  show(row.batteryBolt, info.battery && info.charging);
+  const bool percent = battery_shows_percent(power);
+  show(row.batteryPercent, percent);
+  set_text(row.batteryPercent, percent ? std::to_string(info.batteryPercent) + "%" : std::string());
+  if (info.battery) {
+    const BatteryLevel level = battery_level(power);
+    const lv_color_t fill = battery_color(level);
+    // The outline takes the warning colour when low; otherwise it stays chalk.
+    const bool warning = level == BatteryLevel::Low || level == BatteryLevel::Critical;
+    const lv_color_t outline = warning ? fill : theme().chalk;
+    set_border(row.batteryBody, outline);
+    set_bg(row.batteryTip, outline);
+    const int filled = battery_segments(info.batteryPercent);
+    for (int i = 0; i < kBatterySegments; ++i) {
+      show(row.batterySegments[i], i < filled);
+      set_bg(row.batterySegments[i], fill);
+    }
+  }
+
+  // The left text gets what the right group leaves, shortened with "...".
+  set_text(row.left, left);
+  lv_area_t leftArea;
+  const int32_t start = status_row_right_start(row);  // also brings the layout up to date
+  lv_obj_get_coords(row.left, &leftArea);
+  int32_t room = start - kStatusGap - leftArea.x1;
+  if (room < 0) room = 0;
+  const int32_t want = text_width(left.c_str(), &hanken_10);
+  const int32_t width = want < room ? want : room;
+  if (lv_obj_get_style_width(row.left, 0) != width) lv_obj_set_width(row.left, width);
+}
+
+int32_t status_row_right_start(const StatusRow& row) {
+  lv_obj_update_layout(lv_obj_get_parent(row.right));
+  lv_area_t box;
+  lv_obj_get_coords(row.right, &box);
+  int32_t first = box.x2 + 1;
+  const uint32_t n = lv_obj_get_child_count(row.right);
+  for (uint32_t i = 0; i < n; ++i) {
+    lv_obj_t* c = lv_obj_get_child(row.right, static_cast<int32_t>(i));
+    if (lv_obj_has_flag(c, LV_OBJ_FLAG_HIDDEN)) continue;
+    lv_area_t a;
+    lv_obj_get_coords(c, &a);
+    if (a.x1 < first) first = a.x1;
+  }
+  return first;
 }
 
 }  // namespace widgets

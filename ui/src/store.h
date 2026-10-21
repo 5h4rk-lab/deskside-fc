@@ -12,6 +12,7 @@
 
 #include "data_source.h"
 #include "model.h"
+#include "power_service.h"
 
 class Store {
  public:
@@ -73,6 +74,11 @@ class Store {
   void set_tz_offset(int seconds) { tzOffset_ = seconds; }
   int tz_offset() const { return tzOffset_; }
 
+  // Battery state, as last read from the PowerService by app_refresh()
+  // (present = false until then, and on hosts without a battery).
+  void set_power(PowerStatus power) { power_ = power; }
+  const PowerStatus& power() const { return power_; }
+
  private:
   std::vector<MatchSummary> matches_;
   std::vector<MatchDetail> details_;  // oldest first, at most kDetailCacheSize
@@ -84,4 +90,5 @@ class Store {
   int failures_ = 0;
   FetchError error_ = FetchError::None;
   int tzOffset_ = 0;
+  PowerStatus power_;
 };
