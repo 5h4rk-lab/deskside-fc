@@ -63,10 +63,11 @@
 //                    the battery: P percent (0-100) on battery or charging, or
 //                    none (no battery: no icon, "No battery detected" in
 //                    Settings). Default: 78 percent on battery
-//   --battery-mv MV  a pretend ADC reading MV millivolts, fed once a second
-//                    through the real BatteryModel (smoothing, percent,
-//                    charging inferred from the trend); + and - in the window
-//                    raise or lower it by 50 mV (a charger plugged or pulled)
+//   --battery-mv MV  a pretend ADC reading MV millivolts (not with --battery),
+//                    fed once a second through the real BatteryModel
+//                    (smoothing, percent, charging inferred from a rise); + and
+//                    - in the window raise or lower it by 50 mV (a charger
+//                    plugged or pulled)
 //   --banner low|critical|none
 //                    with a snapshot: force the low-battery banner, or remove
 //                    one the battery state raised at start (to see the icon)
@@ -155,6 +156,7 @@ struct Options {
   std::string token;
   bool offlineTest = false;
   PowerStatus battery = MockPower().status();
+  bool batteryGiven = false;  // --battery was given
   int batteryMv = 0;  // --battery-mv: 0 is off
   std::string banner;  // --banner: "", low, critical or none
   int staleMin = 0;    // --stale-min
@@ -304,6 +306,7 @@ Options parse_args(int argc, char** argv) {
     } else if (std::strcmp(argv[i], "--offline-test") == 0) {
       o.offlineTest = true;
     } else if (std::strcmp(argv[i], "--battery") == 0 && hasValue) {
+      o.batteryGiven = true;
       if (!MockPower::parse(argv[++i], o.battery)) {
         std::fprintf(stderr, "invalid --battery '%s' (PERCENT, PERCENT,charging or none)\n", argv[i]);
         std::exit(2);
@@ -354,6 +357,10 @@ Options parse_args(int argc, char** argv) {
   }
   if (has_control_chars(o.token)) {
     std::fprintf(stderr, "invalid token: control characters are not allowed (check HELPER_TOKEN)\n");
+    std::exit(2);
+  }
+  if (o.batteryGiven && o.batteryMv > 0) {
+    std::fprintf(stderr, "--battery and --battery-mv cannot be used together (scripted or raw millivolts)\n");
     std::exit(2);
   }
   if (!o.helper.empty() && o.offlineTest) {

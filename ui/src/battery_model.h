@@ -22,32 +22,46 @@ constexpr int kAbsentAboveMv = 4500;
 // Exponential smoothing per one-second sample; a longer gap weighs the new
 // sample as that many samples would: alpha = 1 - (1 - kAlpha)^seconds.
 constexpr double kAlpha = 0.2;
-// A gap longer than this (sleep, or the clock jumping at NTP sync) restarts
-// the model from the next sample, as does time going backwards.
+// Timestamps: a sample in the same second as the last one, or up to
+// kDuplicateBackSeconds before it (1 Hz jitter, SNTP slewing, a host sampling
+// faster than 1 Hz), is ignored and the model keeps its state. A jump further
+// back, or a gap longer than kGapResetSeconds (sleep, the first NTP sync),
+// restarts the model from that sample.
+constexpr int64_t kDuplicateBackSeconds = 5;
 constexpr int64_t kGapResetSeconds = 300;
 // Trend: the average smoothed voltage of the last 20 s minus that of the 20 s
 // kTrendWindowSeconds earlier, in mV; needs kTrendMinSpanSeconds of history.
 constexpr int64_t kTrendWindowSeconds = 60;
 constexpr int64_t kTrendMinSpanSeconds = 30;
-// Charging starts when the trend rises by at least kRisingTrendMv while the
-// smoothed voltage is at least kRisingMinMv (the step a charger causes), or
-// when the pack sits at kFullPackMv or more and is not falling (a full pack on
-// the charger holds about 4.2 V). A trend at or below kFallingTrendMv counts
-// as falling.
+// Charging is inferred only from evidence of a rise: the trend at least
+// kRisingTrendMv for kRisingConfirmSeconds in a row (noise makes short-lived
+// rises; 40 s gave no false start in 1000 simulated hours of +-25 mV noise,
+// and a charger is still recognised within about a minute) with the smoothed
+// voltage at least kRisingMinMv (low enough to
+// recognise a deeply discharged pack on the charger). After charging ends a
+// new start needs a fresh rise (the trend must first drop below the mark).
 constexpr int kRisingTrendMv = 15;
-constexpr int kRisingMinMv = 3900;
-constexpr int kFullPackMv = 4180;
-constexpr int kFallingTrendMv = -8;
-// The rise must last this long (noise makes short-lived ones).
-constexpr int64_t kRisingConfirmSeconds = 15;
-// Once charging it stays so for at least kChargingHoldSeconds after the
-// condition last held, and afterwards while the voltage keeps rising over
-// kStallWindowSeconds (or the pack is full). It ends at once when the voltage
-// falls kChargingDropMv below its peak since charging began (unplugging
+constexpr int kRisingMinMv = 3500;
+constexpr int64_t kRisingConfirmSeconds = 40;
+// Once inferred, charging lasts while the voltage (its 20 s average, steadier
+// than single readings) keeps making new highs: a
+// constant-current charge climbs a few mV a minute, so it must exceed its
+// last high by kPeakStepMv within every kStallSeconds (counted from the
+// start, then from each new high). Without that it has stalled: a load easing
+// off rather than a charger, or the charger has finished. It ends at once on a
+// fall of kChargingDropMv below the highest voltage since it began (unplugging
 // removes the charge current's rise across the cell's resistance).
-constexpr int64_t kChargingHoldSeconds = 20;
+constexpr int kPeakStepMv = 3;
+constexpr int64_t kStallSeconds = 150;
 constexpr int kChargingDropMv = 30;
-constexpr int64_t kStallWindowSeconds = 600;
+// The percent only follows the voltage up once the inferred charge has risen
+// kConfirmRiseMv above where it started, so a false start that stalls never
+// lifts it.
+constexpr int kConfirmRiseMv = 6;
+// At or above this a pack that is not charging reads 100 % and "Full". Voltage
+// alone cannot tell a full pack on USB from one just unplugged, so a flat
+// voltage up here is never taken for charging.
+constexpr int kFullPackMv = 4180;
 
 // --- Display levels ---------------------------------------------------------
 constexpr int kLowPercent = 20;       // amber icon and the percent text
@@ -78,8 +92,11 @@ int lipo_percent(int millivolts);
 // median-of-3 against single spikes, exponential smoothing, a percent that
 // only moves one way per direction (never up while discharging, never down
 // while charging; it follows the voltage again when the direction changes),
-// and charging inferred from the voltage (see the battery:: constants) unless
-// the firmware knows better (set_external_charging).
+// and charging inferred from the voltage (see the battery:: constants).
+//
+// Firmware: the voltage inference is a fallback. Whenever the firmware has
+// real information (USB VBUS present, the charger's CHRG/STDBY pin), it must
+// pass it through set_external_charging(); that overrides the inference.
 class BatteryModel {
  public:
   void add_sample(int millivolts, int64_t epochSeconds);
@@ -96,7 +113,7 @@ class BatteryModel {
   };
   void reset_tracking();
   std::optional<double> trend(int64_t now) const;
-  std::optional<double> long_trend(int64_t now) const;
+  double recent_mean(int64_t now) const;
   bool infer_charging(int64_t now);
   int median() const;
 
@@ -109,15 +126,17 @@ class BatteryModel {
   bool smoothing_ = false;  // smoothed_ holds a value
   double smoothed_ = 0;
   std::deque<Point> history_;  // smoothed values of the last trend window
-  std::deque<Point> coarse_;   // one smoothed value a minute, kStallWindowSeconds back
-  bool inferred_ = false;      // charging, as inferred
-  int64_t condAt_ = 0;         // last time the charging condition held
   bool hasRisingSince_ = false;
   int64_t risingSince_ = 0;    // the rising trend has held since then
-  double peak_ = 0;            // highest smoothed voltage since charging began
+  bool armed_ = true;          // a rise may start charging (false until the last one is over)
+  bool inferred_ = false;      // charging, as inferred
+  double startMv_ = 0;         // smoothed voltage when it began
+  double highest_ = 0;         // highest smoothed voltage since it began
+  double peakRef_ = 0;         // the last high that counted (kPeakStepMv steps)
+  int64_t peakAt_ = 0;         // when it was reached
+  bool confirmed_ = false;     // risen kConfirmRiseMv since it began
   bool hasPercent_ = false;
   int percent_ = 0;
-  bool percentCharging_ = false;  // direction the percent was last held in
 };
 
 // The low-battery banner, as a pure state machine fed with the status about
@@ -153,8 +172,9 @@ int battery_segments(int percent);
 // The percent text beside the icon ("18%"), only at kLowPercent or below.
 bool battery_shows_percent(const PowerStatus& s);
 
-// Settings: "78% · On battery", "55% · Charging", "100% · Fully charged",
-// "Low: 18% · On battery", "No battery detected".
+// Settings: "78% · On battery", "55% · Charging", "100% · Fully charged"
+// (charging at kFullPercent or more), "100% · Full" (not charging at
+// kFullPackMv or more), "Low: 18% · On battery", "No battery detected".
 std::string battery_status_text(const PowerStatus& s);
 // "3.92 V" (two decimals, rounded); empty without a battery.
 std::string battery_voltage_text(const PowerStatus& s);

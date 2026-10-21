@@ -260,7 +260,8 @@ TEST_CASE("battery icon: low is amber with the percent beside it") {
   CHECK(u32(lv_obj_get_style_border_color(r.batteryBody, 0)) == u32(theme().amber));
   REQUIRE(visible(r.batteryPercent));
   CHECK(text(r.batteryPercent) == "18%");
-  CHECK(u32(lv_obj_get_style_text_color(r.batteryPercent, 0)) == u32(theme().dim));
+  // Amber, not dim: dim is lost on the team colours behind the Live row.
+  CHECK(u32(lv_obj_get_style_text_color(r.batteryPercent, 0)) == u32(theme().amber));
   CHECK(lv_obj_get_style_text_font(r.batteryPercent, 0) == &hanken_10);
   CHECK(coords(r.batteryPercent).x2 < coords(r.battery).x1);
   h.power(on_battery(21));
@@ -277,6 +278,7 @@ TEST_CASE("battery icon: critical is the warn colour") {
   CHECK(u32(lv_obj_get_style_bg_color(r.batterySegments[0], 0)) == u32(theme().warn));
   CHECK(u32(lv_obj_get_style_border_color(r.batteryBody, 0)) == u32(theme().warn));
   CHECK(text(r.batteryPercent) == "8%");
+  CHECK(u32(lv_obj_get_style_text_color(r.batteryPercent, 0)) == u32(theme().warn));
 }
 
 TEST_CASE("battery icon: charging is green segments and a bolt beside the icon") {
@@ -293,6 +295,7 @@ TEST_CASE("battery icon: charging is green segments and a bolt beside the icon")
   h.power(charging(8));  // low but charging: green, with the percent
   CHECK(u32(lv_obj_get_style_bg_color(r.batterySegments[0], 0)) == u32(theme().charging));
   CHECK(visible(r.batteryPercent));
+  CHECK(u32(lv_obj_get_style_text_color(r.batteryPercent, 0)) == u32(theme().amber));
   CHECK_FALSE(overlap(coords(r.batteryBolt), coords(r.batteryPercent)));
 }
 
@@ -329,6 +332,50 @@ TEST_CASE("battery icon: pixels are crisp: segments filled, gaps and air empty, 
     for (int32_t x = bolt.x1; x <= bolt.x2; ++x) green_px += close_to(pixel_at(scr, x, y), green) ? 1 : 0;
   }
   CHECK(green_px >= 12);
+}
+
+TEST_CASE("battery icon: the bolt stays inside its 7 x 11 box") {
+  init_test_display();
+  theme_reset();
+  // Drawn unclipped into a larger plain object, with its box at (8, 6): any
+  // pixel outside the box would show.
+  lv_obj_t* scr = lv_screen_active();
+  lv_obj_set_style_bg_color(scr, lv_color_black(), 0);
+  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
+  lv_obj_t* canvas = widgets::plain(scr);
+  lv_obj_set_pos(canvas, 20, 20);
+  lv_obj_set_size(canvas, widgets::kBoltW + 16, widgets::kBoltH + 12);
+  lv_obj_add_event_cb(
+      canvas,
+      [](lv_event_t* e) {
+        lv_area_t a;
+        lv_obj_get_coords(static_cast<lv_obj_t*>(lv_event_get_target(e)), &a);
+        widgets::draw_bolt_at(lv_event_get_layer(e), a.x1 + 8, a.y1 + 6);
+      },
+      LV_EVENT_DRAW_MAIN, nullptr);
+  lv_obj_update_layout(scr);
+  const uint32_t black = u32(lv_color_black());
+  int outside = 0;
+  int inside = 0;
+  int topRow = 0;
+  int bottomRow = 0;
+  for (int32_t y = 20; y < 20 + widgets::kBoltH + 12; ++y) {
+    for (int32_t x = 20; x < 20 + widgets::kBoltW + 16; ++x) {
+      const bool lit = u32(pixel_at(scr, x, y)) != black;
+      const int32_t bx = x - 28;
+      const int32_t by = y - 26;
+      const bool inBox = bx >= 0 && bx < widgets::kBoltW && by >= 0 && by < widgets::kBoltH;
+      if (lit && !inBox) ++outside;
+      if (lit && inBox) ++inside;
+      if (lit && by == 0) ++topRow;
+      if (lit && by == widgets::kBoltH - 1) ++bottomRow;
+    }
+  }
+  CHECK(outside == 0);
+  CHECK(inside >= 12);
+  CHECK(topRow > 0);     // the tips reach the box's edges: nothing cut off
+  CHECK(bottomRow > 0);
+  deinit_test_display();
 }
 
 TEST_CASE("battery icon: repeated refreshes reuse the same objects") {
@@ -561,6 +608,7 @@ TEST_CASE("settings: the battery line above the data line, in every state") {
       {charging(55, 4010), "55% \xC2\xB7 Charging", "4.01 V"},
       {charging(100, 4200), "100% \xC2\xB7 Fully charged", "4.20 V"},
       {on_battery(18, 3770), "Low: 18% \xC2\xB7 On battery", "3.77 V"},
+      {on_battery(100, 4200), "100% \xC2\xB7 Full", "4.20 V"},
       {PowerStatus{}, "No battery detected", ""},
   };
   int64_t t = kNow;

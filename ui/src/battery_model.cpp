@@ -22,7 +22,6 @@ constexpr CurvePoint kCurve[] = {
 constexpr int kCurveSize = static_cast<int>(sizeof(kCurve) / sizeof(kCurve[0]));
 
 constexpr int64_t kRecentSeconds = 20;  // the trend compares 20 s averages
-constexpr int64_t kCoarseStepSeconds = 60;
 
 int round_div(int num, int den) { return (num * 2 + den) / (den * 2); }  // num, den > 0
 
@@ -54,10 +53,10 @@ int BatteryModel::median() const {
 void BatteryModel::reset_tracking() {
   smoothing_ = false;
   history_.clear();
-  coarse_.clear();
-  inferred_ = false;
-  peak_ = 0;
   hasRisingSince_ = false;
+  armed_ = true;
+  inferred_ = false;
+  confirmed_ = false;
   hasPercent_ = false;
 }
 
@@ -84,51 +83,72 @@ std::optional<double> BatteryModel::trend(int64_t now) const {
   return newSum / newN - oldSum / oldN;
 }
 
-// The smoothed voltage now minus about kStallWindowSeconds ago.
-std::optional<double> BatteryModel::long_trend(int64_t now) const {
-  std::optional<double> then;
-  for (const Point& p : coarse_) {
-    if (p.t <= now - kStallWindowSeconds) then = p.mv;
+// Mean of the smoothed voltage over the last kRecentSeconds: steadier than
+// the latest value, for judging new highs.
+double BatteryModel::recent_mean(int64_t now) const {
+  double sum = 0;
+  int n = 0;
+  for (const Point& p : history_) {
+    if (p.t > now - kRecentSeconds) {
+      sum += p.mv;
+      ++n;
+    }
   }
-  if (!then) return std::nullopt;
-  return smoothed_ - *then;
+  return n > 0 ? sum / n : smoothed_;
 }
 
 bool BatteryModel::infer_charging(int64_t now) {
   const std::optional<double> tr = trend(now);
-  const bool falling = tr && *tr <= kFallingTrendMv;
   const bool risingNow = tr && *tr >= kRisingTrendMv && smoothed_ >= kRisingMinMv;
   if (!risingNow) {
     hasRisingSince_ = false;
+    armed_ = true;  // the last rise is over: the next one may start charging
   } else if (!hasRisingSince_) {
     hasRisingSince_ = true;
     risingSince_ = now;
   }
   // Noise makes short-lived rises; a charger's rise lasts.
   const bool rising = risingNow && now - risingSince_ >= kRisingConfirmSeconds;
-  const bool full = smoothed_ >= kFullPackMv && !falling;
-  if (inferred_ && smoothed_ <= peak_ - kChargingDropMv) {
-    // Unplugged: forget the climb that led here, or it would start again.
-    inferred_ = false;
-    peak_ = 0;
-    history_.clear();
-    return false;
-  }
-  if (rising || full) {
-    if (!inferred_) peak_ = smoothed_;
+  const double level = recent_mean(now);
+
+  if (inferred_) {
+    highest_ = std::max(highest_, level);
+    if (level >= peakRef_ + kPeakStepMv) {  // still climbing
+      peakRef_ = level;
+      peakAt_ = now;
+    }
+    if (level >= startMv_ + kConfirmRiseMv) confirmed_ = true;
+    const bool unplugged = smoothed_ <= highest_ - kChargingDropMv;
+    const bool stalled = now - peakAt_ >= kStallSeconds;
+    if (unplugged || stalled) {
+      inferred_ = false;
+      confirmed_ = false;
+      armed_ = !risingNow;  // a new start needs a fresh rise
+    }
+  } else if (rising && armed_) {
+    // Measured from the top of the recent readings, so the tail of the rise
+    // that started it (or a noise peak) is not taken for further climbing.
+    double top = smoothed_;
+    for (const Point& p : history_) {
+      if (p.t > now - kRecentSeconds) top = std::max(top, p.mv);
+    }
     inferred_ = true;
-    condAt_ = now;
-  } else if (inferred_ && now - condAt_ >= kChargingHoldSeconds) {
-    const std::optional<double> lt = long_trend(now);
-    if (lt && *lt <= 0) inferred_ = false;  // stalled: it was not a charger
+    confirmed_ = false;
+    armed_ = false;
+    startMv_ = top;
+    highest_ = top;
+    peakRef_ = top;
+    peakAt_ = now;
   }
-  if (inferred_) peak_ = std::max(peak_, smoothed_);
   return inferred_;
 }
 
 void BatteryModel::add_sample(int millivolts, int64_t now) {
   const int64_t dt = hasLast_ ? now - lastT_ : 1;
-  if (hasLast_ && (dt <= 0 || dt > kGapResetSeconds)) {
+  if (hasLast_ && dt <= 0 && dt >= -kDuplicateBackSeconds) {
+    return;  // the same second again, or jitter: keep everything as it is
+  }
+  if (hasLast_ && (dt < 0 || dt > kGapResetSeconds)) {
     // Asleep, or the clock jumped: start again from this reading.
     rawCount_ = 0;
     reset_tracking();
@@ -163,25 +183,28 @@ void BatteryModel::add_sample(int millivolts, int64_t now) {
   while (!history_.empty() && history_.front().t < now - kTrendWindowSeconds - kRecentSeconds) {
     history_.pop_front();
   }
-  if (coarse_.empty() || now - coarse_.back().t >= kCoarseStepSeconds) {
-    coarse_.push_back(Point{now, smoothed_});
-  }
-  while (coarse_.size() > 2 && coarse_[1].t <= now - kStallWindowSeconds) coarse_.pop_front();
 
   const bool inferred = infer_charging(now);
   const bool charging = external_.value_or(inferred);
+  // The percent follows a charge up only once it is certain: a real charger
+  // signal, or an inferred charge that has kept rising.
+  const bool percentCharging = external_ ? *external_ : inferred && confirmed_;
 
   const int rounded = static_cast<int>(lround(smoothed_));
-  const int raw = lipo_percent(rounded);
-  if (!hasPercent_ || charging != percentCharging_) {
-    percent_ = raw;  // first reading or a new direction: follow the voltage
-  } else if (charging) {
-    percent_ = std::max(percent_, raw);
+  const bool full = !charging && rounded >= kFullPackMv;
+  const int raw = full ? 100 : lipo_percent(rounded);
+  if (!hasPercent_) {
+    percent_ = raw;
+  } else if (percentCharging) {
+    // Never down while charging; up only as far as the steadier 20 s average
+    // allows, so a noise peak just before an unplug is not kept.
+    const double steady = std::min(smoothed_, recent_mean(now));
+    const int up = full ? 100 : lipo_percent(static_cast<int>(lround(steady)));
+    percent_ = std::max(percent_, up);
   } else {
-    percent_ = std::min(percent_, raw);
+    percent_ = std::min(percent_, raw);  // never up while discharging
   }
   hasPercent_ = true;
-  percentCharging_ = charging;
 
   status_.present = true;
   status_.percent = percent_;
@@ -237,6 +260,7 @@ std::string battery_status_text(const PowerStatus& s) {
   const std::string pct = std::to_string(s.percent) + "%";
   const char* dot = " \xC2\xB7 ";
   if (s.charging) return pct + dot + (s.percent >= kFullPercent ? "Fully charged" : "Charging");
+  if (s.millivolts >= kFullPackMv) return pct + dot + "Full";
   if (s.percent <= kLowPercent) return "Low: " + pct + dot + "On battery";
   return pct + dot + "On battery";
 }

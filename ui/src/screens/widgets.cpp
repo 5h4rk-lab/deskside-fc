@@ -256,29 +256,9 @@ constexpr lv_opa_t kOutlineOpa = 190;  // the outline a little quieter than the 
 // middle (crisper than a 14 px symbol glyph squeezed into the 13 px row).
 void draw_bolt(lv_event_t* e) {
   lv_obj_t* obj = static_cast<lv_obj_t*>(lv_event_get_target(e));
-  lv_layer_t* layer = lv_event_get_layer(e);
   lv_area_t a;
   lv_obj_get_coords(obj, &a);
-  lv_draw_triangle_dsc_t tri;
-  lv_draw_triangle_dsc_init(&tri);
-  tri.bg_color = theme().charging;
-  tri.bg_opa = LV_OPA_COVER;
-  // Upper stroke: from the top right down to the left of the waist.
-  tri.p[0].x = a.x1 + 5;
-  tri.p[0].y = a.y1;
-  tri.p[1].x = a.x1;
-  tri.p[1].y = a.y1 + 6;
-  tri.p[2].x = a.x1 + 4;
-  tri.p[2].y = a.y1 + 6;
-  lv_draw_triangle(layer, &tri);
-  // Lower stroke: from the right of the waist down to the bottom left.
-  tri.p[0].x = a.x1 + 3;
-  tri.p[0].y = a.y1 + 5;
-  tri.p[1].x = a.x1 + 7;
-  tri.p[1].y = a.y1 + 5;
-  tri.p[2].x = a.x1 + 2;
-  tri.p[2].y = a.y1 + 11;
-  lv_draw_triangle(layer, &tri);
+  draw_bolt_at(lv_event_get_layer(e), a.x1, a.y1);
 }
 
 void set_bg(lv_obj_t* o, lv_color_t c) {
@@ -300,6 +280,22 @@ int32_t text_width(const char* text, const lv_font_t* font) {
 }
 
 }  // namespace
+
+void draw_bolt_at(lv_layer_t* layer, int32_t x, int32_t y) {
+  lv_draw_triangle_dsc_t tri;
+  lv_draw_triangle_dsc_init(&tri);
+  tri.bg_color = theme().charging;
+  tri.bg_opa = LV_OPA_COVER;
+  // Upper stroke from the top right to the waist, lower stroke from the
+  // waist to the bottom left.
+  for (int k = 0; k < 2; ++k) {
+    for (int i = 0; i < 3; ++i) {
+      tri.p[i].x = x + kBoltPoints[k * 3 + i].x;
+      tri.p[i].y = y + kBoltPoints[k * 3 + i].y;
+    }
+    lv_draw_triangle(layer, &tri);
+  }
+}
 
 StatusRow status_row_create(lv_obj_t* parent) {
   const Palette& pal = theme();
@@ -376,6 +372,12 @@ void status_row_apply(const StatusRow& row, const std::string& left, const Statu
   set_text(row.batteryPercent, percent ? std::to_string(info.batteryPercent) + "%" : std::string());
   if (info.battery) {
     const BatteryLevel level = battery_level(power);
+    // The percent text (shown only when low): amber, the warn colour when
+    // critical; dim would be lost on the Live team colours.
+    const lv_color_t textColour = level == BatteryLevel::Critical ? theme().warn : theme().amber;
+    if (lv_color_to_u32(lv_obj_get_style_text_color(row.batteryPercent, 0)) != lv_color_to_u32(textColour)) {
+      lv_obj_set_style_text_color(row.batteryPercent, textColour, 0);
+    }
     const lv_color_t fill = battery_color(level);
     // The outline takes the warning colour when low; otherwise it stays chalk.
     const bool warning = level == BatteryLevel::Low || level == BatteryLevel::Critical;

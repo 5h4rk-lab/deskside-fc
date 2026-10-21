@@ -119,6 +119,17 @@ constexpr int32_t kBatterySegGap = 2;
 constexpr int kBatterySegments = 4;
 constexpr int32_t kBoltW = 7;
 constexpr int32_t kBoltH = 11;
+// The bolt's two triangles (upper stroke, lower stroke) as pixel-corner
+// coordinates of the box: LVGL fills a triangle up to, not past, its
+// vertices, so x = kBoltW / y = kBoltH is the box's right / bottom edge and
+// every lit pixel stays inside 0..kBoltW-1 x 0..kBoltH-1 (tested unclipped).
+struct BoltPoint {
+  int32_t x;
+  int32_t y;
+};
+constexpr BoltPoint kBoltPoints[6] = {{5, 0}, {0, 6}, {4, 6}, {3, 5}, {7, 5}, {2, 11}};
+// Draws the bolt with its box's top left at (x, y), in the charging green.
+void draw_bolt_at(lv_layer_t* layer, int32_t x, int32_t y);
 
 // Top row of a screen: free text on the left; on the right, in one
 // right-aligned row: the stale marker (amber dot and "Updated N min ago"),
