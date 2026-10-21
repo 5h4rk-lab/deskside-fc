@@ -95,3 +95,12 @@ struct LiveParts {
 
 // Parts of a screen made by live_create(), or nullptr for any other object.
 const LiveParts* live_parts(lv_obj_t* screen);
+
+// True while the screen's split background is drawn from a bitmap painted once
+// per colour change (it is, whenever the split shows and memory allowed; false
+// means the same picture is painted live, which is slower). For tests.
+bool live_background_cached(lv_obj_t* screen);
+
+// Turns the background bitmap off (or on again) for screens updated from now
+// on, so a test can compare it with the live painting. On by default.
+void live_set_background_cache_enabled(bool enabled);

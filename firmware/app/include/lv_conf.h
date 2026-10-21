@@ -55,8 +55,11 @@
 #define LV_USE_LODEPNG 1
 #define LV_USE_TJPGD 1
 
-/* The simulator's snapshot helper is not needed on the device. */
-#define LV_USE_SNAPSHOT 0
+/* [FW] Canvas: the Live screen paints its background into a bitmap once
+ * (ui/src/screens/live.cpp); snapshot: the goal celebration bakes its
+ * rotated stamp into a bitmap (ui/src/screens/goal.cpp). */
+#define LV_USE_CANVAS 1
+#define LV_USE_SNAPSHOT 1
 
 /* [FW] Radial gradients: the Live screen's vignette over the team colours. */
 #define LV_USE_DRAW_SW_COMPLEX_GRADIENTS 1

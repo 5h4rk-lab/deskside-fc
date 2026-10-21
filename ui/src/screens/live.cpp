@@ -108,6 +108,13 @@ struct LiveState {
   bool splitVisible = false;
   lv_color_t splitHome{};
   lv_color_t splitAway{};
+  // The split, vignette and fade painted once into a bitmap (see rebuild_bg_cache):
+  // the radial gradient alone costs about 45 ms per full repaint on the
+  // device, and every swipe between tabs repaints this screen.
+  lv_draw_buf_t* bgCache = nullptr;
+  lv_color_t cacheHome{};
+  lv_color_t cacheAway{};
+  lv_color_t cacheTurf{};
 };
 
 // ---------------------------------------------------------------- helpers
@@ -197,18 +204,10 @@ void pulse_exec(void* obj, int32_t v) {
 
 // Diagonal split plus the mockup's .live-shade: a vignette around the score
 // and a fade into the turf colour towards the bottom.
-void draw_background(lv_event_t* e) {
-  auto* st = static_cast<LiveState*>(lv_event_get_user_data(e));
-  if (!st->splitVisible) return;
-  lv_obj_t* obj = static_cast<lv_obj_t*>(lv_event_get_target(e));
-  lv_layer_t* layer = lv_event_get_layer(e);
-  lv_area_t a;
-  lv_obj_get_coords(obj, &a);
-  const lv_color_t turf = theme().turf;
-
+void paint_background(lv_layer_t* layer, const lv_area_t& a, lv_color_t home, lv_color_t away, lv_color_t turf) {
   lv_draw_rect_dsc_t rect;
   lv_draw_rect_dsc_init(&rect);
-  rect.bg_color = mix(turf, st->splitHome, kTeamOpa);
+  rect.bg_color = mix(turf, home, kTeamOpa);
   rect.bg_opa = LV_OPA_COVER;
   lv_draw_rect(layer, &rect, &a);
 
@@ -220,7 +219,7 @@ void draw_background(lv_event_t* e) {
   constexpr int32_t kFar = 2000;
   lv_draw_triangle_dsc_t tri;
   lv_draw_triangle_dsc_init(&tri);
-  tri.bg_color = mix(turf, st->splitAway, kTeamOpa);
+  tri.bg_color = mix(turf, away, kTeamOpa);
   tri.bg_opa = LV_OPA_COVER;
   tri.p[0].x = line_x(-kFar);
   tri.p[0].y = a.y1 - kFar;
@@ -277,6 +276,69 @@ void draw_background(lv_event_t* e) {
   if (rest.y1 <= rest.y2) lv_draw_rect(layer, &solid, &rest);
 }
 
+constexpr uint32_t kMaxBgCacheBytes = 200 * 1024;  // one full tab: 240 x 276 x 2 = 132 KB
+bool g_bgCacheEnabled = true;
+
+void free_bg_cache(LiveState* st) {
+  if (st->bgCache != nullptr) lv_draw_buf_destroy(st->bgCache);
+  st->bgCache = nullptr;
+}
+
+// Paints the background into a bitmap, once per colour change. Out of memory
+// leaves no bitmap: draw_background() then paints it live, as before (slower,
+// identical picture). Called from update code, never from a draw event.
+void rebuild_bg_cache(LiveState* st) {
+  free_bg_cache(st);
+  if (!st->splitVisible || !g_bgCacheEnabled) return;
+  lv_obj_t* bg = st->parts.background;
+  lv_obj_update_layout(bg);
+  const int32_t w = lv_obj_get_width(bg);
+  const int32_t h = lv_obj_get_height(bg);
+  if (w <= 0 || h <= 0 || static_cast<uint32_t>(w) * static_cast<uint32_t>(h) * 2 > kMaxBgCacheBytes) return;
+  lv_draw_buf_t* buf = lv_draw_buf_create(static_cast<uint32_t>(w), static_cast<uint32_t>(h),
+                                          LV_COLOR_FORMAT_RGB565, LV_STRIDE_AUTO);
+  if (buf == nullptr) return;
+  lv_obj_t* canvas = lv_canvas_create(bg);
+  if (canvas == nullptr) {
+    lv_draw_buf_destroy(buf);
+    return;
+  }
+  lv_obj_add_flag(canvas, LV_OBJ_FLAG_HIDDEN);
+  lv_canvas_set_draw_buf(canvas, buf);
+  lv_layer_t layer;
+  lv_canvas_init_layer(canvas, &layer);
+  const lv_area_t area = {0, 0, w - 1, h - 1};
+  const lv_color_t turf = theme().turf;
+  paint_background(&layer, area, st->splitHome, st->splitAway, turf);
+  lv_canvas_finish_layer(canvas, &layer);
+  lv_obj_delete(canvas);
+  st->bgCache = buf;
+  st->cacheHome = st->splitHome;
+  st->cacheAway = st->splitAway;
+  st->cacheTurf = turf;
+}
+
+void draw_background(lv_event_t* e) {
+  auto* st = static_cast<LiveState*>(lv_event_get_user_data(e));
+  if (!st->splitVisible) return;
+  lv_obj_t* obj = static_cast<lv_obj_t*>(lv_event_get_target(e));
+  lv_layer_t* layer = lv_event_get_layer(e);
+  lv_area_t a;
+  lv_obj_get_coords(obj, &a);
+  const lv_color_t turf = theme().turf;
+  if (st->bgCache != nullptr && st->bgCache->header.w == static_cast<uint32_t>(lv_area_get_width(&a)) &&
+      st->bgCache->header.h == static_cast<uint32_t>(lv_area_get_height(&a)) &&
+      lv_color_eq(st->cacheHome, st->splitHome) && lv_color_eq(st->cacheAway, st->splitAway) &&
+      lv_color_eq(st->cacheTurf, turf)) {
+    lv_draw_image_dsc_t img;
+    lv_draw_image_dsc_init(&img);
+    img.src = st->bgCache;
+    lv_draw_image(layer, &img, &a);
+    return;
+  }
+  paint_background(layer, a, st->splitHome, st->splitAway, turf);
+}
+
 void on_score_clicked(lv_event_t* e) {
   auto* st = static_cast<LiveState*>(lv_event_get_user_data(e));
   const bool opens = st->shown.mode == Mode::Live || st->shown.mode == Mode::Last;
@@ -289,7 +351,11 @@ void on_gear_clicked(lv_event_t* e) {
   if (f) f();
 }
 
-void on_delete(lv_event_t* e) { delete static_cast<LiveState*>(lv_event_get_user_data(e)); }
+void on_delete(lv_event_t* e) {
+  auto* st = static_cast<LiveState*>(lv_event_get_user_data(e));
+  free_bg_cache(st);
+  delete st;
+}
 
 void set_score_font(LiveParts& p, const lv_font_t* font) {
   if (lv_obj_get_style_text_font(p.scoreHome, 0) == font) return;
@@ -421,6 +487,7 @@ void apply(LiveState* st, const View& v) {
     const auto colors = live_background_colors(v.homeColor, v.awayColor);
     st->splitHome = colors.first;
     st->splitAway = colors.second;
+    rebuild_bg_cache(st);
     lv_obj_invalidate(p.background);
   }
 
@@ -732,6 +799,13 @@ void live_refresh(lv_obj_t* screen, int64_t now) {
   const View v = compute_view(*st->store, now);
   if (st->everApplied && v == st->shown) return;
   apply(st, v);
+}
+
+void live_set_background_cache_enabled(bool enabled) { g_bgCacheEnabled = enabled; }
+
+bool live_background_cached(lv_obj_t* screen) {
+  if (live_parts(screen) == nullptr) return false;
+  return state_of(screen)->bgCache != nullptr;
 }
 
 const LiveParts* live_parts(lv_obj_t* screen) {

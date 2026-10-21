@@ -189,6 +189,54 @@ TEST_CASE("live match: split background in home and away colours") {
   CHECK(right.blue > right.red + 30);
 }
 
+TEST_CASE("live match: the split background is painted once into a bitmap and follows colour changes") {
+  Fixture f;
+  CHECK_FALSE(live_background_cached(f.live));  // nothing to split yet
+  f.store.set_matches({live_match()}, kNow);
+  f.refresh();
+  CHECK(live_background_cached(f.live));
+  const lv_color_t left = pixel_at(f.live, 6, 150);
+  const lv_color_t right = pixel_at(f.live, 234, 150);
+  CHECK(left.red > left.blue + 40);
+  CHECK(right.blue > right.red + 30);
+
+  // Other teams: the bitmap is painted again, the picture follows.
+  MatchSummary m = live_match();
+  m.home = team("363", "CHE", "Chelsea", 0xDBA111, 0x034694);
+  m.away = team("359", "ARS", "Arsenal", 0xEF0107, 0xEF0107);
+  f.store.set_matches({m}, kNow);
+  f.refresh();
+  CHECK(live_background_cached(f.live));
+  const lv_color_t left2 = pixel_at(f.live, 6, 150);
+  CHECK(left2.blue > left2.red + 30);
+
+  // No split again (no data for the favourite): the bitmap is dropped.
+  f.store.set_matches({}, kNow);
+  f.refresh();
+  CHECK_FALSE(live_background_cached(f.live));
+}
+
+TEST_CASE("live match: the bitmap and the live painting give the same picture") {
+  std::vector<uint32_t> pictures[2];
+  for (int pass = 0; pass < 2; ++pass) {
+    live_set_background_cache_enabled(pass == 0);
+    {
+      Fixture f;
+      f.store.set_matches({live_match()}, kNow);
+      f.refresh();
+      CHECK(live_background_cached(f.live) == (pass == 0));
+      for (int y = 2; y < 276; y += 3) {
+        for (int x = 1; x < 240; x += 3) pictures[pass].push_back(u32(pixel_at(f.live, x, y)));
+      }
+    }
+  }
+  live_set_background_cache_enabled(true);
+  REQUIRE(pictures[0].size() == pictures[1].size());
+  size_t different = 0;
+  for (size_t i = 0; i < pictures[0].size(); ++i) different += pictures[0][i] != pictures[1][i];
+  CHECK(different == 0);
+}
+
 TEST_CASE("live match: pill shows the match clock and the score is shown big") {
   Fixture f;
   f.store.set_matches({live_match()}, kNow);
