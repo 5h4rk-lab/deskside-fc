@@ -52,6 +52,7 @@ Team team(const char* id, const char* abbr, const char* name, uint32_t color = 0
   t.abbr = abbr;
   t.name = name;
   t.color = color;
+  t.primary = color;
   t.crest = std::string("/api/img?u=x%2F") + id + ".png&w=48&h=48";
   return t;
 }

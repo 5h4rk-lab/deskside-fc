@@ -12,6 +12,7 @@ TEST_CASE("defaults from empty prefs") {
   CHECK(s.favourite.abbr == "ARS");
   CHECK(s.favourite.name == "Arsenal");
   CHECK(s.favourite.color == 0xEF0107u);
+  CHECK(s.favourite.primary == 0xEF0107u);
   CHECK(s.favourite.crest ==
         "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F359.png&w=48&h=48");
   CHECK(s.favourite.league == "eng.1");
@@ -30,6 +31,7 @@ TEST_CASE("round trip") {
   s.favourite.abbr = "LIV";
   s.favourite.name = "Liverpool";
   s.favourite.color = 0xC8102E;
+  s.favourite.primary = 0x9B0A1F;
   s.favourite.crest = "/api/img?u=x&w=48&h=48";
   s.favourite.league = "eng.1";
   s.zoneId = "Europe/Paris";
@@ -46,6 +48,7 @@ TEST_CASE("round trip") {
   CHECK(r.favourite.abbr == "LIV");
   CHECK(r.favourite.name == "Liverpool");
   CHECK(r.favourite.color == 0xC8102Eu);
+  CHECK(r.favourite.primary == 0x9B0A1Fu);
   CHECK(r.favourite.crest == "/api/img?u=x&w=48&h=48");
   CHECK(r.favourite.league == "eng.1");
   CHECK(r.zoneId == "Europe/Paris");
@@ -61,12 +64,14 @@ TEST_CASE("stored under the short keys") {
   MemoryPrefs p;
   save_settings(p, Settings());
   std::string v;
-  for (const char* k : {"fav.id", "fav.abbr", "fav.name", "fav.color", "fav.crest", "fav.league", "zone",
+  for (const char* k : {"fav.id", "fav.abbr", "fav.name", "fav.color", "fav.primary", "fav.crest", "fav.league", "zone",
                         "bright", "night", "night.start", "night.end", "night.pct", "reduced"}) {
     INFO("key " << k);
     CHECK(p.get(k, v));
   }
   p.get("fav.color", v);
+  CHECK(v == "EF0107");
+  p.get("fav.primary", v);
   CHECK(v == "EF0107");
 }
 
@@ -138,4 +143,44 @@ TEST_CASE("malformed colour falls back to the default colour") {
   p.set("fav.name", "Chelsea");
   p.set("fav.color", "03469a");  // lower-case hex accepted
   CHECK(load_settings(p).favourite.color == 0x03469Au);
+}
+
+TEST_CASE("fav.primary: saved, absent or malformed falls back to the favourite's colour") {
+  // Chelsea: gold accent, royal blue brand.
+  MemoryPrefs p;
+  p.set("fav.id", "363");
+  p.set("fav.name", "Chelsea");
+  p.set("fav.color", "DBA111");
+  p.set("fav.primary", "034694");
+  Settings s = load_settings(p);
+  CHECK(s.favourite.color == 0xDBA111u);
+  CHECK(s.favourite.primary == 0x034694u);
+  save_settings(p, s);
+  std::string v;
+  REQUIRE(p.get("fav.primary", v));
+  CHECK(v == "034694");
+
+  // Settings saved by an older build have no fav.primary.
+  MemoryPrefs old;
+  old.set("fav.id", "363");
+  old.set("fav.name", "Chelsea");
+  old.set("fav.color", "DBA111");
+  CHECK(load_settings(old).favourite.primary == 0xDBA111u);
+
+  for (const char* bad : {"", "zzzzzz", "12345", "1234567", "#034694", "-12345"}) {
+    MemoryPrefs q;
+    q.set("fav.id", "363");
+    q.set("fav.name", "Chelsea");
+    q.set("fav.color", "DBA111");
+    q.set("fav.primary", bad);
+    INFO("primary '" << bad << "'");
+    CHECK(load_settings(q).favourite.primary == 0xDBA111u);
+  }
+
+  // A malformed colour and no primary: both are the default red.
+  MemoryPrefs r;
+  r.set("fav.id", "363");
+  r.set("fav.name", "Chelsea");
+  r.set("fav.color", "nope");
+  CHECK(load_settings(r).favourite.primary == 0xEF0107u);
 }

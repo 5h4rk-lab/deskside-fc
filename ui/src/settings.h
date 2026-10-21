@@ -20,7 +20,9 @@ struct Settings {
   Settings();
 };
 
-// Keys: fav.id fav.abbr fav.name fav.color (hex) fav.crest fav.league zone
-// bright night night.start night.end night.pct reduced.
+// Keys: fav.id fav.abbr fav.name fav.color (hex) fav.primary (hex) fav.crest
+// fav.league zone bright night night.start night.end night.pct reduced.
+// A missing or malformed fav.primary (settings saved by an older build) is the
+// favourite's colour.
 Settings load_settings(const Prefs& prefs);
 void save_settings(Prefs& prefs, const Settings& settings);

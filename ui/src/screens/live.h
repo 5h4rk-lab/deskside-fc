@@ -21,6 +21,9 @@
 #include "image_provider.h"
 #include "store.h"
 
+// The split uses each team's Team::primary (the real club colour), passed
+// through background_tone() so a very dark primary still shows under the
+// vignette. split_colors() separates clashing colours:
 // Colours for the home (left) and away (right) halves of the split. When the
 // two are too close to tell apart (RGB distance below kSplitMinDistance), the
 // away half becomes theme().opponent; if that is also too close to home, a

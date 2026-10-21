@@ -84,12 +84,13 @@ class CountingPrefs : public MemoryPrefs {
 };
 
 Team make_team(const char* id, const char* abbr, const char* name, uint32_t color,
-               const char* league = "eng.1") {
+               const char* league = "eng.1", uint32_t primary = 0) {
   Team t;
   t.id = id;
   t.abbr = abbr;
   t.name = name;
   t.color = color;
+  t.primary = primary != 0 ? primary : color;
   t.league = league;
   t.crest = std::string("/api/img?u=c") + id + "&w=48&h=48";
   return t;
@@ -97,7 +98,7 @@ Team make_team(const char* id, const char* abbr, const char* name, uint32_t colo
 
 Team arsenal() { return make_team("359", "ARS", "Arsenal", 0xEF0107); }
 Team liverpool() { return make_team("364", "LIV", "Liverpool", 0xC8102E); }
-Team tottenham() { return make_team("367", "TOT", "Tottenham Hotspur", 0xFFFFFF); }
+Team tottenham() { return make_team("367", "TOT", "Tottenham Hotspur", 0xFFFFFF, "eng.1", 0x132257); }
 Team real_madrid() { return make_team("86", "RMA", "Real Madrid", 0xFEBE10, "esp.1"); }
 
 uint32_t u32(lv_color_t c) { return lv_color_to_u32(c); }
@@ -190,6 +191,7 @@ TEST_CASE("app: defaults without saved settings (Arsenal, UTC)") {
   Host h;
   CHECK(h.store.favourite() == "359");
   CHECK(u32(theme().accent) == u32(lv_color_hex(0xEF0107)));
+  CHECK(u32(theme().brand) == u32(lv_color_hex(0xEF0107)));
   app_refresh(h.app, kSummer);
   CHECK(h.store.tz_offset() == 0);
   REQUIRE(app_settings(h.app) != nullptr);
@@ -593,6 +595,22 @@ TEST_CASE("app: applying a team rebuilds the tabs without leaking and keeps the 
   // The rebuilt Live screen still has a working gear.
   h.click(live_parts(h.tab_screen(0))->gear);
   CHECK(app_settings_view(h.app) != nullptr);
+}
+
+TEST_CASE("app: the favourite's brand colour is applied, saved and restored") {
+  Host h;
+  app_apply_team(h.app, tottenham());
+  h.settle();
+  CHECK(u32(theme().accent) == u32(lv_color_hex(0xFFFFFF)));
+  CHECK(u32(theme().brand) == u32(lv_color_hex(0x132257)));
+  CHECK(pref(h.prefs, "fav.primary") == "132257");
+
+  lv_obj_delete(h.app);
+  theme_reset();
+  h.store.set_favourite("");
+  h.make();
+  CHECK(u32(theme().accent) == u32(lv_color_hex(0xFFFFFF)));
+  CHECK(u32(theme().brand) == u32(lv_color_hex(0x132257)));
 }
 
 TEST_CASE("app: a white accent keeps the active tab icon at the accent") {

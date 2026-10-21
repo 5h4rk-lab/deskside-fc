@@ -45,6 +45,7 @@ Team team(const char* id, const char* abbr, const char* name, uint32_t color) {
   t.abbr = abbr;
   t.name = name;
   t.color = color;
+  t.primary = color;
   return t;
 }
 

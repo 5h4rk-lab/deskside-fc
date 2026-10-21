@@ -27,6 +27,9 @@
 //                    created on demand); "memory" keeps them for this run only.
 //                    Snapshots use memory unless --prefs is given.
 //   --reset-prefs    start with default settings (deletes the settings file)
+//   --fav ABBR       make the team with this abbreviation (from the demo team
+//                    list, e.g. CHE or TOT) the favourite before start, saved
+//                    like a choice in the team picker
 //   --tz ZONE        time zone id (for example Europe/London), saved like a
 //                    choice in Settings. Without a saved zone the window
 //                    picks the zone matching the computer's current offset.
@@ -82,6 +85,7 @@
 #include "mock_wifi.h"
 #include "poller.h"
 #include "prefs.h"
+#include "settings.h"
 #include "screens/detail.h"
 #include "screens/goal.h"
 #include "screens/team_picker.h"
@@ -118,6 +122,7 @@ struct Options {
   bool demoGoal = false;
   std::string prefs;  // empty: the default file (memory for snapshots)
   bool resetPrefs = false;
+  std::string fav;  // --fav ABBR: favourite from demo_teams()
   std::string tz;
   bool hasNow = false;
   int64_t now = 0;
@@ -159,7 +164,7 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
       "           [--screen live|live-last|live-last-away|matches|news|detail|summary|pitch|stats|goal|goal-win]\n"
       "           [--match ID] [--at-ms N] [--reduced-motion] [--demo-goal]\n"
       "           [--screen settings|zone|picker|picker-search]\n"
-      "           [--prefs FILE|memory] [--reset-prefs] [--tz ZONE] [--now EPOCH]\n"
+      "           [--prefs FILE|memory] [--reset-prefs] [--fav ABBR] [--tz ZONE] [--now EPOCH]\n"
       "           [--wifi none|demo] [--wifi-saved none]\n"
       "           [--screen wifi|wifi-first|wifi-password|wifi-failed|wifi-connecting]\n"
       "           [--helper URL --token T] [--offline-test]\n"
@@ -248,6 +253,8 @@ Options parse_args(int argc, char** argv) {
         std::exit(2);
       }
       o.wifiSaved = false;
+    } else if (std::strcmp(argv[i], "--fav") == 0 && hasValue) {
+      o.fav = argv[++i];
     } else if (std::strcmp(argv[i], "--fixtures") == 0) {
       o.fixtures = true;
     } else if (std::strcmp(argv[i], "--helper") == 0 && hasValue) {
@@ -551,6 +558,23 @@ int main(int argc, char** argv) {
         prefs->set("zone", z.id);
         break;
       }
+    }
+  }
+
+  if (!opt.fav.empty()) {
+    bool found = false;
+    for (const Team& t : demo_teams()) {
+      if (t.abbr != opt.fav) continue;
+      Settings s = load_settings(*prefs);
+      s.favourite = t;
+      save_settings(*prefs, s);
+      found = true;
+      break;
+    }
+    if (!found) {
+      std::fprintf(stderr, "unknown --fav '%s' (an abbreviation from the demo teams, e.g. CHE)\n",
+                   opt.fav.c_str());
+      return 2;
     }
   }
 

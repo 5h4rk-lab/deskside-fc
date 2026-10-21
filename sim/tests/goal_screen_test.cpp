@@ -98,8 +98,8 @@ MatchSummary live_match(int home, int away) {
   m.state = MatchState::Live;
   m.clock = "67'";
   m.kickoff = 1792526400;
-  m.home = {"359", "ARS", "Arsenal", "", 0xEF0107, ""};
-  m.away = {"363", "CHE", "Chelsea", "", 0x034694, ""};
+  m.home = {"359", "ARS", "Arsenal", "", 0xEF0107, 0xEF0107, ""};
+  m.away = {"363", "CHE", "Chelsea", "", 0xDBA111, 0x034694, ""};
   m.homeScore = home;
   m.awayScore = away;
   return m;
@@ -483,6 +483,28 @@ TEST_CASE("goal overlay: reduced motion is static but shows the same content") {
   CHECK(lv_anim_count_running() == baseline);
   run_for(3200);
   CHECK_FALSE(goal_active());
+}
+
+TEST_CASE("goal overlay: floods with the brand colour, not the accent (Chelsea blue, not gold)") {
+  Fixture f;
+  theme_set_team(0xDBA111, 0xEF0107, 0x034694);
+  goal_set_reduced_motion(true);
+  goal_celebrate(goal_event(), f.images);
+  test_advance(0);
+  const uint32_t px = lv_color_to_u32(pixel_at(lv_layer_top(), 0, 0));
+  CHECK(px == q565(goal_background(lv_color_hex(0x034694))));
+  CHECK(px == q565(lv_color_hex(0x034694)));
+  CHECK(px != q565(lv_color_hex(0xDBA111)));
+}
+
+TEST_CASE("goal overlay: a light brand colour is darkened like a light accent") {
+  Fixture f;
+  theme_set_team(0x123456, 0x034694, 0xFDE100);  // Dortmund yellow as the brand
+  goal_set_reduced_motion(true);
+  goal_celebrate(goal_event(), f.images);
+  test_advance(0);
+  CHECK(lv_color_to_u32(pixel_at(lv_layer_top(), 0, 0)) ==
+        q565(darken(lv_color_hex(0xFDE100), goal::kLightDarken)));
 }
 
 TEST_CASE("goal overlay: a light accent darkens the background") {

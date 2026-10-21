@@ -287,8 +287,8 @@ View compute_view(const Store& store, int64_t now) {
     v.matchId = m->id;
     v.homeCrest = sized(m->home.crest, kCrestSize, kCrestSize);
     v.awayCrest = sized(m->away.crest, kCrestSize, kCrestSize);
-    v.homeColor = m->home.color;
-    v.awayColor = m->away.color;
+    v.homeColor = m->home.primary;
+    v.awayColor = m->away.primary;
     v.pill = m->clock.empty() ? "LIVE" : m->clock;
     v.scoreHome = std::to_string(m->homeScore.value_or(0));
     v.scoreAway = std::to_string(m->awayScore.value_or(0));
@@ -312,8 +312,8 @@ View compute_view(const Store& store, int64_t now) {
     v.matchId = m->id;
     v.homeCrest = sized(m->home.crest, kCrestSize, kCrestSize);
     v.awayCrest = sized(m->away.crest, kCrestSize, kCrestSize);
-    v.homeColor = m->home.color;
-    v.awayColor = m->away.color;
+    v.homeColor = m->home.primary;
+    v.awayColor = m->away.primary;
     const Team& opponent = m->home.id == fav ? m->away : m->home;
     const int64_t local = m->kickoff + tz;
     v.message = "Next: " + opponent.abbr + " " + weekday(local) + " " + hh_mm(local);
@@ -332,8 +332,8 @@ View compute_view(const Store& store, int64_t now) {
     const Team& them = home ? m->away : m->home;
     v.homeCrest = sized(us.crest, kCrestSize, kCrestSize);
     v.awayCrest = sized(them.crest, kCrestSize, kCrestSize);
-    v.homeColor = us.color;
-    v.awayColor = them.color;
+    v.homeColor = us.primary;
+    v.awayColor = them.primary;
     v.scoreHome = std::to_string((home ? m->homeScore : m->awayScore).value_or(0));
     v.scoreAway = std::to_string((home ? m->awayScore : m->homeScore).value_or(0));
     v.lastOpponent = "vs " + them.abbr;
@@ -360,9 +360,13 @@ void apply(LiveState* st, const View& v) {
   if (split != st->splitVisible || (split && (first || v.homeColor != old.homeColor ||
                                               v.awayColor != old.awayColor))) {
     st->splitVisible = split;
-    auto colors = split_colors(lv_color_hex(v.homeColor), lv_color_hex(v.awayColor));
+    // Large surface: the teams' primaries, lifted where too dark to show
+    // under the vignette, then separated if they clash. The away side is toned
+    // again because the clash fallback may darken it.
+    auto colors = split_colors(background_tone(lv_color_hex(v.homeColor)),
+                               background_tone(lv_color_hex(v.awayColor)));
     st->splitHome = colors.first;
-    st->splitAway = colors.second;
+    st->splitAway = background_tone(colors.second);
     lv_obj_invalidate(p.background);
   }
 

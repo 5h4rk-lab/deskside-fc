@@ -671,7 +671,7 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   st->settings = load_settings(deps.prefs);
   st->saved = st->settings;
   deps.store.set_favourite(st->settings.favourite.id);
-  theme_set_team(st->settings.favourite.color, kOpponentHex);
+  theme_set_team(st->settings.favourite.color, kOpponentHex, st->settings.favourite.primary);
   goal_set_reduced_motion(st->settings.reducedMotion);
 
   lv_obj_set_style_bg_color(root, theme().turf, 0);
@@ -816,7 +816,7 @@ void app_apply_team(lv_obj_t* appRoot, const Team& team) {
   st->settings.favourite = team;
   save(st);
   st->store->set_favourite(team.id);
-  theme_set_team(team.color, kOpponentHex);
+  theme_set_team(team.color, kOpponentHex, team.primary);
 
   // Usually called from a row of the picker: it goes on the next cycle.
   close_picker(st, true);

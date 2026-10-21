@@ -72,8 +72,9 @@ std::string goal_headline(const GoalEvent& event);
 std::string goal_score_line(const GoalEvent& event);
 std::string goal_waiting_line(const GoalEvent& event);
 
-// Overlay background for an accent: the accent itself, or darken(accent, 40)
-// when its relative luminance is above 0.6 (chalk text stays legible).
+// Overlay background for a colour: the colour itself, or darken(colour, 40)
+// when its relative luminance is above 0.6 (chalk text stays legible). The
+// overlay passes theme().brand (the favourite's real club colour), not the accent.
 lv_color_t goal_background(lv_color_t accent);
 
 // Shows the celebration on lv_layer_top() for a favourite event; events with
@@ -105,7 +106,7 @@ bool goal_reduced_motion();
 // Widgets of the showing overlay, for tests and screenshots; nullptr when
 // none is showing.
 struct GoalParts {
-  lv_obj_t* overlay;      // full screen, background goal_background(accent)
+  lv_obj_t* overlay;      // full screen, background goal_background(theme().brand)
   lv_obj_t* rays;         // custom-drawn rotating wedges
   lv_obj_t* stamp;        // transformed box holding the headline and its shadow
   lv_obj_t* headline;     // "GOAL!" / "WIN!"

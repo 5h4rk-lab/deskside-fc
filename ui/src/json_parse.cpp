@@ -103,6 +103,11 @@ bool read_team(Obj o, bool withLeague, Team& t) {
     return false;
   }
   t.color = parse_hex(color.c_str());
+  // Optional: absent, not a string or not "#RRGGBB" gives the accent colour,
+  // so a helper that predates `primary` still works.
+  t.primary = t.color;
+  JsonVariantConst primary = o["primary"];
+  if (primary.is<const char*>()) try_parse_hex(primary.as<const char*>(), t.primary);
   if (withLeague && !get_str(o, "league", t.league)) return false;
   return true;
 }

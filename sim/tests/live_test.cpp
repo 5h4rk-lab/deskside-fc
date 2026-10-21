@@ -25,12 +25,14 @@ class NullImages : public ImageProvider {
 
 constexpr int64_t kNow = 1792526400 - 3 * 3600;  // Tue 2026-10-20 17:00 UTC
 
-Team team(const char* id, const char* abbr, const char* name, uint32_t color) {
+Team team(const char* id, const char* abbr, const char* name, uint32_t color,
+          uint32_t primary = 0) {
   Team t;
   t.id = id;
   t.abbr = abbr;
   t.name = name;
   t.color = color;
+  t.primary = primary != 0 ? primary : color;
   t.crest = std::string("/api/img?u=x%2F") + id + ".png&w=48&h=48";
   return t;
 }
@@ -128,6 +130,49 @@ TEST_CASE("split_colors keeps distinct colours and separates clashing ones") {
   const lv_color_t black = lv_color_hex(0x050505);
   auto dark = split_colors(black, black);
   CHECK(d(dark.first, dark.second) >= kSplitMinDistance * kSplitMinDistance);
+}
+
+TEST_CASE("split_colors with real primaries (Chelsea blue v Arsenal red) keeps both") {
+  auto c = split_colors(lv_color_hex(0x034694), lv_color_hex(0xEF0107));
+  CHECK(u32(c.first) == u32(lv_color_hex(0x034694)));
+  CHECK(u32(c.second) == u32(lv_color_hex(0xEF0107)));
+  // Spurs navy v Chelsea blue clash: the clash handling applies to primaries.
+  auto clash = split_colors(lv_color_hex(0x132257), lv_color_hex(0x034694));
+  CHECK(u32(clash.first) == u32(lv_color_hex(0x132257)));
+  CHECK(u32(clash.second) != u32(lv_color_hex(0x034694)));
+}
+
+TEST_CASE("live match: the split uses each team's primary, not its accent (Chelsea blue)") {
+  Fixture f;
+  f.store.set_favourite("363");
+  MatchSummary m = live_match();
+  // Chelsea at home: gold accent, royal blue brand. Arsenal away.
+  m.home = team("363", "CHE", "Chelsea", 0xDBA111, 0x034694);
+  m.away = team("359", "ARS", "Arsenal", 0xEF0107, 0xEF0107);
+  f.store.set_matches({m}, kNow);
+  f.refresh();
+  const lv_color_t left = pixel_at(f.live, 6, 150);
+  const lv_color_t right = pixel_at(f.live, 234, 150);
+  CHECK(left.blue > left.red + 30);    // blue dominates ...
+  CHECK(left.blue > left.green + 10);
+  CHECK(left.red < left.blue);         // ... and it is not gold
+  CHECK(right.red > right.blue + 40);  // Arsenal red on the right
+}
+
+TEST_CASE("live match: a very dark primary (Spurs navy) still gives a visible split") {
+  Fixture f;
+  f.store.set_favourite("367");
+  MatchSummary m = live_match();
+  m.home = team("367", "TOT", "Tottenham Hotspur", 0xFFFFFF, 0x132257);
+  m.away = team("359", "ARS", "Arsenal", 0xEF0107, 0xEF0107);
+  f.store.set_matches({m}, kNow);
+  f.refresh();
+  const lv_color_t left = pixel_at(f.live, 6, 150);
+  const lv_color_t turf = theme().turf;
+  // Navy, clearly not the white accent and clearly not the plain turf.
+  CHECK(left.blue > left.red + 15);
+  CHECK(left.red < 100);
+  CHECK(left.blue > turf.blue + 25);
 }
 
 TEST_CASE("live match: split background in home and away colours") {
@@ -342,7 +387,8 @@ MatchSummary past_match(const char* id, Team home, Team away, int hs, int as, in
 }
 
 Team ars() { return team("359", "ARS", "Arsenal", 0xEF0107); }
-Team che() { return team("363", "CHE", "Chelsea", 0x034694); }
+// Chelsea as the helper sends it: gold accent, royal blue primary.
+Team che() { return team("363", "CHE", "Chelsea", 0xDBA111, 0x034694); }
 
 }  // namespace
 
@@ -466,4 +512,34 @@ TEST_CASE("last result: a live match still wins, and so does the next fixture") 
   CHECK(visible(p->message));
   CHECK_FALSE(visible(p->lastCaption));
   CHECK_FALSE(visible(p->score));
+}
+
+TEST_CASE("demo data carries brand primaries next to the accents") {
+  const std::vector<MatchSummary> ms = demo_matches(kNow);
+  const MatchSummary* live = nullptr;
+  for (const MatchSummary& m : ms) {
+    if (m.id == demo::kLiveMatchId) live = &m;
+  }
+  REQUIRE(live != nullptr);
+  CHECK(live->home.primary == 0xEF0107u);  // Arsenal
+  CHECK(live->away.abbr == "CHE");
+  CHECK(live->away.color == 0xDBA111u);    // gold accent
+  CHECK(live->away.primary == 0x034694u);  // royal blue brand
+  bool sawSpurs = false;
+  for (const MatchSummary& m : ms) {
+    for (const Team* t : {&m.home, &m.away}) {
+      if (t->abbr == "TOT") {
+        sawSpurs = true;
+        CHECK(t->primary == 0x132257u);
+      }
+    }
+  }
+  CHECK(sawSpurs);
+  for (const Team& t : demo_teams()) {
+    INFO(t.abbr);
+    CHECK(t.primary != 0xFFFFFFu);  // white kits use their dark identity colour
+    if (t.abbr == "CHE") CHECK(t.primary == 0x034694u);
+    if (t.abbr == "RMA") CHECK(t.primary == 0x00529Fu);
+    if (t.abbr == "JUV") CHECK(t.primary == 0x000000u);
+  }
 }

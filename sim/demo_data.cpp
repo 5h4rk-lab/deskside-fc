@@ -20,24 +20,25 @@ std::string fd_crest(const char* id) {
 }
 
 // Ids are ESPN team ids. Crests use the ESPN logo when sim/assets has it,
-// otherwise the football-data.org crest. Arsenal and Chelsea colours come
-// from contract/fixtures/teams-normalised.json.
-Team arsenal() { return {"359", "ARS", "Arsenal", espn_crest("359"), 0xEF0107, ""}; }
-Team chelsea() { return {"363", "CHE", "Chelsea", espn_crest("363"), 0xDBA111, ""}; }
-Team man_city() { return {"382", "MNC", "Manchester City", espn_crest("382"), 0x6CABDD, ""}; }
-Team liverpool() { return {"364", "LIV", "Liverpool", espn_crest("364"), 0xC8102E, ""}; }
-Team real_madrid() { return {"86", "RMA", "Real Madrid", fd_crest("86"), 0xFEBE10, ""}; }
-Team barcelona() { return {"83", "BAR", "Barcelona", fd_crest("81"), 0xA50044, ""}; }
-Team bayern() { return {"132", "BAY", "Bayern Munich", fd_crest("5"), 0xDC052D, ""}; }
-Team dortmund() { return {"124", "DOR", "Borussia Dortmund", fd_crest("4"), 0xFDE100, ""}; }
-Team psg() { return {"160", "PSG", "Paris Saint-Germain", fd_crest("524"), 0x004170, ""}; }
-Team inter() { return {"110", "INT", "Inter Milan", fd_crest("108"), 0x0068A8, ""}; }
-Team milan() { return {"103", "MIL", "AC Milan", fd_crest("98"), 0xFB090B, ""}; }
-Team atletico() { return {"1068", "ATM", "Atletico Madrid", fd_crest("78"), 0xCB3524, ""}; }
-Team sevilla() { return {"243", "SEV", "Sevilla", fd_crest("559"), 0xD6001C, ""}; }
-Team brighton() { return {"331", "BHA", "Brighton", espn_crest("331"), 0x0057B8, ""}; }
-Team tottenham() { return {"367", "TOT", "Tottenham Hotspur", espn_crest("367"), 0x132257, ""}; }
-Team marseille() { return {"176", "MAR", "Marseille", fd_crest("516"), 0x2FAEE0, ""}; }
+// otherwise the football-data.org crest. Colours are {accent, primary} as the
+// helper sends them (helper/src/colors.ts): Chelsea's accent is gold, its
+// primary royal blue; Tottenham's accent is white, its primary navy.
+Team arsenal() { return {"359", "ARS", "Arsenal", espn_crest("359"), 0xEF0107, 0xEF0107, ""}; }
+Team chelsea() { return {"363", "CHE", "Chelsea", espn_crest("363"), 0xDBA111, 0x034694, ""}; }
+Team man_city() { return {"382", "MNC", "Manchester City", espn_crest("382"), 0x6CABDD, 0x6CABDD, ""}; }
+Team liverpool() { return {"364", "LIV", "Liverpool", espn_crest("364"), 0xC8102E, 0xC8102E, ""}; }
+Team real_madrid() { return {"86", "RMA", "Real Madrid", fd_crest("86"), 0xFEBE10, 0x00529F, ""}; }
+Team barcelona() { return {"83", "BAR", "Barcelona", fd_crest("81"), 0xA50044, 0xA50044, ""}; }
+Team bayern() { return {"132", "BAY", "Bayern Munich", fd_crest("5"), 0xDC052D, 0xDC052D, ""}; }
+Team dortmund() { return {"124", "DOR", "Borussia Dortmund", fd_crest("4"), 0xFDE100, 0xFDE100, ""}; }
+Team psg() { return {"160", "PSG", "Paris Saint-Germain", fd_crest("524"), 0xDA291C, 0x004170, ""}; }
+Team inter() { return {"110", "INT", "Inter Milan", fd_crest("108"), 0x0068A8, 0x0068A8, ""}; }
+Team milan() { return {"103", "MIL", "AC Milan", fd_crest("98"), 0xFB090B, 0xFB090B, ""}; }
+Team atletico() { return {"1068", "ATM", "Atletico Madrid", fd_crest("78"), 0xCB3524, 0xCB3524, ""}; }
+Team sevilla() { return {"243", "SEV", "Sevilla", fd_crest("559"), 0xD6001C, 0xD81022, ""}; }
+Team brighton() { return {"331", "BHA", "Brighton", espn_crest("331"), 0x0057B8, 0x0057B8, ""}; }
+Team tottenham() { return {"367", "TOT", "Tottenham Hotspur", espn_crest("367"), 0xFFFFFF, 0x132257, ""}; }
+Team marseille() { return {"176", "MAR", "Marseille", fd_crest("516"), 0x2FAEE0, 0x2FAEE0, ""}; }
 
 MatchSummary match(const char* id, const char* league, MatchState state, const char* clock,
                    int64_t kickoff, Team home, Team away) {
@@ -122,8 +123,8 @@ std::vector<NewsItem> demo_news(int64_t now) {
 namespace {
 
 Team league_team(const char* id, const char* abbr, const char* name, std::string crest,
-                 uint32_t color, const char* league) {
-  return {id, abbr, name, std::move(crest), color, league};
+                 uint32_t color, uint32_t primary, const char* league) {
+  return {id, abbr, name, std::move(crest), color, primary, league};
 }
 
 }  // namespace
@@ -135,24 +136,24 @@ std::vector<Team> demo_teams() {
     if (ok) teams = std::move(t);
   });
   const Team more[] = {
-      league_team("86", "RMA", "Real Madrid", fd_crest("86"), 0xFFFFFF, "esp.1"),
-      league_team("83", "BAR", "Barcelona", fd_crest("81"), 0xEDBB00, "esp.1"),
-      league_team("1068", "ATM", "Atl\xC3\xA9tico Madrid", fd_crest("78"), 0xCB3524, "esp.1"),
-      league_team("243", "SEV", "Sevilla", fd_crest("559"), 0xD81022, "esp.1"),
-      league_team("93", "ATH", "Athletic Club", espn_crest("93"), 0xEE2523, "esp.1"),
-      league_team("89", "RSO", "Real Sociedad", espn_crest("89"), 0x0067B1, "esp.1"),
-      league_team("110", "INT", "Internazionale", fd_crest("108"), 0x0068A8, "ita.1"),
-      league_team("103", "MIL", "AC Milan", fd_crest("98"), 0xFB090B, "ita.1"),
-      league_team("111", "JUV", "Juventus", espn_crest("111"), 0xFFFFFF, "ita.1"),
-      league_team("114", "NAP", "Napoli", espn_crest("114"), 0x12A0D7, "ita.1"),
-      league_team("132", "MUN", "Bayern Munich", fd_crest("5"), 0xDC052D, "ger.1"),
-      league_team("124", "DOR", "Borussia Dortmund", fd_crest("4"), 0xFDE100, "ger.1"),
-      league_team("131", "B04", "Bayer Leverkusen", espn_crest("131"), 0xE32221, "ger.1"),
-      league_team("11420", "RBL", "RB Leipzig", espn_crest("11420"), 0xDD0741, "ger.1"),
-      league_team("160", "PSG", "Paris Saint-Germain", fd_crest("524"), 0xDA291C, "fra.1"),
-      league_team("176", "OLM", "Marseille", fd_crest("516"), 0x2FAEE0, "fra.1"),
-      league_team("167", "LYON", "Lyon", espn_crest("167"), 0xD8232A, "fra.1"),
-      league_team("174", "MON", "AS Monaco", espn_crest("174"), 0xE51B22, "fra.1"),
+      league_team("86", "RMA", "Real Madrid", fd_crest("86"), 0xFFFFFF, 0x00529F, "esp.1"),
+      league_team("83", "BAR", "Barcelona", fd_crest("81"), 0xEDBB00, 0xA50044, "esp.1"),
+      league_team("1068", "ATM", "Atl\xC3\xA9tico Madrid", fd_crest("78"), 0xCB3524, 0xCB3524, "esp.1"),
+      league_team("243", "SEV", "Sevilla", fd_crest("559"), 0xD81022, 0xD81022, "esp.1"),
+      league_team("93", "ATH", "Athletic Club", espn_crest("93"), 0xEE2523, 0xEE2523, "esp.1"),
+      league_team("89", "RSO", "Real Sociedad", espn_crest("89"), 0x0067B1, 0x0067B1, "esp.1"),
+      league_team("110", "INT", "Internazionale", fd_crest("108"), 0x0068A8, 0x0068A8, "ita.1"),
+      league_team("103", "MIL", "AC Milan", fd_crest("98"), 0xFB090B, 0xFB090B, "ita.1"),
+      league_team("111", "JUV", "Juventus", espn_crest("111"), 0xFFFFFF, 0x000000, "ita.1"),
+      league_team("114", "NAP", "Napoli", espn_crest("114"), 0x12A0D7, 0x12A0D7, "ita.1"),
+      league_team("132", "MUN", "Bayern Munich", fd_crest("5"), 0xDC052D, 0xDC052D, "ger.1"),
+      league_team("124", "DOR", "Borussia Dortmund", fd_crest("4"), 0xFDE100, 0xFDE100, "ger.1"),
+      league_team("131", "B04", "Bayer Leverkusen", espn_crest("131"), 0xE32221, 0xE32221, "ger.1"),
+      league_team("11420", "RBL", "RB Leipzig", espn_crest("11420"), 0xDD0741, 0xDD0741, "ger.1"),
+      league_team("160", "PSG", "Paris Saint-Germain", fd_crest("524"), 0xDA291C, 0x004170, "fra.1"),
+      league_team("176", "OLM", "Marseille", fd_crest("516"), 0x2FAEE0, 0x2FAEE0, "fra.1"),
+      league_team("167", "LYON", "Lyon", espn_crest("167"), 0xD8232A, 0x14387F, "fra.1"),
+      league_team("174", "MON", "AS Monaco", espn_crest("174"), 0xE51B22, 0xE51B22, "fra.1"),
   };
   for (const Team& t : more) teams.push_back(t);
   return teams;

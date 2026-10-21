@@ -59,8 +59,10 @@ struct DetailState {
   lv_obj_t* pages[3] = {nullptr, nullptr, nullptr};
   lv_obj_t* openMarker = nullptr;  // marker whose name card is shown
   std::vector<lv_obj_t*> photoMarkers;
-  lv_color_t homeColor{};
+  lv_color_t homeColor{};   // accents: event rows, stat bars, name card
   lv_color_t awayColor{};
+  lv_color_t homeMarker{};  // primaries: the pitch markers (large team-colour discs)
+  lv_color_t awayMarker{};
   int activeTab = 0;
 };
 
@@ -68,7 +70,7 @@ struct DetailState {
 
 bool same(const Team& a, const Team& b) {
   return a.id == b.id && a.abbr == b.abbr && a.name == b.name && a.crest == b.crest &&
-         a.color == b.color;
+         a.color == b.color && a.primary == b.primary;
 }
 
 bool same(const MatchSummary& a, const MatchSummary& b) {
@@ -178,6 +180,10 @@ void compute_colors(DetailState* st) {
                         lv_color_hex(st->data.match.away.color));
   st->homeColor = c.first;
   st->awayColor = c.second;
+  auto m = split_colors(lv_color_hex(st->data.match.home.primary),
+                        lv_color_hex(st->data.match.away.primary));
+  st->homeMarker = m.first;
+  st->awayMarker = m.second;
 }
 
 // ---------------------------------------------------------------- header
@@ -824,7 +830,7 @@ lv_obj_t* add_marker(DetailState* st, lv_obj_t* pitch, const LineupPlayer& pl, S
   const int32_t fromGoal = row * layout.spacing;
   const int32_t top = side == Side::Home ? h - fromGoal - size : fromGoal;
 
-  const lv_color_t color = side_color(st, side);
+  const lv_color_t color = side == Side::Home ? st->homeMarker : st->awayMarker;
   lv_obj_t* m = plain(pitch);
   lv_obj_set_pos(m, left, top);
   lv_obj_set_size(m, size, size);

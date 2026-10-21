@@ -22,6 +22,7 @@
 #include "screens/live.h"
 #include "store.h"
 #include "test_display.h"
+#include "theme.h"
 
 namespace {
 
@@ -132,8 +133,8 @@ MatchSummary summary(MatchState state) {
   m.league = "eng.1";
   m.state = state;
   m.kickoff = kKickoff;
-  m.home = {"359", "ARS", "Arsenal", "", 0xEF0107, ""};
-  m.away = {"363", "CHE", "Chelsea", "", 0x034694, ""};
+  m.home = {"359", "ARS", "Arsenal", "", 0xEF0107, 0xEF0107, ""};
+  m.away = {"363", "CHE", "Chelsea", "", 0xDBA111, 0x034694, ""};
   if (state == MatchState::Live) m.clock = "67'";
   if (state == MatchState::Post) m.clock = "FT";
   if (state == MatchState::Live || state == MatchState::Post) {
@@ -229,6 +230,35 @@ TEST_CASE("pitch: 22 markers, home in the lower half and away in the upper half"
     ++checked;
   }
   CHECK(checked >= 2);
+}
+
+TEST_CASE("pitch: markers use each team's primary colour (Chelsea blue, not the gold accent)") {
+  MatchDetail d = full_detail();
+  REQUIRE(d.match.away.abbr == "CHE");
+  REQUIRE(d.match.away.color == 0xDBA111u);
+  REQUIRE(d.match.away.primary == 0x034694u);
+  Screen s(d);
+  const DetailParts* p = s.parts();
+  const auto expected = split_colors(lv_color_hex(d.match.home.primary), lv_color_hex(d.match.away.primary));
+  int home = 0;
+  int away = 0;
+  for (lv_obj_t* m : markers(p->pitch)) {
+    const MarkerInfo* info = detail_marker(m);
+    const uint32_t bg = lv_color_to_u32(lv_obj_get_style_bg_color(m, 0));
+    if (info->side == Side::Home) {
+      CHECK(bg == lv_color_to_u32(expected.first));
+      CHECK(bg == lv_color_to_u32(lv_color_hex(0xEF0107)));
+      ++home;
+    } else {
+      CHECK(bg == lv_color_to_u32(expected.second));
+      CHECK(bg == lv_color_to_u32(lv_color_hex(0x034694)));
+      ++away;
+    }
+    // The white ring stays.
+    CHECK(lv_color_to_u32(lv_obj_get_style_border_color(m, 0)) == lv_color_to_u32(theme().chalk));
+  }
+  CHECK(home == 11);
+  CHECK(away == 11);
 }
 
 TEST_CASE("pitch: goalkeepers sit by their own goal lines") {

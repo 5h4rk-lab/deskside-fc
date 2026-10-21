@@ -12,15 +12,19 @@ struct Palette {
   lv_color_t chalk;     // primary text
   lv_color_t dim;       // secondary text
   lv_color_t amber;     // live indicators (floodlight amber)
-  lv_color_t accent;    // favourite team colour (Arsenal red by default)
+  lv_color_t accent;    // favourite's readable accent for small details: tab icon, ticks,
+                        // dots, switches, links, highlights (Arsenal red by default)
   lv_color_t opponent;  // opposing team colour (Chelsea blue by default)
+  lv_color_t brand;     // favourite's real brand colour, for large surfaces (Arsenal red by default)
   lv_color_t tabBar;    // bottom bar backdrop
 };
 
 // The active palette. Mutable so the favourite team can recolour the UI.
 Palette& theme();
 
-// Sets the accent and opponent colours (0xRRGGBB); other fields are unchanged.
+// Sets the accent, opponent and brand colours (0xRRGGBB); other fields are unchanged.
+void theme_set_team(uint32_t accentHex, uint32_t opponentHex, uint32_t brandHex);
+// Two-argument form: the brand is the accent.
 void theme_set_team(uint32_t accentHex, uint32_t opponentHex);
 
 // Restores the default palette (used by tests to undo theme_set_team).
@@ -51,6 +55,18 @@ lv_color_t accent_mark(lv_color_t accent);
 // Parses "#RRGGBB" or "RRGGBB" (any case) into 0xRRGGBB. Anything else,
 // including a null pointer or a wrong length, returns 0x7C8F84 (the dim colour).
 uint32_t parse_hex(const char* s);
+
+// Like parse_hex, but reports whether `s` is valid: true and `out` set, or
+// false and `out` untouched.
+bool try_parse_hex(const char* s, uint32_t& out);
+
+// Minimum relative luminance of a team colour used as a large background.
+constexpr float kBackgroundMinLuminance = 0.04f;
+
+// A team's primary as a large background (the Live split): unchanged when its
+// relative luminance is at least kBackgroundMinLuminance, else brightened just
+// enough to reach it, keeping the hue (navy stays navy; black becomes a dark grey).
+lv_color_t background_tone(lv_color_t primary);
 
 namespace layout {
 

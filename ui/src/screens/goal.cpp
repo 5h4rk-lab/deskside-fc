@@ -484,7 +484,7 @@ void goal_celebrate(const GoalEvent& event, ImageProvider& images) {
   auto* st = new State();
   st->images = &images;
   st->reduced = g_reduced;
-  st->background = goal_background(theme().accent);
+  st->background = goal_background(theme().brand);  // a large surface: the brand colour
   build(st, event);
   g_current = st;
 }

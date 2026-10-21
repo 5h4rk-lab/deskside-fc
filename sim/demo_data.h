@@ -41,7 +41,7 @@ std::vector<NewsItem> demo_news(int64_t now);
 // contract/fixtures/teams-normalised.json (read at runtime from
 // CONTRACT_FIXTURES_DIR) plus a handful of clubs from each of La Liga, Serie A,
 // Bundesliga and Ligue 1 with their ESPN ids, abbreviations and the helper's
-// curated colours. Clubs with a crest in sim/assets use it.
+// curated accent and primary colours. Clubs with a crest in sim/assets use it.
 std::vector<Team> demo_teams();
 
 // Detail for a demo match. The live match has lineups (Arsenal 4-3-3, Chelsea

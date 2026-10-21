@@ -103,14 +103,14 @@ struct TileView {
 struct View {
   Mode mode = Mode::Connecting;
   StatusInfo status;
-  uint32_t accent = 0;
+  uint32_t brand = 0;
   ArticleView lead;
   TileView last;
   TileView next;
   std::vector<ArticleView> rows;
 
   bool operator==(const View& o) const {
-    return mode == o.mode && status == o.status && accent == o.accent && lead == o.lead &&
+    return mode == o.mode && status == o.status && brand == o.brand && lead == o.lead &&
            last == o.last && next == o.next && rows == o.rows;
   }
   bool operator!=(const View& o) const { return !(*this == o); }
@@ -142,12 +142,12 @@ struct NewsState {
   lv_obj_t* header = nullptr;
   lv_obj_t* tilesRow = nullptr;
   CoverImage leadCover;
-  lv_grad_dsc_t fallback;  // the lead's accent gradient; styles point at it
+  lv_grad_dsc_t fallback;  // the lead's brand gradient; styles point at it
   std::vector<Row> rows;
   View shown;
   bool everApplied = false;
   bool leadApplied = false;
-  uint32_t shownAccent = 0;
+  uint32_t shownBrand = 0;
 };
 
 int32_t text_width(const std::string& s, const lv_font_t* font, int32_t letterSpace = 0) {
@@ -213,7 +213,7 @@ TileView next_tile(const Store& store, int64_t now) {
 View compute_view(const Store& store, int64_t now) {
   View v;
   v.status = widgets::status_info(store, now);
-  v.accent = lv_color_to_u32(theme().accent);
+  v.brand = lv_color_to_u32(theme().brand);
   if (!store.has_data()) {
     v.mode = Mode::Connecting;
     return v;
@@ -342,7 +342,7 @@ void create_lead(NewsState* st) {
   p.lead = plain(p.list);
   lv_obj_set_size(p.lead, kScreenWidth, kLeadHeight);
   lv_obj_set_style_bg_opa(p.lead, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(p.lead, pal.accent, 0);
+  lv_obj_set_style_bg_color(p.lead, pal.brand, 0);
 
   st->leadCover = make_cover(p.lead, kScreenWidth, kLeadHeight);
   p.leadImage = st->leadCover.img;
@@ -536,20 +536,21 @@ void apply_lead_headline(NewsParts& p, const std::string& text, bool changed) {
 void apply_lead(NewsState* st, const View& v) {
   NewsParts& p = st->parts;
   const bool first = !st->leadApplied;
-  if (first || v.accent != st->shownAccent) {
-    // Fallback while the picture is missing or loading: dark to the favourite's colour.
+  if (first || v.brand != st->shownBrand) {
+    // Fallback while the picture is missing or loading: dark to the favourite's
+    // brand colour (a large surface, so the real club colour, not the accent).
     memset(&st->fallback, 0, sizeof(st->fallback));
     st->fallback.dir = LV_GRAD_DIR_HOR;
     st->fallback.stops_count = 2;
-    st->fallback.stops[0].color = darken(theme().accent, 140);
+    st->fallback.stops[0].color = darken(theme().brand, 140);
     st->fallback.stops[0].opa = LV_OPA_COVER;
     st->fallback.stops[0].frac = 0;
-    st->fallback.stops[1].color = theme().accent;
+    st->fallback.stops[1].color = theme().brand;
     st->fallback.stops[1].opa = LV_OPA_COVER;
     st->fallback.stops[1].frac = 200;
-    lv_obj_set_style_bg_color(p.lead, theme().accent, 0);
+    lv_obj_set_style_bg_color(p.lead, theme().brand, 0);
     lv_obj_set_style_bg_grad(p.lead, &st->fallback, 0);
-    st->shownAccent = v.accent;
+    st->shownBrand = v.brand;
   }
   apply_lead_headline(p, v.lead.headline, first || v.lead.headline != st->shown.lead.headline);
   set_text(p.leadTime, v.lead.time);

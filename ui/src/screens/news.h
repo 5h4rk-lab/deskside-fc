@@ -55,7 +55,7 @@ struct NewsParts {
   lv_obj_t* emptyTitle = nullptr;
   lv_obj_t* emptyHint = nullptr;
 
-  lv_obj_t* lead = nullptr;          // 240x158 block; its background is the accent gradient
+  lv_obj_t* lead = nullptr;          // 240x158 block; its background is the brand-colour gradient
   lv_obj_t* leadImage = nullptr;     // the picture, scaled and cropped to fill the block
   lv_obj_t* leadTime = nullptr;      // "2h ago"
   lv_obj_t* leadHeadline = nullptr;  // up to three lines

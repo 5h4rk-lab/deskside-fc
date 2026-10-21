@@ -58,6 +58,11 @@ TEST_CASE("parse_matches reads the shared fixture") {
   CHECK(m.home.league.empty());
   CHECK(m.home.color == parse_hex(first["home"]["color"].as<const char*>()));
   CHECK(m.away.color == parse_hex(first["away"]["color"].as<const char*>()));
+  // The regenerated fixture carries the real brand colour separately (Spurs navy).
+  CHECK(m.home.primary == parse_hex(first["home"]["primary"].as<const char*>()));
+  CHECK(m.home.primary == 0x132257u);
+  CHECK(m.home.color == 0xFFFFFFu);
+  CHECK(m.away.primary == parse_hex(first["away"]["primary"].as<const char*>()));
   REQUIRE(m.homeScore.has_value());
   REQUIRE(m.awayScore.has_value());
   CHECK(*m.homeScore == first["homeScore"].as<int>());
@@ -191,7 +196,47 @@ TEST_CASE("parse_teams reads the shared fixture") {
     CHECK(teams[i].abbr == t["abbr"].as<std::string>());
     CHECK(teams[i].league == "eng.1");
     CHECK(teams[i].color == parse_hex(t["color"].as<const char*>()));
+    CHECK(teams[i].primary == parse_hex(t["primary"].as<const char*>()));
   }
+  CHECK(teams[5].abbr == "CHE");
+  CHECK(teams[5].color == 0xDBA111u);
+  CHECK(teams[5].primary == 0x034694u);
+}
+
+TEST_CASE("Team.primary is optional: absent or invalid falls back to the accent colour") {
+  // An older helper sends no primary: the team keeps working with its accent.
+  JsonDocument doc = load_doc("matches-normalised.json");
+  doc["matches"][0]["home"].remove("primary");
+  doc["matches"][0]["away"]["primary"] = "not-a-colour";
+  std::vector<MatchSummary> matches;
+  int64_t updated = 0;
+  REQUIRE(parse_matches(dump(doc), matches, updated));
+  CHECK(matches[0].home.primary == matches[0].home.color);
+  CHECK(matches[0].away.primary == matches[0].away.color);
+
+  // Wrong types and malformed hex fall back too; "#RRGGBB" and "RRGGBB" are read.
+  const char* bad[] = {"", "#12345", "#1234567", "#GGGGGG", "12 456"};
+  for (const char* b : bad) {
+    JsonDocument t = load_doc("teams-normalised.json");
+    t["teams"][0]["primary"] = b;
+    t["teams"][1]["primary"] = 42;
+    t["teams"][2]["primary"] = nullptr;
+    t["teams"][3]["primary"] = "a1b2c3";
+    std::vector<Team> teams;
+    REQUIRE(parse_teams(dump(t), teams));
+    INFO(b);
+    CHECK(teams[0].primary == teams[0].color);
+    CHECK(teams[1].primary == teams[1].color);
+    CHECK(teams[2].primary == teams[2].color);
+    CHECK(teams[3].primary == 0xA1B2C3u);
+  }
+
+  JsonDocument d = load_doc("detail-normalised.json");
+  d["match"]["home"].remove("primary");
+  MatchDetail detail;
+  REQUIRE(parse_detail(dump(d), detail));
+  CHECK(detail.match.home.primary == detail.match.home.color);
+  CHECK(detail.match.away.primary == 0x5CBFEBu);
 }
 
 TEST_CASE("parse_matches rejects bad input and leaves the output untouched") {

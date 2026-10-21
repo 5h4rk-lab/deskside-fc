@@ -12,6 +12,7 @@ Team default_favourite() {
   t.abbr = "ARS";
   t.name = "Arsenal";
   t.color = kDefaultColor;
+  t.primary = kDefaultColor;
   t.crest = "/api/img?u=https%3A%2F%2Fa.espncdn.com%2Fi%2Fteamlogos%2Fsoccer%2F500%2F359.png&w=48&h=48";
   t.league = "eng.1";
   return t;
@@ -70,6 +71,8 @@ Settings load_settings(const Prefs& prefs) {
     t.color = def.color;
     uint32_t c;
     if (parse_color(get_or(prefs, "fav.color", ""), c)) t.color = c;
+    t.primary = t.color;
+    if (parse_color(get_or(prefs, "fav.primary", ""), c)) t.primary = c;
     s.favourite = t;
   }
 
@@ -90,6 +93,7 @@ void save_settings(Prefs& prefs, const Settings& s) {
   prefs.set("fav.abbr", s.favourite.abbr);
   prefs.set("fav.name", s.favourite.name);
   prefs.set("fav.color", color_text(s.favourite.color));
+  prefs.set("fav.primary", color_text(s.favourite.primary));
   prefs.set("fav.crest", s.favourite.crest);
   prefs.set("fav.league", s.favourite.league);
   prefs.set("zone", s.zoneId);

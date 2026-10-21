@@ -544,7 +544,7 @@ TEST_CASE("without a picture the lead is an accent gradient, never empty") {
   const lv_grad_dsc_t* grad = lv_obj_get_style_bg_grad(p->lead, 0);
   REQUIRE(grad != nullptr);
   CHECK(grad->stops_count == 2);
-  CHECK(u32(grad->stops[1].color) == u32(theme().accent));
+  CHECK(u32(grad->stops[1].color) == u32(theme().brand));
   CHECK(u32(grad->stops[0].color) != u32(grad->stops[1].color));
   // It renders as colour, not black.
   const lv_color_t px = pixel_at(p->lead, 200, 60);
@@ -561,11 +561,18 @@ TEST_CASE("without a picture the lead is an accent gradient, never empty") {
   f.refresh();
   CHECK(f.images.requested.size() == requests);
 
-  // The gradient follows the favourite's colour.
+  // The gradient follows the favourite's colour (two-argument form: brand = accent).
   theme_set_team(0x0A7B3E, 0x034694);
   f.load({article("c", 300)});
   grad = lv_obj_get_style_bg_grad(p->lead, 0);
   CHECK(rgb(grad->stops[1].color) == 0x0A7B3E);
+
+  // It is a large surface: it uses the brand colour, not the accent.
+  theme_set_team(0xDBA111, 0xEF0107, 0x034694);
+  f.load({article("d", 300)});
+  grad = lv_obj_get_style_bg_grad(p->lead, 0);
+  CHECK(rgb(grad->stops[1].color) == 0x034694);
+  CHECK(u32(grad->stops[0].color) == u32(darken(lv_color_hex(0x034694), 140)));
   theme_reset();
 }
 

@@ -17,7 +17,8 @@ struct Team {
   std::string abbr;
   std::string name;
   std::string crest;   // helper-relative path
-  uint32_t color = 0;  // 0xRRGGBB
+  uint32_t color = 0;    // 0xRRGGBB: readable accent for small details
+  uint32_t primary = 0;  // 0xRRGGBB: real brand colour for large surfaces (may be dark)
   std::string league;  // only set in the teams response
 };
 
