@@ -8,3 +8,4 @@ agentdb.rvf
 agentdb.rvf.lock
 secrets.ini
 .pio/
+firmware/app/src/demo/demo_fixtures.gen.h

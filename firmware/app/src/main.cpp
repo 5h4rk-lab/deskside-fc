@@ -1,33 +1,50 @@
-// Soccer display firmware. For now: boots, brings up the display, backlight
-// and touch under LVGL and shows a driver test screen (build id, touch
-// coordinates and crosshair, tap-counting button, colour bars, the two
-// decoded pictures).
-// Also decodes an embedded PNG and JPEG through the shared LvglImageDecoder
-// (ui/src), shows them 1:1 and logs decode times and where the pixels live.
-// The UI, Wi-Fi and the rest are added by the next tasks.
+// Soccer display firmware: boots the board, starts the shared UI with demo data
+// and the persistent settings, and prints a compact status and memory report on
+// the serial console.
+//
+// Serial commands (one letter, no Enter needed; echo -n g > /dev/ttyACM0):
+//   g        the favourite scores in its live demo match (goal celebration)
+//   w        the live demo match ends with the favourite ahead (win)
+//   d        reload the demo data (after a win the live match is gone)
+//   s0 s1 s2 show the Live, Matches or News tab
+//   x0..x4   diagnostics: hide/show a part of the goal celebration (0 rays, 1 confetti,
+//            2 headline, 3 cutout, 4 strip) to see what costs frame time
+//   t        make the next team of the list the favourite (saved; shows persistence)
+//   p        print the settings in use
+//   e        erase the saved settings and restart (defaults: Arsenal, UTC, full brightness)
+//   k        NVS self-test (PASS/FAIL lines; also a counter that survives reboots and flashes)
+//   f        toggle one-second performance lines ([perf]) instead of 5 s
+//   m        print the memory report now
+//   r        restart the board
+// The commands are read here (the Arduino loop task) and handed to the LVGL
+// task through a queue, so the console never slows the screen.
 #include <Arduino.h>
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
-#include <esp_memory_utils.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <lvgl.h>
 #include <stdio.h>
-#include <string>
 
+#include "app_host.h"
 #include "board/backlight_ledc.h"
 #include "board/display_st7789.h"
 #include "board/lvgl_port.h"
 #include "board/pins.h"
-#include "board/test_assets.h"
-#include "board/touch.h"
-#include "lvgl_image_decoder.h"
+#include <string>
+
+#include "platform/nvs_prefs.h"
 #include "version.h"
+
+// The app is built inside setup(); give the Arduino loop task room for it.
+SET_LOOP_TASK_STACK_SIZE(16 * 1024);
 
 namespace {
 
-constexpr uint32_t kSerialWaitMs = 3000;
+constexpr uint32_t kSerialWaitMs = 1000;
 constexpr uint32_t kStatusMs = 5000;
+constexpr uint32_t kFastStatusMs = 1000;
+constexpr uint32_t kLoopStepMs = 20;
 
 // Power hold: GPIO7 must be HIGH or the board powers off on battery. The
 // output latch is set to 1 BEFORE the output driver is enabled, so the pin
@@ -41,456 +58,307 @@ void powerHoldHigh() {
 // first application code to execute after the ESP-IDF startup.
 __attribute__((constructor(101))) void earlyPowerHold() { powerHoldHigh(); }
 
-LedcBacklight* s_backlight = nullptr;
+// The UI asks for a brightness while it is being built, before the first frame
+// has been drawn; the panel RAM holds garbage until then. This keeps the
+// request and passes it on only once open() is called (after the first frame).
+class GatedBacklight : public Backlight {
+ public:
+  explicit GatedBacklight(Backlight& real) : real_(real) {}
+  void set_percent(uint8_t percent) override {
+    percent_ = percent;
+    if (open_) real_.set_percent(percent);
+  }
+  void open() {
+    open_ = true;
+    real_.set_percent(percent_);
+  }
+  uint8_t percent() const { return percent_; }
 
-// ---- test screen ---------------------------------------------------------------
-
-struct TestUi {
-  lv_obj_t* touchLabel = nullptr;
-  lv_obj_t* buttonLabel = nullptr;
-  lv_obj_t* statusLabel = nullptr;
-  lv_obj_t* cross = nullptr;
-  uint32_t taps = 0;
-  uint32_t badTouch = 0;  // touch points outside 0..239 x 0..319 (should stay 0)
-  lv_point_t lastPoint = {0, 0};
-  bool wasDown = false;
+ private:
+  Backlight& real_;
+  uint8_t percent_ = 0;
+  volatile bool open_ = false;
 };
-TestUi g_ui;
 
-lv_obj_t* makeBox(lv_obj_t* parent, int x, int y, int w, int h, lv_color_t color) {
-  lv_obj_t* o = lv_obj_create(parent);
-  lv_obj_remove_style_all(o);
-  lv_obj_remove_flag(o, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_pos(o, x, y);
-  lv_obj_set_size(o, w, h);
-  lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
-  lv_obj_set_style_bg_color(o, color, 0);
-  return o;
-}
+uint32_t s_bootMs = 0;          // millis() when setup() began
+uint32_t s_firstFrameMs = 0;    // time from setup() to the first frame leaving the SPI bus
+uint32_t s_serialWaitedMs = 0;  // time spent waiting for a serial monitor
+bool s_fast = false;            // [perf] line every second
+uint32_t s_loopLagMaxMs = 0;    // worst overshoot of the loop's own 20 ms step since the last report
+bool s_appOk = false;
+NvsPrefs* s_prefs = nullptr;
 
-// Every visible block of the test screen is registered here so that
-// checkLayout() can verify, on the device, that nothing overlaps and nothing
-// leaves the 240 x 320 panel (there is no way to see the screen from serial).
-struct Tracked {
-  const char* name;
-  lv_obj_t* obj;
-};
-Tracked g_tracked[32];
-size_t g_trackedCount = 0;
-void track(const char* name, lv_obj_t* obj) {
-  if (g_trackedCount < sizeof(g_tracked) / sizeof(g_tracked[0])) g_tracked[g_trackedCount++] = {name, obj};
-}
-
-void checkLayout(lv_obj_t* scr) {
-  lv_obj_update_layout(scr);
-  int problems = 0;
-  for (size_t i = 0; i < g_trackedCount; ++i) {
-    lv_area_t a;
-    lv_obj_get_coords(g_tracked[i].obj, &a);
-    if (a.x1 < 0 || a.y1 < 0 || a.x2 >= kDisplayWidth || a.y2 >= kDisplayHeight) {
-      Serial.printf("[layout] WARNING: '%s' leaves the screen: x %d..%d y %d..%d\n", g_tracked[i].name, (int)a.x1,
-                    (int)a.x2, (int)a.y1, (int)a.y2);
-      ++problems;
-    }
-    for (size_t j = i + 1; j < g_trackedCount; ++j) {
-      lv_area_t b;
-      lv_obj_get_coords(g_tracked[j].obj, &b);
-      if (a.x1 <= b.x2 && b.x1 <= a.x2 && a.y1 <= b.y2 && b.y1 <= a.y2) {
-        Serial.printf("[layout] WARNING: '%s' (x %d..%d y %d..%d) overlaps '%s' (x %d..%d y %d..%d)\n",
-                      g_tracked[i].name, (int)a.x1, (int)a.x2, (int)a.y1, (int)a.y2, g_tracked[j].name, (int)b.x1,
-                      (int)b.x2, (int)b.y1, (int)b.y2);
-        ++problems;
-      }
-    }
-  }
-  Serial.printf("[layout] %u blocks checked, %d problems\n", (unsigned)g_trackedCount, problems);
-}
-
-// Logs a layout bug on serial when `text` (the widest string a label will show)
-// is wider than the label: it would be clipped or wrapped onto the next row.
-void checkFits(const char* name, const char* text, const lv_font_t* font, int w) {
-  lv_point_t size;
-  lv_text_get_size(&size, text, font, 0, 0, LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-  if (size.x > w) Serial.printf("[layout] WARNING: label '%s' needs %d px but has %d\n", name, (int)size.x, w);
-}
-
-// One-line label: fixed 18 px height, text clipped, never wraps, so it can
-// never grow into the row below. `widest` is the longest text it will show.
-lv_obj_t* makeLabel(lv_obj_t* parent, const char* name, int x, int y, int w, const char* widest,
-                    lv_text_align_t align, int lines = 1) {
-  lv_obj_t* l = lv_label_create(parent);
-  lv_obj_set_pos(l, x, y);
-  lv_obj_set_size(l, w, 18 * lines);
-  lv_label_set_long_mode(l, LV_LABEL_LONG_CLIP);
-  lv_obj_set_style_text_align(l, align, 0);
-  lv_obj_set_style_text_color(l, lv_color_white(), 0);
-  lv_label_set_text(l, widest);
-  track(name, l);
-  const lv_font_t* font = lv_obj_get_style_text_font(l, LV_PART_MAIN);
-  // Check every line of the text separately.
-  char line[96];
-  const char* t = widest;
-  while (*t) {
-    size_t n = 0;
-    while (t[n] && t[n] != '\n' && n < sizeof(line) - 1) ++n;
-    memcpy(line, t, n);
-    line[n] = 0;
-    checkFits(name, line, font, w);
-    t += n;
-    if (*t == '\n') ++t;
-  }
-  return l;
-}
-
-// A white-bordered square at each corner and a ring in the centre: the
-// targets for the four-corners-and-centre touch check.
-void makeTarget(lv_obj_t* parent, int cx, int cy, int size) {
-  lv_obj_t* t = lv_obj_create(parent);
-  track("corner target", t);
-  lv_obj_remove_style_all(t);
-  lv_obj_remove_flag(t, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_size(t, size, size);
-  lv_obj_set_pos(t, cx - size / 2, cy - size / 2);
-  lv_obj_set_style_border_width(t, 2, 0);
-  lv_obj_set_style_border_color(t, lv_color_white(), 0);
-  lv_obj_set_style_border_opa(t, LV_OPA_COVER, 0);
-}
-
-void onButton(lv_event_t*) {
-  ++g_ui.taps;
-  lv_label_set_text_fmt(g_ui.buttonLabel, "Tap me: %lu", (unsigned long)g_ui.taps);
-}
-
-// Follows the finger with a large crosshair on the top layer and prints the
-// coordinates. Runs in the LVGL task (an lv_timer).
-void onTouchTimer(lv_timer_t*) {
-  lv_indev_t* indev = lv_indev_get_next(nullptr);
-  if (!indev) return;
-  const bool down = lv_indev_get_state(indev) == LV_INDEV_STATE_PRESSED;
-  lv_point_t p;
-  lv_indev_get_point(indev, &p);
-  const bool moved = down && (p.x != g_ui.lastPoint.x || p.y != g_ui.lastPoint.y);
-  if (down && moved && (p.x < 0 || p.x >= kDisplayWidth || p.y < 0 || p.y >= kDisplayHeight)) {
-    ++g_ui.badTouch;
-    if (g_ui.badTouch <= 20) {
-      Serial.printf("[touch] OUT OF RANGE x=%d y=%d (count %lu)\n", (int)p.x, (int)p.y, (unsigned long)g_ui.badTouch);
-    }
-  }
-  const bool pressChanged = down != g_ui.wasDown;
-
-  // Only touch the crosshair when something changes: setting a flag that is
-  // already set still invalidates the area and would redraw 30 times a second.
-  const bool hidden = lv_obj_has_flag(g_ui.cross, LV_OBJ_FLAG_HIDDEN);
-  if (down) {
-    if (hidden) lv_obj_remove_flag(g_ui.cross, LV_OBJ_FLAG_HIDDEN);
-    if (hidden || moved) lv_obj_set_pos(g_ui.cross, p.x - 40, p.y - 40);
-  } else if (!hidden) {
-    lv_obj_add_flag(g_ui.cross, LV_OBJ_FLAG_HIDDEN);
-  }
-
-  if (pressChanged || moved) {
-    if (down) {
-      lv_label_set_text_fmt(g_ui.touchLabel, "touch DOWN x=%d y=%d", (int)p.x, (int)p.y);
-      g_ui.lastPoint = p;
-    } else {
-      lv_label_set_text_fmt(g_ui.touchLabel, "released x=%d y=%d", (int)g_ui.lastPoint.x, (int)g_ui.lastPoint.y);
-    }
-    g_ui.wasDown = down;
-  }
-}
-
-// Where the picture's pixels live: "PSRAM", "internal" or "?" (not RAM).
-const char* placement(const void* p) {
-  if (esp_ptr_external_ram(p)) return "PSRAM";
-  if (esp_ptr_internal(p)) return "internal";
-  return "?";
-}
-
-// ---- decoded test pictures -----------------------------------------------------
-
-struct DecodedPicture {
-  ImagePtr image;
-  uint32_t firstUs = 0;  // first decode (cold caches), including the descriptor
-  uint32_t avgUs = 0;    // average of the repeat decodes
-  int32_t psramDelta = 0, internalDelta = 0;  // free-bytes change caused by the first decode
-  size_t pixelBytes = 0;
-  const char* where = "?";
-};
-DecodedPicture g_png, g_jpeg;
-constexpr int kRepeats = 5;
-
-struct HeapSnap {
-  size_t intFree, psFree, intLargest, psLargest;
-};
-HeapSnap snapHeap() {
-  return {heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
-          heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL), heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM)};
-}
-
-// Decodes `bytes` once for display, then kRepeats more times for an average
-// (the repeats are freed again). Logs heap before and after. LVGL lock held.
-void decodeAndLog(const char* name, const unsigned char* bytes, size_t n, DecodedPicture& out) {
-  static LvglImageDecoder decoder;
-  const std::string file(reinterpret_cast<const char*>(bytes), n);
-
-  const HeapSnap before = snapHeap();
-  const int64_t t0 = esp_timer_get_time();
-  out.image = decoder.decode(file);
-  out.firstUs = (uint32_t)(esp_timer_get_time() - t0);
-  const HeapSnap after = snapHeap();
-
-  if (!out.image) {
-    Serial.printf("[img] %s: DECODE FAILED (%u bytes in)\n", name, (unsigned)n);
-    return;
-  }
-  out.psramDelta = (int)after.psFree - (int)before.psFree;
-  out.internalDelta = (int)after.intFree - (int)before.intFree;
-  out.pixelBytes = out.image->data_size;
-  out.where = placement(out.image->data);
-  Serial.printf("[img] %s: %u bytes -> %ldx%ld cf %u stride %u, %u B of pixels at %p in %s, first decode %lu us\n", name,
-                (unsigned)n, (long)out.image->header.w, (long)out.image->header.h, (unsigned)out.image->header.cf,
-                (unsigned)out.image->header.stride, (unsigned)out.pixelBytes, (const void*)out.image->data, out.where,
-                (unsigned long)out.firstUs);
-  Serial.printf(
-      "[img] %s heap delta: internal free %d (largest %u -> %u), psram free %d (largest %u -> %u)\n", name,
-      (int)after.intFree - (int)before.intFree, (unsigned)before.intLargest, (unsigned)after.intLargest,
-      (int)after.psFree - (int)before.psFree, (unsigned)before.psLargest, (unsigned)after.psLargest);
-
-  uint64_t total = 0;
-  int ok = 0;
-  for (int i = 0; i < kRepeats; ++i) {
-    const int64_t r0 = esp_timer_get_time();
-    ImagePtr again = decoder.decode(file);
-    const uint32_t us = (uint32_t)(esp_timer_get_time() - r0);
-    if (again) {
-      total += us;
-      ++ok;
-    }
-  }
-  out.avgUs = ok ? (uint32_t)(total / ok) : 0;
-  Serial.printf("[img] %s: %d repeat decodes avg %lu us\n", name, ok, (unsigned long)out.avgUs);
-  const HeapSnap end = snapHeap();
-  Serial.printf("[img] %s heap after repeats: internal free %u psram free %u (delta vs after first decode: %d / %d)\n",
-                name, (unsigned)end.intFree, (unsigned)end.psFree, (int)end.intFree - (int)after.intFree,
-                (int)end.psFree - (int)after.psFree);
-}
-
-void showPicture(lv_obj_t* parent, const DecodedPicture& pic, int x, int y) {
-  // Grey outline 1 px outside the 96 x 96 picture so its bounds are visible.
-  track("picture", makeBox(parent, x - 2, y - 2, test_assets::kSize + 4, test_assets::kSize + 4, lv_color_make(90, 90, 90)));
-  if (!pic.image) {
-    lv_obj_t* l = makeLabel(parent, "missing", x, y + 38, test_assets::kSize, "no picture", LV_TEXT_ALIGN_CENTER);
-    lv_obj_set_style_text_color(l, lv_color_make(255, 90, 90), 0);
-    return;
-  }
-  lv_obj_t* im = lv_image_create(parent);
-  lv_obj_remove_flag(im, LV_OBJ_FLAG_CLICKABLE);
-  lv_image_set_src(im, pic.image.get());
-  lv_obj_set_pos(im, x, y);
-}
-
-void buildTestScreen() {
-  lv_obj_t* scr = lv_screen_active();
-  lv_obj_set_style_bg_color(scr, lv_color_hex(0x101820), 0);
-  lv_obj_set_style_bg_opa(scr, LV_OPA_COVER, 0);
-  lv_obj_remove_flag(scr, LV_OBJ_FLAG_SCROLLABLE);
-
-  // Layout, 240 x 320 (every row is its own band, nothing overlaps):
-  //   y   2..38   build id (2 lines)        y  40..58   touch line
-  //   y  62..160  PNG and JPEG, 96 x 96 each at 1:1, side by side
-  //   y 164..182  captions                  y 184..220  decode times, placement
-  //   y 224..260  button                    y 266..278  colour bars
-  //   y 296..314  status line               corner squares 28 x 28 at the edges
-  // Corner targets (drawn first, everything else sits above).
-  makeTarget(scr, 14, 14, 28);
-  makeTarget(scr, kDisplayWidth - 14, 14, 28);
-  makeTarget(scr, 14, kDisplayHeight - 14, 28);
-  makeTarget(scr, kDisplayWidth - 14, kDisplayHeight - 14, 28);
-
-  char build[96];
-  snprintf(build, sizeof(build), "%s %s\nbuilt %s %s", kAppName, kAppVersion, __DATE__, __TIME__);
-  makeLabel(scr, "build", 30, 2, kDisplayWidth - 60, build, LV_TEXT_ALIGN_CENTER, 2);
-  g_ui.touchLabel = makeLabel(scr, "touch", 10, 40, kDisplayWidth - 20, "touch DOWN x=-999 y=-999", LV_TEXT_ALIGN_CENTER);
-  lv_label_set_text(g_ui.touchLabel, "touch: none yet");
-
-  // The pictures: 1:1 so every pixel is visible.
-  showPicture(scr, g_png, 16, 64);
-  showPicture(scr, g_jpeg, 128, 64);
-  makeLabel(scr, "cap png", 14, 164, 100, "PNG", LV_TEXT_ALIGN_CENTER);
-  makeLabel(scr, "cap jpeg", 126, 164, 100, "JPEG", LV_TEXT_ALIGN_CENTER);
-
-  char line[64];
-  lv_obj_t* l;
-  snprintf(line, sizeof(line), "PNG %lu.%lu ms  JPEG %lu.%lu ms", (unsigned long)(g_png.avgUs / 1000),
-           (unsigned long)(g_png.avgUs % 1000 / 100), (unsigned long)(g_jpeg.avgUs / 1000),
-           (unsigned long)(g_jpeg.avgUs % 1000 / 100));
-  l = makeLabel(scr, "times", 10, 184, kDisplayWidth - 20, "PNG 000.0 ms  JPEG 000.0 ms", LV_TEXT_ALIGN_CENTER);
-  lv_label_set_text(l, line);
-  snprintf(line, sizeof(line), "pixels in: %s / %s", g_png.where, g_jpeg.where);
-  l = makeLabel(scr, "where", 10, 202, kDisplayWidth - 20, "pixels in: internal / internal", LV_TEXT_ALIGN_CENTER);
-  lv_label_set_text(l, line);
-  const bool bothOk = g_png.image && g_jpeg.image;
-  lv_obj_set_style_text_color(l, bothOk ? lv_color_make(120, 255, 120) : lv_color_make(255, 90, 90), 0);
-
-  lv_obj_t* btn = lv_button_create(scr);
-  lv_obj_set_pos(btn, 40, 224);
-  lv_obj_set_size(btn, kDisplayWidth - 80, 36);
-  track("button", btn);
-  lv_obj_add_event_cb(btn, onButton, LV_EVENT_CLICKED, nullptr);
-  g_ui.buttonLabel = lv_label_create(btn);
-  lv_label_set_text(g_ui.buttonLabel, "Tap me: 0");
-  lv_obj_center(g_ui.buttonLabel);
-
-  // Colour bars: red, green, blue, white, black.
-  const lv_color_t bars[5] = {lv_color_make(255, 0, 0), lv_color_make(0, 255, 0), lv_color_make(0, 0, 255),
-                              lv_color_make(255, 255, 255), lv_color_make(0, 0, 0)};
-  for (int i = 0; i < 5; ++i) track("colour bar", makeBox(scr, 20 + i * 40, 266, 40, 12, bars[i]));
-
-  // Status line: one row, clipped (see makeLabel).
-  g_ui.statusLabel = makeLabel(scr, "status", 30, 296, kDisplayWidth - 60, "flush 00.0 busy 00.0 ms", LV_TEXT_ALIGN_CENTER);
-  lv_label_set_text(g_ui.statusLabel, "starting...");
-  lv_obj_set_style_text_color(g_ui.statusLabel, lv_color_make(150, 200, 255), 0);
-  checkLayout(scr);
-
-  // Crosshair on the top layer: 80 x 80, a ring plus two bars, never clickable.
-  lv_obj_t* cross = lv_obj_create(lv_layer_top());
-  lv_obj_remove_style_all(cross);
-  lv_obj_remove_flag(cross, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_remove_flag(cross, LV_OBJ_FLAG_SCROLLABLE);
-  lv_obj_set_size(cross, 80, 80);
-  lv_obj_add_flag(cross, LV_OBJ_FLAG_HIDDEN);
-  makeBox(cross, 0, 38, 80, 4, lv_color_make(255, 60, 60));
-  makeBox(cross, 38, 0, 4, 80, lv_color_make(255, 60, 60));
-  lv_obj_t* ring = lv_obj_create(cross);
-  lv_obj_remove_style_all(ring);
-  lv_obj_remove_flag(ring, LV_OBJ_FLAG_CLICKABLE);
-  lv_obj_set_size(ring, 40, 40);
-  lv_obj_set_pos(ring, 20, 20);
-  lv_obj_set_style_radius(ring, LV_RADIUS_CIRCLE, 0);
-  lv_obj_set_style_border_width(ring, 3, 0);
-  lv_obj_set_style_border_color(ring, lv_color_make(255, 230, 0), 0);
-  lv_obj_set_style_border_opa(ring, LV_OPA_COVER, 0);
-  g_ui.cross = cross;
-
-  lv_timer_create(onTouchTimer, 20, nullptr);
-#if defined(APP_BENCH) && APP_BENCH
-  // Benchmark build only: redraw the whole screen 5 times a second so the
-  // status line shows full-frame times and any SPI trouble shows on screen.
-  lv_timer_create([](lv_timer_t*) { lv_obj_invalidate(lv_screen_active()); }, 200, nullptr);
-#endif
-}
-
-// ---- status ----------------------------------------------------------------------
-
-void printStatus(uint32_t elapsedMs) {
-  LvglPortStats s;
-  lvgl_port_take_stats(s);
-  const uint32_t secs = elapsedMs ? elapsedMs : 1;
-  const uint32_t frameAvgUs = s.frames ? s.flushUs / s.frames : 0;
-  const uint32_t blockAvgUs = s.flushes ? s.flushUs / s.flushes : 0;
-  const uint32_t handlerAvgUs = s.handlerCalls ? s.handlerUs / s.handlerCalls : 0;
-  const uint32_t busyAvgUs = s.busyCalls ? s.busyUs / s.busyCalls : 0;
-  Serial.printf(
-      "[status] up %lu s | frames %lu (%lu.%lu/s) flush/frame avg %lu us max %lu us, %lu us/block (%lu blocks) | "
-      "lv_timer_handler %lu calls avg %lu us, busy %lu calls avg %lu us, max %lu us | display_err %lu touch int %lu "
-      "i2c_err %lu recoveries %lu%s\n",
-      (unsigned long)(millis() / 1000), (unsigned long)s.frames, (unsigned long)(s.frames * 1000 / secs),
-      (unsigned long)((s.frames * 10000 / secs) % 10), (unsigned long)frameAvgUs, (unsigned long)s.frameFlushMaxUs,
-      (unsigned long)blockAvgUs, (unsigned long)s.flushes, (unsigned long)s.handlerCalls,
-      (unsigned long)handlerAvgUs, (unsigned long)s.busyCalls, (unsigned long)busyAvgUs, (unsigned long)s.handlerMaxUs,
-      (unsigned long)s.displayErrors, (unsigned long)touch_interrupt_count(), (unsigned long)touch_i2c_error_count(), (unsigned long)touch_recovery_count(),
-      touch_in_backoff() ? " BACKOFF" : "");
-
-  lv_mem_monitor_t mon;
+void printMemory() {
+  lv_mem_monitor_t mon = {};
   if (lvgl_lock(100)) {
     lv_mem_monitor(&mon);
-    char text[64];
-    snprintf(text, sizeof(text), "flush %lu.%lu busy %lu.%lu ms", (unsigned long)(frameAvgUs / 1000),
-             (unsigned long)(frameAvgUs % 1000 / 100), (unsigned long)(busyAvgUs / 1000),
-             (unsigned long)(busyAvgUs % 1000 / 100));
-    lv_label_set_text(g_ui.statusLabel, text);
     lvgl_unlock();
-  } else {
-    mon = {};
-    Serial.println("[status] lvgl_lock timed out");
   }
-  // The decode lines at boot scroll away (the monitor attaches late), so the
-  // result is repeated here with every report.
-  Serial.printf(
-      "[img] png first %lu us avg %lu us, %u B in %s (psram %+ld, internal %+ld B); jpeg first %lu us avg %lu us, %u B in %s "
-      "(psram %+ld, internal %+ld B)\n",
-      (unsigned long)g_png.firstUs, (unsigned long)g_png.avgUs, (unsigned)g_png.pixelBytes, g_png.where,
-      (long)g_png.psramDelta, (long)g_png.internalDelta, (unsigned long)g_jpeg.firstUs, (unsigned long)g_jpeg.avgUs,
-      (unsigned)g_jpeg.pixelBytes, g_jpeg.where, (long)g_jpeg.psramDelta, (long)g_jpeg.internalDelta);
   Serial.printf(
       "[mem] internal free %u (min %u, largest %u) psram free %u (min %u, largest %u) | lvgl used %u of %u B, "
-      "free %u, frag %u%% | pictures png %s jpeg %s | touch_out_of_range %lu\n",
+      "free %u, frag %u%% | stack free lvgl %u loop %u B | boot: first frame at %lu ms (%lu ms serial wait)\n",
       (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
       (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
       (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
       (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
       (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM), (unsigned)(mon.total_size - mon.free_size),
-      (unsigned)mon.total_size, (unsigned)mon.free_size, (unsigned)mon.frag_pct, g_png.where, g_jpeg.where,
-      (unsigned long)g_ui.badTouch);
+      (unsigned)mon.total_size, (unsigned)mon.free_size, (unsigned)mon.frag_pct, (unsigned)lvgl_port_stack_free_bytes(),
+      (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)), (unsigned long)s_firstFrameMs,
+      (unsigned long)s_serialWaitedMs);
+}
+
+// Numbers for `elapsedMs` of running: `frames` counts completed screen
+// refreshes, `cpu` is the share of time spent inside lv_timer_handler() (render,
+// flush wait and the host loop timer), `busy` the average of the calls that
+// rendered something (took more than 1 ms), `loop_lag_max` how late the Arduino
+// loop task ran (it has a lower priority than LVGL: a large value would mean
+// LVGL starves it).
+void printStatus(uint32_t elapsedMs, bool fast) {
+  LvglPortStats s;
+  lvgl_port_take_stats(s);
+  const uint32_t ms = elapsedMs ? elapsedMs : 1;
+  const uint32_t cpuTenths = (uint32_t)((uint64_t)s.handlerUs * 1000 / ((uint64_t)ms * 1000));  // 0.1 %
+  const uint32_t waitTenths = (uint32_t)((uint64_t)s.waitUs * 1000 / ((uint64_t)ms * 1000));
+  const uint32_t busyAvgUs = s.busyCalls ? s.busyUs / s.busyCalls : 0;
+  const uint32_t handlerAvgUs = s.handlerCalls ? s.handlerUs / s.handlerCalls : 0;
+  const uint32_t fpsTenths = (uint32_t)((uint64_t)s.frames * 10000 / ms);
+  const uint32_t frameFlushAvgUs = s.frames ? s.flushUs / s.frames : 0;
+  Serial.printf(
+      "[%s] up %lu s | frames %lu (%lu.%lu/s) flush/frame avg %lu us max %lu us | lv_timer_handler %lu calls avg %lu us, "
+      "busy %lu calls avg %lu.%lu ms, max %lu.%lu ms, cpu %lu.%lu%% (flush wait %lu.%lu%%, longest %lu us) | display_err %lu loop_lag_max %lu ms\n",
+      fast ? "perf" : "status", (unsigned long)(millis() / 1000), (unsigned long)s.frames,
+      (unsigned long)(fpsTenths / 10), (unsigned long)(fpsTenths % 10), (unsigned long)frameFlushAvgUs,
+      (unsigned long)s.frameFlushMaxUs, (unsigned long)s.handlerCalls, (unsigned long)handlerAvgUs,
+      (unsigned long)s.busyCalls, (unsigned long)(busyAvgUs / 1000), (unsigned long)(busyAvgUs % 1000 / 100),
+      (unsigned long)(s.handlerMaxUs / 1000), (unsigned long)(s.handlerMaxUs % 1000 / 100),
+      (unsigned long)(cpuTenths / 10), (unsigned long)(cpuTenths % 10), (unsigned long)(waitTenths / 10),
+      (unsigned long)(waitTenths % 10), (unsigned long)s.waitMaxUs, (unsigned long)s.displayErrors,
+      (unsigned long)s_loopLagMaxMs);
+  s_loopLagMaxMs = 0;
+  if (!fast) printMemory();
+}
+
+// ---- NVS self-test --------------------------------------------------------------------
+
+// Exercises NvsPrefs on the real partition with its own keys (selftest.*). The
+// counter selftest.boots grows with every run: it proves the values survive a
+// restart and a USB re-flash (the partition is not part of the uploaded image).
+void nvsSelfTest() {
+  if (!s_prefs) return;
+  NvsPrefs& p = *s_prefs;
+  int fails = 0;
+  auto check = [&](bool ok, const char* what) {
+    Serial.printf("[nvs-test] %s %s\n", ok ? "PASS" : "FAIL", what);
+    if (!ok) ++fails;
+  };
+  Serial.printf("[nvs-test] persistent: %s\n", p.persistent() ? "yes" : "NO (RAM fallback)");
+  std::string out;
+
+  const int before = pref_int(p, "selftest.boots", 0);
+  set_pref_int(p, "selftest.boots", before + 1);
+  Serial.printf("[nvs-test] selftest.boots was %d, now %d\n", before, pref_int(p, "selftest.boots", -1));
+  check(pref_int(p, "selftest.boots", -1) == before + 1, "counter written and read back");
+
+  check(!p.get("selftest.missing", out), "a missing key reads false");
+  p.set("selftest.empty", "");
+  check(p.get("selftest.empty", out) && out.empty(), "an empty value round-trips");
+  const std::string utf8 = "Atl\xC3\xA9tico Madrid";
+  p.set("selftest.utf8", utf8);
+  check(p.get("selftest.utf8", out) && out == utf8, "UTF-8 round-trips");
+  const std::string big(kPrefsMaxValueLen, 'a');
+  p.set("selftest.big", big);
+  check(p.get("selftest.big", out) && out == big, "a 1000-byte value round-trips");
+  p.set("selftest.big", std::string(kPrefsMaxValueLen + 1, 'b'));
+  check(p.get("selftest.big", out) && out == big, "a 1001-byte value is rejected, the old value stays");
+  p.set("123456789012345", "x");
+  check(p.get("123456789012345", out) && out == "x", "a 15-character key works");
+  p.remove("123456789012345");
+  check(!p.get("123456789012345", out), "remove deletes it");
+  p.set("1234567890123456", "x");
+  check(!p.get("1234567890123456", out), "a 16-character key is rejected");
+  p.set("Bad Key", "x");
+  check(!p.get("Bad Key", out), "a key with a space or capitals is rejected");
+  p.set("selftest.nul", std::string("a\0b", 3));
+  check(!p.get("selftest.nul", out), "a value with a NUL byte is rejected");
+
+  // A corrupted entry: the right key with the wrong type (a blob).
+  nvs_handle_t raw = 0;
+  if (nvs_open("app", NVS_READWRITE, &raw) == ESP_OK) {
+    const uint8_t junk[3] = {1, 2, 3};
+    nvs_set_blob(raw, "selftest.blob", junk, sizeof(junk));
+    nvs_commit(raw);
+    nvs_close(raw);
+    out = "untouched";
+    check(!p.get("selftest.blob", out) && out == "untouched", "a wrongly typed (corrupted) entry reads false");
+    if (nvs_open("app", NVS_READWRITE, &raw) == ESP_OK) {
+      nvs_erase_key(raw, "selftest.blob");
+      nvs_commit(raw);
+      nvs_close(raw);
+    }
+  } else {
+    check(false, "could not open the namespace for the corruption test");
+  }
+
+  for (const char* k : {"selftest.empty", "selftest.utf8", "selftest.big"}) p.remove(k);
+  Serial.printf("[nvs-test] %s (%d failures)\n", fails == 0 ? "ALL PASSED" : "FAILED", fails);
+}
+
+// ---- serial commands ---------------------------------------------------------------
+
+bool s_wantTabDigit = false;
+bool s_wantHideDigit = false;
+
+void handleSerialByte(int c) {
+  if (s_wantTabDigit) {
+    s_wantTabDigit = false;
+    if (c >= '0' && c <= '9') {
+      app_host_post(AppCommand::Tab, c - '0');
+      return;
+    }
+    // Not a digit: treat it as a fresh command below.
+  }
+  if (s_wantHideDigit) {
+    s_wantHideDigit = false;
+    if (c >= '0' && c <= '9') {
+      app_host_post(AppCommand::Hide, c - '0');
+      return;
+    }
+  }
+  switch (c) {
+    case 'g':
+      app_host_post(AppCommand::Goal);
+      break;
+    case 'w':
+      app_host_post(AppCommand::Win);
+      break;
+    case 'd':
+      app_host_post(AppCommand::ReloadDemo);
+      break;
+    case 's':
+      s_wantTabDigit = true;
+      break;
+    case 'x':
+      s_wantHideDigit = true;
+      break;
+    case 't':
+      app_host_post(AppCommand::NextTeam);
+      break;
+    case 'p':
+      app_host_post(AppCommand::Settings);
+      break;
+    case 'e':
+      if (s_prefs && s_prefs->clear()) {
+        Serial.println("[cmd] settings erased, restarting");
+        Serial.flush();
+        delay(100);
+        esp_restart();
+      }
+      break;
+    case 'k':
+      nvsSelfTest();
+      break;
+    case 'f':
+      s_fast = !s_fast;
+      Serial.printf("[cmd] performance lines every %s\n", s_fast ? "second" : "5 s (with the memory report)");
+      break;
+    case 'm':
+      printMemory();
+      break;
+    case 'r':
+      Serial.println("[cmd] restarting");
+      Serial.flush();
+      delay(100);
+      esp_restart();
+      break;
+    default:
+      break;  // line ends and anything else are ignored
+  }
 }
 
 }  // namespace
 
 void setup() {
+  s_bootMs = millis();
   powerHoldHigh();  // again, harmless: the latch is already 1
 
+  // Logging must never hold the screen back: with nobody reading the console
+  // (the board runs from a charger, or the monitor is closed) the default
+  // transmit buffer fills and every write then waits for its timeout, which
+  // stretched the first start-up to 10 s. A bigger buffer holds the boot
+  // lines, and a short timeout drops the rest instead of waiting.
+  Serial.setTxBufferSize(4096);
   Serial.begin(115200);
-  uint32_t start = millis();
-  while (!Serial && millis() - start < kSerialWaitMs) delay(10);
+  Serial.setTxTimeoutMs(5);
+  while (!Serial && millis() - s_bootMs < kSerialWaitMs) delay(10);
+  s_serialWaitedMs = millis() - s_bootMs;
   Serial.printf("soccer-display app %s built %s %s\n", kAppVersion, __DATE__, __TIME__);
-  Serial.printf("power hold GPIO%d level %d\n", pins::kPowerHold, gpio_get_level((gpio_num_t)pins::kPowerHold));
+  Serial.printf("reset reason %d, power hold GPIO%d level %d, CPU %lu MHz, flash %lu MHz\n", (int)esp_reset_reason(),
+                pins::kPowerHold, gpio_get_level((gpio_num_t)pins::kPowerHold), (unsigned long)getCpuFrequencyMhz(),
+                (unsigned long)(ESP.getFlashChipSpeed() / 1000000));
 
   // The backlight stays off until the first frame has been drawn.
-  static LedcBacklight backlight;
-  s_backlight = &backlight;
-  if (!backlight.ok()) Serial.println("[backlight] ERROR: backlight unavailable");
+  static LedcBacklight ledc;
+  if (!ledc.ok()) Serial.println("[backlight] ERROR: backlight unavailable");
+  static GatedBacklight backlight(ledc);
+
+  Serial.printf("[heap] %-22s internal free %6u\n", "at setup", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+  // Settings first: a broken NVS must never keep the screen from starting.
+  static NvsPrefs prefs;
+  s_prefs = &prefs;
+  Serial.printf("[heap] %-22s internal free %6u\n", "after NVS", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   lvgl_port_start();
+  Serial.printf("[heap] %-22s internal free %6u\n", "after the LVGL port", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   if (!lvgl_lock(1000)) {
-    Serial.println("[main] FATAL: cannot take the LVGL lock to build the test screen");
+    Serial.println("[main] FATAL: cannot take the LVGL lock to build the UI");
     for (;;) delay(2000);
   }
-  {
-    // Decode the embedded pictures first (the decoder calls LVGL, so it runs
-    // under the lock like everything else), then build the screen around them.
-    const HeapSnap before = snapHeap();
-    Serial.printf("[img] before: internal free %u (largest %u) psram free %u (largest %u)\n",
-                  (unsigned)before.intFree, (unsigned)before.intLargest, (unsigned)before.psFree,
-                  (unsigned)before.psLargest);
-    decodeAndLog("png", test_assets::kPng, sizeof(test_assets::kPng), g_png);
-    decodeAndLog("jpeg", test_assets::kJpeg, sizeof(test_assets::kJpeg), g_jpeg);
-    const HeapSnap after = snapHeap();
-    Serial.printf("[img] after both: internal free %u (largest %u) psram free %u (largest %u); total delta internal %d psram %d\n",
-                  (unsigned)after.intFree, (unsigned)after.intLargest, (unsigned)after.psFree,
-                  (unsigned)after.psLargest, (int)after.intFree - (int)before.intFree,
-                  (int)after.psFree - (int)before.psFree);
-  }
-  buildTestScreen();
+  s_appOk = app_host_start(prefs, backlight);
   lvgl_unlock();
+  if (!s_appOk) Serial.println("[main] the UI did not start (see above); the screen stays dark");
 
-  delay(150);  // the LVGL task draws the first frame
-  {
-    // Whole-screen first frame: the worst case for the SPI link.
-    LvglPortStats first;
-    lvgl_port_take_stats(first);
-    Serial.printf("[first frame] frames %lu, %lu blocks, %lu us flush total (max frame %lu us), display_err %lu\n",
-                  (unsigned long)first.frames, (unsigned long)first.flushes, (unsigned long)first.flushUs,
-                  (unsigned long)first.frameFlushMaxUs, (unsigned long)first.displayErrors);
+  // Wait (bounded) for the first frame to leave the SPI bus, then light the panel.
+  uint32_t waited = 0;
+  LvglPortStats first = {};
+  while (waited < 1000) {
+    delay(5);
+    waited += 5;
+    LvglPortStats s;
+    lvgl_port_take_stats(s);
+    first.frames += s.frames;
+    first.flushes += s.flushes;
+    first.flushUs += s.flushUs;
+    if (s.frameFlushMaxUs > first.frameFlushMaxUs) first.frameFlushMaxUs = s.frameFlushMaxUs;
+    if (first.frames > 0) break;
   }
-  s_backlight->set_percent(100);
-  Serial.println("[main] test screen up, backlight 100%");
+  s_firstFrameMs = millis() - s_bootMs;
+  if (s_appOk) backlight.open();
+  Serial.printf(
+      "[boot] first frame after %lu ms (%lu ms of it waiting for a serial monitor); frames %lu, %lu blocks, %lu us "
+      "flush, backlight %u%%; demo epoch %lld\n",
+      (unsigned long)s_firstFrameMs, (unsigned long)s_serialWaitedMs, (unsigned long)first.frames,
+      (unsigned long)first.flushes, (unsigned long)first.flushUs, (unsigned)backlight.percent(),
+      (long long)app_host_epoch());
+  if (first.frames == 0) Serial.println("[boot] WARNING: no frame completed within 1 s");
+  printMemory();
 }
 
 void loop() {
-  static uint32_t last = millis();
-  delay(kStatusMs);
+  static uint32_t lastReport = millis();
+  static uint32_t lastStep = millis();
+
+  while (Serial.available() > 0) handleSerialByte(Serial.read());
+
+  delay(kLoopStepMs);
   const uint32_t now = millis();
-  printStatus(now - last);
-  last = now;
+  const uint32_t step = now - lastStep;
+  lastStep = now;
+  if (step > kLoopStepMs && step - kLoopStepMs > s_loopLagMaxMs) s_loopLagMaxMs = step - kLoopStepMs;
+
+  const uint32_t period = s_fast ? kFastStatusMs : kStatusMs;
+  if (now - lastReport >= period) {
+    printStatus(now - lastReport, s_fast);
+    lastReport = now;
+  }
 }

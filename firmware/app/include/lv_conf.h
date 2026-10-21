@@ -18,10 +18,10 @@
 /* [FW] 16-bit colour: matches the RGB565 panel on the device. */
 #define LV_COLOR_DEPTH 16
 
-/* LVGL's heap: our own allocator hooks (lvgl_alloc.cpp). Requests of 2 KB and
- * above (decoded images, draw buffers) go to PSRAM, smaller ones to internal
- * RAM, which the Wi-Fi and LwIP stacks also need. LV_MEM_SIZE is unused with
- * a custom allocator. */
+/* LVGL's heap: our own allocator hooks (lvgl_alloc.cpp). Everything goes to
+ * PSRAM (the threshold is APP_LVGL_PSRAM_THRESHOLD, 1 byte), keeping the
+ * internal RAM the Wi-Fi and LwIP stacks need. LV_MEM_SIZE is unused with a
+ * custom allocator. */
 #define LV_USE_STDLIB_MALLOC    LV_STDLIB_CUSTOM
 #define LV_USE_STDLIB_STRING    LV_STDLIB_CLIB
 /* Same formatter as the simulator, so numbers render identically. */

@@ -22,7 +22,7 @@ namespace {
 
 constexpr int kBufRows = 40;
 constexpr size_t kBufBytes = (size_t)kDisplayWidth * kBufRows * sizeof(uint16_t);
-constexpr uint32_t kLvglTaskStackBytes = 12 * 1024;
+constexpr uint32_t kLvglTaskStackBytes = 16 * 1024;
 constexpr UBaseType_t kLvglTaskPriority = 2;
 constexpr BaseType_t kLvglTaskCore = 1;
 constexpr uint32_t kMaxWaitMs = 5;
@@ -32,6 +32,7 @@ constexpr uint32_t kBusyCallUs = 1000;
 bool s_started = false;
 lv_display_t* s_disp = nullptr;
 SemaphoreHandle_t s_lock = nullptr;
+TaskHandle_t s_task = nullptr;
 
 // Statistics. Written by the LVGL task and by the SPI interrupt, read by
 // lvgl_port_take_stats(); one spinlock guards them.
@@ -40,6 +41,7 @@ LvglPortStats s_stats = {};
 uint32_t s_frameFlushUs = 0;
 volatile int64_t s_flushStartUs = 0;
 volatile bool s_flushIsLast = false;
+int64_t s_waitStartUs = 0;  // LVGL task only
 
 constexpr int kFatalPrints = 5;
 constexpr uint32_t kFatalPrintGapMs = 2000;
@@ -95,6 +97,18 @@ void flushCb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
   }
 }
 
+// The renderer waits here (inside lv_timer_handler) until the previous block has
+// left the SPI bus; the time is counted so the report shows how much of the
+// handler is waiting rather than rendering. LVGL itself busy-waits.
+void onFlushWaitStart(lv_event_t*) { s_waitStartUs = esp_timer_get_time(); }
+void onFlushWaitFinish(lv_event_t*) {
+  const uint32_t us = (uint32_t)(esp_timer_get_time() - s_waitStartUs);
+  portENTER_CRITICAL(&s_statsMux);
+  s_stats.waitUs += us;
+  if (us > s_stats.waitMaxUs) s_stats.waitMaxUs = us;
+  portEXIT_CRITICAL(&s_statsMux);
+}
+
 void touchReadCb(lv_indev_t*, lv_indev_data_t* data) {
   TouchPoint p;
   const bool pressed = touch_poll(p);
@@ -148,6 +162,8 @@ bool lvgl_port_try_start() {
   lv_display_set_color_format(s_disp, LV_COLOR_FORMAT_RGB565);
   lv_display_set_buffers(s_disp, buf1, buf2, (uint32_t)kBufBytes, LV_DISPLAY_RENDER_MODE_PARTIAL);
   lv_display_set_flush_cb(s_disp, flushCb);
+  lv_display_add_event_cb(s_disp, onFlushWaitStart, LV_EVENT_FLUSH_WAIT_START, nullptr);
+  lv_display_add_event_cb(s_disp, onFlushWaitFinish, LV_EVENT_FLUSH_WAIT_FINISH, nullptr);
 
   if (!display_begin(onFlushDone, nullptr)) return fail("display init failed (see [display] lines above)");
 
@@ -167,7 +183,7 @@ bool lvgl_port_try_start() {
   lv_timer_t* readTimer = lv_indev_get_read_timer(indev);
   if (readTimer) lv_timer_set_period(readTimer, kIndevPeriodMs);
 
-  if (xTaskCreatePinnedToCore(lvglTask, "lvgl", kLvglTaskStackBytes, nullptr, kLvglTaskPriority, nullptr,
+  if (xTaskCreatePinnedToCore(lvglTask, "lvgl", kLvglTaskStackBytes, nullptr, kLvglTaskPriority, &s_task,
                               kLvglTaskCore) != pdPASS) {
     return fail("cannot create the LVGL task");
   }
@@ -195,4 +211,8 @@ void lvgl_port_take_stats(LvglPortStats& out) {
   s_stats = {};
   portEXIT_CRITICAL(&s_statsMux);
   out.displayErrors = display_error_count();
+}
+
+uint32_t lvgl_port_stack_free_bytes() {
+  return s_task ? (uint32_t)uxTaskGetStackHighWaterMark(s_task) * sizeof(StackType_t) : 0;
 }

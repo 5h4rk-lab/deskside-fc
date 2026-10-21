@@ -9,7 +9,7 @@
 #include <stdint.h>
 
 // Initialises LVGL, the display and the touch controller, then starts the LVGL
-// task (core 1, 12 KB stack). Prints `[display] ok [touch] <name>`.
+// task (core 1, 16 KB stack). Prints `[display] ok [touch] <name>`.
 // A failure of the display, a draw buffer or the task is fatal here: the reason
 // is printed 5 times over about 10 s, then the board restarts (so a permanent
 // fault reboots every ~10 s plus boot time, never faster). A missing touch
@@ -39,6 +39,11 @@ struct LvglPortStats {
   uint32_t busyCalls;        // calls that took more than 1 ms (rendered something)
   uint32_t busyUs;           // total time of those calls
   uint32_t handlerMaxUs;     // longest single call
+  uint32_t waitUs;           // time the renderer waited for the previous block (inside the handler)
+  uint32_t waitMaxUs;        // longest single wait
   uint32_t displayErrors;    // SPI transfers that failed to queue or finish, since boot
 };
 void lvgl_port_take_stats(LvglPortStats& out);
+
+// Smallest free stack the LVGL task ever had, in bytes (0 before it runs).
+uint32_t lvgl_port_stack_free_bytes();
