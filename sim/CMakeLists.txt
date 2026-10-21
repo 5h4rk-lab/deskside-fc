@@ -62,7 +62,7 @@ add_library(ui STATIC "${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp"
   "${UI_DIR}/src/screens/settings.cpp" "${UI_DIR}/src/screens/zone_list.cpp" "${UI_DIR}/src/screens/team_picker.cpp"
   "${UI_DIR}/src/screens/wifi.cpp"
   "${UI_DIR}/src/refresh_policy.cpp" "${UI_DIR}/src/http_source.cpp" "${UI_DIR}/src/poller.cpp"
-  "${UI_DIR}/src/http_image_provider.cpp" "${UI_DIR}/src/battery_model.cpp" "${UI_DIR}/src/screens/battery_banner.cpp"
+  "${UI_DIR}/src/http_image_provider.cpp" "${UI_DIR}/src/lvgl_image_decoder.cpp" "${UI_DIR}/src/battery_model.cpp" "${UI_DIR}/src/screens/battery_banner.cpp"
   ${UI_FONT_SOURCES})
 target_include_directories(ui PUBLIC "${UI_DIR}/src" "${UI_DIR}/fonts")
 target_link_libraries(ui PUBLIC lvgl ArduinoJson)
@@ -75,11 +75,11 @@ set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" "$
   "${UI_DIR}/src/screens/zone_list.cpp" "${UI_DIR}/src/screens/team_picker.cpp"
   "${UI_DIR}/src/screens/wifi.cpp"
   "${UI_DIR}/src/refresh_policy.cpp" "${UI_DIR}/src/http_source.cpp" "${UI_DIR}/src/poller.cpp"
-  "${UI_DIR}/src/http_image_provider.cpp" "${UI_DIR}/src/battery_model.cpp" "${UI_DIR}/src/screens/battery_banner.cpp"
+  "${UI_DIR}/src/http_image_provider.cpp" "${UI_DIR}/src/lvgl_image_decoder.cpp" "${UI_DIR}/src/battery_model.cpp" "${UI_DIR}/src/screens/battery_banner.cpp"
   PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # --- Simulator executable ----------------------------------------------------
-add_executable(sim main.cpp mock_source.cpp mock_image_provider.cpp lvgl_image_decoder.cpp demo_data.cpp snapshot.cpp
+add_executable(sim main.cpp mock_source.cpp mock_image_provider.cpp demo_data.cpp snapshot.cpp
   file_prefs.cpp sim_backlight.cpp mock_wifi.cpp curl_transport.cpp mock_power.cpp)
 # Defaults for the simulator's --assets and --fixtures flags.
 target_compile_definitions(sim PRIVATE
@@ -93,7 +93,7 @@ enable_testing()
 add_executable(sim_tests tests/test_main.cpp tests/smoke_test.cpp tests/theme_test.cpp tests/parse_test.cpp
   tests/goal_test.cpp tests/store_test.cpp tests/mock_source_test.cpp mock_source.cpp
   tests/lru_test.cpp tests/image_provider_test.cpp mock_image_provider.cpp
-  lvgl_image_decoder.cpp tests/image_decoder_test.cpp tests/http_image_provider_test.cpp
+  tests/image_decoder_test.cpp tests/http_image_provider_test.cpp
   tests/live_test.cpp demo_data.cpp snapshot.cpp tests/format_test.cpp tests/detail_test.cpp tests/matches_test.cpp tests/news_test.cpp
   tests/goal_screen_test.cpp tests/prefs_test.cpp tests/settings_test.cpp tests/timezone_test.cpp tests/dim_test.cpp
   tests/settings_screen_test.cpp tests/team_picker_test.cpp tests/app_settings_test.cpp

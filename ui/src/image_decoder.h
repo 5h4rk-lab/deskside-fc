@@ -1,6 +1,6 @@
 // Turns the bytes of a downloaded image into something LVGL can draw. The
 // simulator implements it with LVGL's PNG decoder and tjpgd
-// (sim/lvgl_image_decoder.h); the firmware with its own decoders. Shared with
+// (ui/src/lvgl_image_decoder.h); the firmware with its own decoders. Shared with
 // the firmware: no stdio, no filesystem.
 //
 // Contract of decode():
