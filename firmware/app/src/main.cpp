@@ -6,6 +6,7 @@
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
 #include <esp_memory_utils.h>
+#include <esp_system.h>
 #include <esp_timer.h>
 #include <lvgl.h>
 #include <stdio.h>
@@ -184,7 +185,11 @@ void buildTestScreen() {
   lv_obj_set_style_bg_grad_color(g2, lv_color_make(255, 255, 255), 0);
   lv_obj_set_style_bg_grad_dir(g2, LV_GRAD_DIR_HOR, 0);
 
-  g_ui.statusLabel = makeLabel(scr, 34, 296, kDisplayWidth - 68, "starting...", LV_TEXT_ALIGN_CENTER);
+  // One line only: a label that wraps would put its second line below row 319
+  // (it was cut off in the first version), so clip instead and keep the text short.
+  g_ui.statusLabel = makeLabel(scr, 30, 296, kDisplayWidth - 60, "starting...", LV_TEXT_ALIGN_CENTER);
+  lv_label_set_long_mode(g_ui.statusLabel, LV_LABEL_LONG_CLIP);
+  lv_obj_set_height(g_ui.statusLabel, 18);
   lv_obj_set_style_text_color(g_ui.statusLabel, lv_color_make(150, 200, 255), 0);
 
   // Crosshair on the top layer: 80 x 80, a ring plus two bars, never clickable.
@@ -239,8 +244,9 @@ void printStatus(uint32_t elapsedMs) {
   if (lvgl_lock(100)) {
     lv_mem_monitor(&mon);
     char text[64];
-    snprintf(text, sizeof(text), "flush %lu us/frame, busy %lu us", (unsigned long)frameAvgUs,
-             (unsigned long)busyAvgUs);
+    snprintf(text, sizeof(text), "flush %lu.%lu busy %lu.%lu ms", (unsigned long)(frameAvgUs / 1000),
+             (unsigned long)(frameAvgUs % 1000 / 100), (unsigned long)(busyAvgUs / 1000),
+             (unsigned long)(busyAvgUs % 1000 / 100));
     lv_label_set_text(g_ui.statusLabel, text);
     lvgl_unlock();
   } else {
