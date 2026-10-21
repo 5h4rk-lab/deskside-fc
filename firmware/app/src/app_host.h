@@ -25,6 +25,9 @@ enum class AppCommand : uint8_t {
   Hide,        // diagnostics: toggle one part of the showing goal celebration (0 rays,
                // 1 confetti, 2 headline, 3 cutout, 4 bottom strip) to find what costs
                // frame time; no effect when none shows
+  Call,        // run a function in the LVGL task (see app_host_post_call)
+  Churn,       // diagnostics: toggle repainting the whole overlay every frame (profiling
+               // single elements of the celebration at full-screen cost)
 };
 
 // Builds the UI. Call once, with the LVGL lock held (lvgl_lock) and after
@@ -32,6 +35,11 @@ enum class AppCommand : uint8_t {
 // false (after printing why) when memory is short; the app is then not
 // running and the other calls do nothing.
 bool app_host_start(Prefs& prefs, Backlight& backlight);
+
+// Queues `fn` to run in the LVGL task (for serial commands that touch state
+// the LVGL task owns, such as the settings in flash). Same queue and the same
+// drop rule as app_host_post.
+void app_host_post_call(void (*fn)());
 
 // Queues a command for the LVGL task. Safe from any task; drops it (and says
 // so) when the queue is full.

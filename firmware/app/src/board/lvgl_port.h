@@ -41,9 +41,30 @@ struct LvglPortStats {
   uint32_t handlerMaxUs;     // longest single call
   uint32_t waitUs;           // time the renderer waited for the previous block (inside the handler)
   uint32_t waitMaxUs;        // longest single wait
+  uint32_t chunkGapCount;    // gaps measured between consecutive blocks of one frame
+  uint32_t chunkGapUs;       // their total (render + wait for the previous block)
+  uint32_t chunkGapMaxUs;
+  uint32_t preUs;            // handler start -> first block of a frame, summed
+  uint32_t postUs;           // last block of a frame -> handler end, summed
+  uint32_t preCount;
   uint32_t displayErrors;    // SPI transfers that failed to queue or finish, since boot
 };
 void lvgl_port_take_stats(LvglPortStats& out);
 
 // Smallest free stack the LVGL task ever had, in bytes (0 before it runs).
 uint32_t lvgl_port_stack_free_bytes();
+
+// ---- diagnostics (serial test hooks) ----------------------------------------
+// A scripted finger: from (x0,y0) to (x1,y1) over durMs, then released. The
+// position follows the clock, so a slow frame makes the finger jump rather than
+// stretch the gesture, as a real finger would. While a script runs the real
+// touch controller is ignored. Safe from any task.
+void lvgl_port_inject_drag(int x0, int y0, int x1, int y1, uint32_t durMs);
+
+// Records lv_timer_handler() calls longer than 1 ms from the moment a script
+// starts (up to 256 calls) so a gesture's frame times can be printed afterwards.
+// Prints one summary line and one line of "t+<ms>:<call ms>" entries.
+void lvgl_port_trace_dump(const char* label);
+
+// Starts the same recording without a scripted finger (up to 256 calls).
+void lvgl_port_trace_start();

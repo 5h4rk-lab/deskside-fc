@@ -87,8 +87,30 @@ void onFlushDone(void*) {
   lv_display_flush_ready(s_disp);
 }
 
+int64_t s_prevChunkUs = 0;  // LVGL task only
+int64_t s_handlerStartUs = 0;
+int64_t s_lastChunkUs = 0;  // start of the last block flushed in this handler call (0: none)
+
 void flushCb(lv_display_t* disp, const lv_area_t* area, uint8_t* px_map) {
   s_flushStartUs = esp_timer_get_time();
+  if (s_prevChunkUs != 0) {
+    const uint32_t gap = (uint32_t)(s_flushStartUs - s_prevChunkUs);
+    if (gap < 200000) {  // same frame: blocks follow each other within one refresh
+      portENTER_CRITICAL(&s_statsMux);
+      s_stats.chunkGapCount++;
+      s_stats.chunkGapUs += gap;
+      if (gap > s_stats.chunkGapMaxUs) s_stats.chunkGapMaxUs = gap;
+      portEXIT_CRITICAL(&s_statsMux);
+    }
+  }
+  if (s_prevChunkUs == 0) {
+    portENTER_CRITICAL(&s_statsMux);
+    s_stats.preUs += (uint32_t)(s_flushStartUs - s_handlerStartUs);
+    s_stats.preCount++;
+    portEXIT_CRITICAL(&s_statsMux);
+  }
+  s_lastChunkUs = s_flushStartUs;
+  s_prevChunkUs = lv_display_flush_is_last(disp) ? 0 : s_flushStartUs;
   s_flushIsLast = lv_display_flush_is_last(disp);
   // Pixels are little-endian RGB565 as rendered: no byte swapping is needed.
   if (!display_flush_async(area->x1, area->y1, area->x2, area->y2, (const uint16_t*)px_map)) {
@@ -109,7 +131,43 @@ void onFlushWaitFinish(lv_event_t*) {
   portEXIT_CRITICAL(&s_statsMux);
 }
 
+// Scripted finger (diagnostics).
+struct Script {
+  volatile bool active = false;
+  int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+  uint32_t durMs = 0;
+  int64_t startUs = 0;
+};
+Script s_script;
+
+// Trace of the handler calls after a script started.
+constexpr int kTraceMax = 256;
+struct TraceEntry {
+  uint32_t atMs;
+  uint32_t us;
+};
+TraceEntry s_trace[kTraceMax];
+volatile int s_traceCount = 0;
+volatile bool s_traceOn = false;
+int64_t s_traceStartUs = 0;
+
 void touchReadCb(lv_indev_t*, lv_indev_data_t* data) {
+  if (s_script.active) {
+    const int64_t t = esp_timer_get_time() - s_script.startUs;
+    const int64_t dur = (int64_t)s_script.durMs * 1000;
+    if (t <= dur) {
+      const int64_t d = dur ? dur : 1;
+      data->point.x = (lv_coord_t)(s_script.x0 + (s_script.x1 - s_script.x0) * t / d);
+      data->point.y = (lv_coord_t)(s_script.y0 + (s_script.y1 - s_script.y0) * t / d);
+      data->state = LV_INDEV_STATE_PRESSED;
+      return;
+    }
+    data->point.x = s_script.x1;
+    data->point.y = s_script.y1;
+    data->state = LV_INDEV_STATE_RELEASED;
+    if (t > dur + 60000) s_script.active = false;
+    return;
+  }
   TouchPoint p;
   const bool pressed = touch_poll(p);
   data->point.x = p.x;
@@ -121,10 +179,23 @@ void lvglTask(void*) {
   for (;;) {
     xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
     const int64_t t0 = esp_timer_get_time();
+    s_handlerStartUs = t0;
+    s_lastChunkUs = 0;
     const uint32_t nextMs = lv_timer_handler();
-    const uint32_t us = (uint32_t)(esp_timer_get_time() - t0);
+    const int64_t t1 = esp_timer_get_time();
+    const uint32_t us = (uint32_t)(t1 - t0);
+    if (s_lastChunkUs != 0) {
+      portENTER_CRITICAL(&s_statsMux);
+      s_stats.postUs += (uint32_t)(t1 - s_lastChunkUs);
+      portEXIT_CRITICAL(&s_statsMux);
+    }
     xSemaphoreGiveRecursive(s_lock);
 
+    if (s_traceOn && us > kBusyCallUs && s_traceCount < kTraceMax) {
+      s_trace[s_traceCount].atMs = (uint32_t)((t0 - s_traceStartUs) / 1000);
+      s_trace[s_traceCount].us = us;
+      s_traceCount = s_traceCount + 1;
+    }
     portENTER_CRITICAL(&s_statsMux);
     s_stats.handlerCalls++;
     s_stats.handlerUs += us;
@@ -188,6 +259,48 @@ bool lvgl_port_try_start() {
     return fail("cannot create the LVGL task");
   }
   return true;
+}
+
+void lvgl_port_inject_drag(int x0, int y0, int x1, int y1, uint32_t durMs) {
+  s_traceCount = 0;
+  s_traceStartUs = esp_timer_get_time();
+  s_traceOn = true;
+  s_script.x0 = x0;
+  s_script.y0 = y0;
+  s_script.x1 = x1;
+  s_script.y1 = y1;
+  s_script.durMs = durMs;
+  s_script.startUs = s_traceStartUs;
+  s_script.active = true;
+}
+
+void lvgl_port_trace_start() {
+  s_traceCount = 0;
+  s_traceStartUs = esp_timer_get_time();
+  s_traceOn = true;
+}
+
+void lvgl_port_trace_dump(const char* label) {
+  s_traceOn = false;
+  const int n = s_traceCount;
+  uint32_t sum = 0, mx = 0;
+  for (int i = 0; i < n; ++i) {
+    sum += s_trace[i].us;
+    if (s_trace[i].us > mx) mx = s_trace[i].us;
+  }
+  Serial.printf("[trace] %s: %d busy calls, avg %lu us, max %lu us, first at +%lu ms, last at +%lu ms\n", label, n,
+                (unsigned long)(n ? sum / n : 0), (unsigned long)mx, (unsigned long)(n ? s_trace[0].atMs : 0),
+                (unsigned long)(n ? s_trace[n - 1].atMs : 0));
+  char line[220];
+  int len = 0;
+  for (int i = 0; i < n; ++i) {
+    len += snprintf(line + len, sizeof(line) - len, " %lu:%lu", (unsigned long)s_trace[i].atMs,
+                    (unsigned long)(s_trace[i].us / 1000));
+    if (len > (int)sizeof(line) - 24 || i == n - 1) {
+      Serial.printf("[trace]%s\n", line);
+      len = 0;
+    }
+  }
 }
 
 const char* lvgl_port_last_error() { return s_lastError; }

@@ -35,6 +35,7 @@ constexpr int kQueueLength = 8;
 struct Command {
   AppCommand what;
   int arg;
+  void (*fn)();  // AppCommand::Call only
 };
 
 // No pictures yet (they come with the helper): every request is answered
@@ -146,6 +147,23 @@ void runCommand(const Command& c) {
     case AppCommand::Settings:
       printSettings();
       break;
+    case AppCommand::Call:
+      if (c.fn) c.fn();
+      break;
+    case AppCommand::Churn: {
+      static lv_timer_t* churn = nullptr;
+      if (churn) {
+        lv_timer_delete(churn);
+        churn = nullptr;
+      } else {
+        churn = lv_timer_create([](lv_timer_t*) {
+          const GoalParts* gp = goal_parts();
+          lv_obj_invalidate(gp ? gp->overlay : lv_screen_active());
+        }, 5, nullptr);
+      }
+      Serial.printf("[cmd] churn %s\n", churn ? "on (overlay repainted every frame)" : "off");
+      break;
+    }
     case AppCommand::Hide: {
       const GoalParts* p = goal_parts();
       if (!p) {
@@ -159,6 +177,7 @@ void runCommand(const Command& c) {
         case 2: part = p->stamp; break;
         case 3: part = p->cutout; break;
         case 4: part = p->strip; break;
+        case 5: part = p->stampImage; break;
         default: break;
       }
       if (c.arg == 1) {
@@ -240,8 +259,14 @@ bool app_host_start(Prefs& prefs, Backlight& backlight) {
 
 void app_host_post(AppCommand command, int arg) {
   if (!s_queue) return;
-  const Command c{command, arg};
+  const Command c{command, arg, nullptr};
   if (xQueueSend(s_queue, &c, 0) != pdTRUE) Serial.println("[cmd] queue full, command dropped");
 }
 
 int64_t app_host_epoch() { return epochNow(); }
+
+void app_host_post_call(void (*fn)()) {
+  if (!s_queue || !fn) return;
+  const Command c{AppCommand::Call, 0, fn};
+  if (xQueueSend(s_queue, &c, 0) != pdTRUE) Serial.println("[cmd] queue full, command dropped");
+}

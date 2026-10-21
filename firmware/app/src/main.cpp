@@ -7,7 +7,10 @@
 //   w        the live demo match ends with the favourite ahead (win)
 //   d        reload the demo data (after a win the live match is gone)
 //   s0 s1 s2 show the Live, Matches or News tab
-//   x0..x4   diagnostics: hide/show a part of the goal celebration (0 rays, 1 confetti,
+//   h j n    scripted swipe left / right / scroll, b0..b2 tap a tab button, =xxxyyy tap at x,y
+//            (a frame-time trace of the next 1.5 s is printed: [trace] lines); V starts a trace, v prints it
+//   y        toggle repainting the whole screen (or celebration) every frame, to time a full repaint
+//   x0..x5   diagnostics: hide/show a part of the goal celebration (0 rays, 1 confetti,
 //            2 headline, 3 cutout, 4 strip) to see what costs frame time
 //   t        make the next team of the list the favourite (saved; shows persistence)
 //   p        print the settings in use
@@ -17,7 +20,9 @@
 //   m        print the memory report now
 //   r        restart the board
 // The commands are read here (the Arduino loop task) and handed to the LVGL
-// task through a queue, so the console never slows the screen.
+// task through a queue (the settings erase and the NVS self-test too), so the
+// console never slows the screen and nothing but the LVGL task touches the UI
+// or the settings.
 #include <Arduino.h>
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
@@ -37,7 +42,7 @@
 #include "version.h"
 
 // The app is built inside setup(); give the Arduino loop task room for it.
-SET_LOOP_TASK_STACK_SIZE(16 * 1024);
+SET_LOOP_TASK_STACK_SIZE(12 * 1024);  // measured use about 6.4 KB (Task 4)
 
 namespace {
 
@@ -68,9 +73,14 @@ class GatedBacklight : public Backlight {
     percent_ = percent;
     if (open_) real_.set_percent(percent);
   }
+  // Called from the Arduino loop task while the LVGL task may be calling
+  // set_percent(): both run under the LVGL lock.
   void open() {
+    const bool locked = lvgl_lock(1000);
+    if (!locked) Serial.println("[main] WARNING: LVGL lock timeout while opening the backlight");
     open_ = true;
     real_.set_percent(percent_);
+    if (locked) lvgl_unlock();
   }
   uint8_t percent() const { return percent_; }
 
@@ -125,14 +135,17 @@ void printStatus(uint32_t elapsedMs, bool fast) {
   const uint32_t frameFlushAvgUs = s.frames ? s.flushUs / s.frames : 0;
   Serial.printf(
       "[%s] up %lu s | frames %lu (%lu.%lu/s) flush/frame avg %lu us max %lu us | lv_timer_handler %lu calls avg %lu us, "
-      "busy %lu calls avg %lu.%lu ms, max %lu.%lu ms, cpu %lu.%lu%% (flush wait %lu.%lu%%, longest %lu us) | display_err %lu loop_lag_max %lu ms\n",
+      "busy %lu calls avg %lu.%lu ms, max %lu.%lu ms, cpu %lu.%lu%% (flush wait %lu.%lu%%, longest %lu us) | chunk gap avg %lu us max %lu us, pre %lu us post %lu us | display_err %lu loop_lag_max %lu ms\n",
       fast ? "perf" : "status", (unsigned long)(millis() / 1000), (unsigned long)s.frames,
       (unsigned long)(fpsTenths / 10), (unsigned long)(fpsTenths % 10), (unsigned long)frameFlushAvgUs,
       (unsigned long)s.frameFlushMaxUs, (unsigned long)s.handlerCalls, (unsigned long)handlerAvgUs,
       (unsigned long)s.busyCalls, (unsigned long)(busyAvgUs / 1000), (unsigned long)(busyAvgUs % 1000 / 100),
       (unsigned long)(s.handlerMaxUs / 1000), (unsigned long)(s.handlerMaxUs % 1000 / 100),
       (unsigned long)(cpuTenths / 10), (unsigned long)(cpuTenths % 10), (unsigned long)(waitTenths / 10),
-      (unsigned long)(waitTenths % 10), (unsigned long)s.waitMaxUs, (unsigned long)s.displayErrors,
+      (unsigned long)(waitTenths % 10), (unsigned long)s.waitMaxUs,
+      (unsigned long)(s.chunkGapCount ? s.chunkGapUs / s.chunkGapCount : 0), (unsigned long)s.chunkGapMaxUs,
+      (unsigned long)(s.preCount ? s.preUs / s.preCount : 0), (unsigned long)(s.preCount ? s.postUs / s.preCount : 0),
+      (unsigned long)s.displayErrors,
       (unsigned long)s_loopLagMaxMs);
   s_loopLagMaxMs = 0;
   if (!fast) printMemory();
@@ -203,10 +216,35 @@ void nvsSelfTest() {
   Serial.printf("[nvs-test] %s (%d failures)\n", fails == 0 ? "ALL PASSED" : "FAILED", fails);
 }
 
+// Runs in the LVGL task (posted by the 'e' command): the settings are written by
+// that task too, so the erase cannot interleave with a write.
+void eraseSettingsAndRestart() {
+  if (s_prefs && s_prefs->clear()) {
+    Serial.println("[cmd] settings erased, restarting");
+    Serial.flush();
+    delay(100);
+    esp_restart();
+  }
+}
+
 // ---- serial commands ---------------------------------------------------------------
 
 bool s_wantTabDigit = false;
 bool s_wantHideDigit = false;
+bool s_wantButtonDigit = false;
+int s_tapDigits = -1;  // after '=': collecting the 6 digits xxxyyy of a scripted tap
+int s_tapValue = 0;
+const char* s_dumpLabel = nullptr;
+uint32_t s_dumpAtMs = 0;
+
+// Scripted finger for measurements (touch is ignored while it runs); the trace
+// of the frames that follow is printed 1.5 s later.
+void scriptedGesture(const char* label, int x0, int y0, int x1, int y1, uint32_t durMs) {
+  lvgl_port_inject_drag(x0, y0, x1, y1, durMs);
+  s_dumpLabel = label;
+  s_dumpAtMs = millis() + durMs + 1500;
+  Serial.printf("[cmd] gesture: %s\n", label);
+}
 
 void handleSerialByte(int c) {
   if (s_wantTabDigit) {
@@ -216,6 +254,30 @@ void handleSerialByte(int c) {
       return;
     }
     // Not a digit: treat it as a fresh command below.
+  }
+  if (s_tapDigits >= 0) {
+    if (c >= '0' && c <= '9') {
+      s_tapValue = s_tapValue * 10 + (c - '0');
+      if (++s_tapDigits == 6) {
+        char label[40];
+        snprintf(label, sizeof(label), "tap at %d,%d", s_tapValue / 1000, s_tapValue % 1000);
+        // The label must outlive the gesture's trace dump: keep it in a static buffer.
+        static char kept[40];
+        memcpy(kept, label, sizeof(kept));
+        scriptedGesture(kept, s_tapValue / 1000, s_tapValue % 1000, s_tapValue / 1000, s_tapValue % 1000, 60);
+        s_tapDigits = -1;
+      }
+      return;
+    }
+    s_tapDigits = -1;  // not a digit: a fresh command
+  }
+  if (s_wantButtonDigit) {
+    s_wantButtonDigit = false;
+    if (c >= '0' && c <= '2') {
+      static const char* const names[] = {"tap Live button", "tap Matches button", "tap News button"};
+      scriptedGesture(names[c - '0'], 40 + 80 * (c - '0'), 304, 40 + 80 * (c - '0'), 304, 60);
+      return;
+    }
   }
   if (s_wantHideDigit) {
     s_wantHideDigit = false;
@@ -240,6 +302,32 @@ void handleSerialByte(int c) {
     case 'x':
       s_wantHideDigit = true;
       break;
+    case 'y':
+      app_host_post(AppCommand::Churn);
+      break;
+    case 'h':
+      scriptedGesture("swipe left", 200, 150, 40, 150, 200);
+      break;
+    case 'j':
+      scriptedGesture("swipe right", 40, 150, 200, 150, 200);
+      break;
+    case 'n':
+      scriptedGesture("scroll up", 120, 250, 120, 110, 300);
+      break;
+    case 'b':
+      s_wantButtonDigit = true;
+      break;
+    case '=':
+      s_tapDigits = 0;
+      s_tapValue = 0;
+      break;
+    case 'V':
+      lvgl_port_trace_start();
+      Serial.println("[cmd] trace started (v prints it)");
+      break;
+    case 'v':
+      lvgl_port_trace_dump("now");
+      break;
     case 't':
       app_host_post(AppCommand::NextTeam);
       break;
@@ -247,15 +335,10 @@ void handleSerialByte(int c) {
       app_host_post(AppCommand::Settings);
       break;
     case 'e':
-      if (s_prefs && s_prefs->clear()) {
-        Serial.println("[cmd] settings erased, restarting");
-        Serial.flush();
-        delay(100);
-        esp_restart();
-      }
+      app_host_post_call(eraseSettingsAndRestart);  // runs in the LVGL task, like the settings writes
       break;
     case 'k':
-      nvsSelfTest();
+      app_host_post_call(nvsSelfTest);
       break;
     case 'f':
       s_fast = !s_fast;
@@ -355,6 +438,11 @@ void loop() {
   const uint32_t step = now - lastStep;
   lastStep = now;
   if (step > kLoopStepMs && step - kLoopStepMs > s_loopLagMaxMs) s_loopLagMaxMs = step - kLoopStepMs;
+
+  if (s_dumpLabel && (int32_t)(now - s_dumpAtMs) >= 0) {
+    lvgl_port_trace_dump(s_dumpLabel);
+    s_dumpLabel = nullptr;
+  }
 
   const uint32_t period = s_fast ? kFastStatusMs : kStatusMs;
   if (now - lastReport >= period) {
