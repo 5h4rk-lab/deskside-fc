@@ -9,6 +9,9 @@
 //
 // ESPN abbreviations that two leagues share are keyed "<league>:<abbr>"; they are
 // only found when the caller passes the league.
+//
+// This is the `color` of a Team. Its `primary` (the real club colour for large
+// surfaces, no luminance rule) comes from TEAM_PRIMARIES below.
 
 const FALLBACK = "#7C8F84";
 
@@ -199,7 +202,7 @@ export const TEAM_PRIMARIES: Record<string, string> = {
   B04: "#E32221", // Bayer Leverkusen (red)
   MUN: "#DC052D", // Bayern Munich (red)
   DOR: "#FDE100", // Borussia Dortmund (yellow)
-  BMG: "#00973B", // Borussia Moenchengladbach (green)
+  BMG: "#00973B", // Borussia Moenchengladbach (white primary: green)
   SGE: "#E1000F", // Eintracht Frankfurt (red)
   FCA: "#BA3733", // FC Augsburg (red)
   KOE: "#ED1C24", // FC Cologne (red)
