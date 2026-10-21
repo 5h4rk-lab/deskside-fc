@@ -130,6 +130,10 @@ Hardware risk rule: the first hardware milestone must not depend on PSRAM. If th
 | Cloud helper between device and public APIs | Designer's call |
 | ESPN primary, TheSportsDB for player photos, football-data.org as backup | Designer's call |
 
+## Addendum 2026-10-21: sound
+
+The board came with speakers (PCM5101A I2S DAC, 2 W amplifier, speaker header). Added goals: the favourite team scoring or winning is also heard (air-horn blast plus crowd swell, fanfare on a win), optional whistles at kick-off and full time, soft beeps for low battery and a chime when Wi-Fi joins. Rules: opponents and other teams never make a sound; Settings has `Sound` (`Off`, `Goals only` default, `Goals and match alerts`), `Volume` (default 40 percent) and `Mute at night` (on by default, follows the night-dimming schedule), plus a `Test sound` button. Sounds are synthesized in code (no audio files, no copyright question). Anti-goal: a sound that startles someone in a quiet lab. Plan tasks 4a and 7a in `docs/superpowers/plans/2026-10-21-firmware.md`.
+
 ## Left to the builder
 
 - Repository layout, build setup, how the simulator and firmware share UI code.
