@@ -1,0 +1,23 @@
+{
+  "name": "ui",
+  "version": "0.1.0",
+  "description": "Soccer display UI (LVGL screens, store, poller, parsers). Shared by the simulator (sim/CMakeLists.txt lists the same files) and the ESP32 firmware through lib_deps = symlink://../../ui.",
+  "frameworks": "*",
+  "platforms": "*",
+  "build": {
+    "srcDir": ".",
+    "includeDir": "src",
+    "srcFilter": [
+      "-<*>",
+      "+<src/*.cpp>",
+      "+<src/screens/*.cpp>",
+      "+<fonts/*.c>"
+    ],
+    "flags": [
+      "-Ifonts",
+      "-Isrc",
+      "-Wall",
+      "-Wextra"
+    ]
+  }
+}

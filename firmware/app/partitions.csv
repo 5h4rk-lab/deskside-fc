@@ -1,0 +1,19 @@
+# Soccer display, 16 MB flash, two OTA slots so an update never needs a USB
+# reflash: the new image goes into the idle slot and the bootloader falls
+# back to the old one if it never confirms (see esp_ota later in the plan).
+#
+# Layout notes (these constraints come from the Arduino/PlatformIO tooling):
+#  - otadata must sit at 0xE000: every USB upload also writes boot_app0.bin
+#    there, and anything else at 0xE000 would be overwritten on each flash.
+#  - nvs (settings, Wi-Fi networks) therefore goes at 0x10000, where an
+#    upload never touches it; app0 follows at 0x20000 (platformio.ini sets
+#    board_upload.offset_address to match).
+#  - 0x9000 .. 0xDFFF (20 KB) and 0xA30000 .. 0xFFFFFF (about 5.8 MB) are
+#    left unused on purpose.
+#
+# Name,    Type, SubType, Offset,   Size,     Flags
+otadata,   data, ota,     0xe000,   0x2000,
+nvs,       data, nvs,     0x10000,  0x10000,
+app0,      app,  ota_0,   0x20000,  0x500000,
+app1,      app,  ota_1,   0x520000, 0x500000,
+coredump,  data, coredump,0xA20000, 0x10000,
