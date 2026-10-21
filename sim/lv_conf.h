@@ -22,12 +22,14 @@
 /* [FW] 16-bit colour: matches the RGB565 panel on the device. */
 #define LV_COLOR_DEPTH 16
 
-/* Desktop: 4 MB built-in pool (decoded images, snapshots). The firmware
- * will size its own pool from PSRAM. */
-#define LV_USE_STDLIB_MALLOC    LV_STDLIB_BUILTIN
+/* Desktop: LVGL allocates from the system heap (malloc/free), not from a fixed
+ * pool. Decoded images (ui/src/lvgl_image_decoder.cpp takes their pixels from
+ * lv_malloc) are limited by the cache budget, not by a pool size, and malloc is
+ * thread safe and visible to ASan. The firmware has its own heap hooks
+ * (firmware/app/src/board/lvgl_alloc.cpp: PSRAM for big blocks). */
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CLIB
 #define LV_USE_STDLIB_STRING    LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_BUILTIN
-#define LV_MEM_SIZE             (4 * 1024U * 1024U)
 
 /* The UI runs on a single thread; ticks come from SDL_GetTicks in main.cpp. */
 #define LV_USE_OS LV_OS_NONE

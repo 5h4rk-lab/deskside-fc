@@ -1,10 +1,12 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <ostream>
 #include <string>
 #include <vector>
 
+#include "http_image_provider.h"
 #include "image_decoder.h"
 #include "lvgl_image_decoder.h"
 #include "test_display.h"
@@ -48,7 +50,109 @@ std::string with_jpeg_size(const uint8_t* data, size_t n, uint16_t w, uint16_t h
   return s;
 }
 
+uint32_t crc32_of(const std::string& s) {
+  uint32_t crc = 0xFFFFFFFFu;
+  for (unsigned char c : s) {
+    crc ^= c;
+    for (int k = 0; k < 8; ++k) crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
+  }
+  return ~crc;
+}
+
+void put_be32(std::string& s, uint32_t v) {
+  for (int shift = 24; shift >= 0; shift -= 8) s.push_back(static_cast<char>((v >> shift) & 0xFF));
+}
+
+void put_chunk(std::string& out, const char* type, const std::string& data) {
+  put_be32(out, static_cast<uint32_t>(data.size()));
+  std::string body = std::string(type, 4) + data;
+  out += body;
+  put_be32(out, crc32_of(body));
+}
+
+// A valid w x h RGBA PNG of one flat colour, written with stored (uncompressed)
+// deflate blocks so the test needs no encoder. The file is large (about w*h*4
+// bytes); decoding it gives a w*h*4 byte ARGB8888 image.
+std::string flat_png(uint32_t w, uint32_t h, uint8_t shade) {
+  std::string raw;
+  for (uint32_t y = 0; y < h; ++y) {
+    raw.push_back('\0');  // filter: none
+    for (uint32_t x = 0; x < w; ++x) {
+      raw.push_back(static_cast<char>(shade));
+      raw.push_back(static_cast<char>(x & 0xFF));
+      raw.push_back(static_cast<char>(y & 0xFF));
+      raw.push_back(static_cast<char>(0xFF));
+    }
+  }
+  std::string z = "\x78\x01";
+  for (size_t pos = 0; pos < raw.size();) {
+    const size_t n = std::min<size_t>(65535, raw.size() - pos);
+    const bool last = pos + n == raw.size();
+    z.push_back(last ? '\1' : '\0');
+    z.push_back(static_cast<char>(n & 0xFF));
+    z.push_back(static_cast<char>(n >> 8));
+    z.push_back(static_cast<char>(~n & 0xFF));
+    z.push_back(static_cast<char>((~n >> 8) & 0xFF));
+    z.append(raw, pos, n);
+    pos += n;
+  }
+  uint32_t a = 1, b = 0;
+  for (unsigned char c : raw) {
+    a = (a + c) % 65521;
+    b = (b + a) % 65521;
+  }
+  put_be32(z, (b << 16) | a);
+  std::string ihdr;
+  put_be32(ihdr, w);
+  put_be32(ihdr, h);
+  ihdr += std::string("\x08\x06\x00\x00\x00", 5);
+  std::string png = "\x89PNG\r\n\x1a\n";
+  put_chunk(png, "IHDR", ihdr);
+  put_chunk(png, "IDAT", z);
+  put_chunk(png, "IEND", "");
+  return png;
+}
+
 }  // namespace
+
+TEST_CASE("LvglImageDecoder keeps decoding with a full image cache and a screen alive") {
+  // HttpImageProvider::kDefaultCacheBytes (3 MB) of decoded images stay alive
+  // next to the widgets and the decoder's own temporary buffers. Decoded
+  // pixels must not run out of memory before that (an earlier version took
+  // them from LVGL's 4 MB pool): hold 5 MiB of 512 x 512 images, then decode
+  // more and build a screen.
+  init_test_display();
+  {
+    LvglImageDecoder decoder;
+    std::vector<ImagePtr> held;
+    for (int i = 0; i < 5; ++i) {
+      ImagePtr img = decoder.decode(flat_png(512, 512, static_cast<uint8_t>(i * 40)));
+      REQUIRE(img);
+      CHECK(img->header.w == 512);
+      CHECK(img->header.h == 512);
+      CHECK(img->data_size == 512u * 512u * 4u);
+      held.push_back(img);
+    }
+    CHECK(held.size() * 512 * 512 * 4 > 3u * HttpImageProvider::kDefaultCacheBytes / 2);
+    // Everything held is still intact (pixel 0 is R = shade, see flat_png; ARGB8888 is B,G,R,A in memory).
+    for (size_t i = 0; i < held.size(); ++i) CHECK(held[i]->data[2] == static_cast<uint8_t>(i * 40));
+
+    // A screen on top: widgets allocate from the same LVGL heap.
+    lv_obj_t* screen = lv_screen_active();
+    for (int i = 0; i < 40; ++i) {
+      lv_obj_t* label = lv_label_create(screen);
+      lv_label_set_text_fmt(label, "label %d with some text to lay out", i);
+    }
+    lv_obj_update_layout(screen);
+
+    // And more decodes still work.
+    CHECK(decoder.decode(bytes_of(test_images::kPng4x4, sizeof(test_images::kPng4x4))));
+    CHECK(decoder.decode(bytes_of(test_images::kJpeg16x8, sizeof(test_images::kJpeg16x8))));
+    CHECK(decoder.decode(flat_png(512, 512, 7)));
+    held.clear();
+  }
+  deinit_test_display();
+}
 
 TEST_CASE("LvglImageDecoder decodes a PNG and owns the pixels") {
   init_test_display();
