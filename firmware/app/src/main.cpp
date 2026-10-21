@@ -14,6 +14,9 @@
 //   f        toggle one-second performance lines ([perf]) instead of 5 s
 //   m        print the memory report now
 //   r        restart the board
+// Whole-word commands (type the word and Enter: echo wifi > /dev/ttyACM0):
+//   wifi       one line: connected network, signal, address, number of saved networks, memory
+//   wipe-wifi  forget every saved network and restart (the first-run Wi-Fi setup shows again)
 // Only in the diagnostics builds (pio run -e app_diag, also app_debug; -DAPP_DIAG), never in the
 // release `app` env, because they can inject a touch:
 //   h j n    scripted swipe left / right / list scroll, b0..b2 tap a tab button, =xxxyyy tap at x,y
@@ -21,6 +24,9 @@
 //   y        toggle repainting the whole screen (or celebration) every frame, to time a full repaint
 //   x0..x5   hide/show a part of the goal celebration (0 rays, 1 confetti, 2 stamp box, 3 cutout,
 //            4 strip, 5 baked stamp) to see what costs frame time
+//   S        scan and print the networks in range (SSID, signal, open/secured)
+//   W        join TP-Link_D066 with a deliberately wrong throw-away passphrase (failure path)
+//   Z        join a network that does not exist (the 15 s timeout path)
 // The commands are read here (the Arduino loop task) and handed to the LVGL
 // task through a queue (the settings erase and the NVS self-test too), so the
 // console never slows the screen and nothing but the LVGL task touches the UI
@@ -40,8 +46,11 @@
 #include "board/lvgl_port.h"
 #include "board/pins.h"
 #include <string>
+#include <vector>
 
+#include "platform/esp_wifi_service.h"
 #include "platform/nvs_prefs.h"
+#include "serial_commands.h"
 #include "version.h"
 
 // The app is built inside setup(); give the Arduino loop task room for it.
@@ -100,6 +109,7 @@ bool s_fast = false;            // [perf] line every second
 uint32_t s_loopLagMaxMs = 0;    // worst overshoot of the loop's own 20 ms step since the last report
 bool s_appOk = false;
 NvsPrefs* s_prefs = nullptr;
+EspWifiService* s_wifi = nullptr;
 
 void printMemory() {
   lv_mem_monitor_t mon = {};
@@ -118,6 +128,7 @@ void printMemory() {
       (unsigned)mon.total_size, (unsigned)mon.free_size, (unsigned)mon.frag_pct, (unsigned)lvgl_port_stack_free_bytes(),
       (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)), (unsigned long)s_firstFrameMs,
       (unsigned long)s_serialWaitedMs);
+  if (s_wifi) Serial.printf("[mem] wifi worker stack free %u B\n", (unsigned)s_wifi->worker_stack_free_bytes());
 }
 
 // Numbers for `elapsedMs` of running: `frames` counts completed screen
@@ -231,6 +242,32 @@ void eraseSettingsAndRestart() {
   Serial.println("[cmd] erase FAILED: the settings were not cleared (no restart)");
 }
 
+// Wi-Fi word commands run in the LVGL task (the service belongs to it).
+void wifiPrintState() {
+  if (s_wifi) s_wifi->print_state();
+}
+
+void wifiWipeAndRestart() {
+  if (!s_wifi) return;
+  s_wifi->wipe();
+  Serial.println("[cmd] saved Wi-Fi networks wiped, restarting to show the first-run setup");
+  Serial.flush();
+  delay(100);
+  esp_restart();
+}
+
+#if APP_DIAG
+void wifiDiagScan() {
+  if (s_wifi) s_wifi->diag_print_scan();
+}
+void wifiDiagWrongPassword() {
+  if (s_wifi) s_wifi->diag_wrong_password_test();
+}
+void wifiDiagTimeout() {
+  if (s_wifi) s_wifi->diag_timeout_test();
+}
+#endif
+
 // ---- serial commands ---------------------------------------------------------------
 
 bool s_wantTabDigit = false;
@@ -337,6 +374,15 @@ void handleSerialByte(int c) {
     case 'v':
       lvgl_port_trace_dump("now");
       break;
+    case 'S':
+      app_host_post_call(wifiDiagScan);
+      break;
+    case 'W':
+      app_host_post_call(wifiDiagWrongPassword);
+      break;
+    case 'Z':
+      app_host_post_call(wifiDiagTimeout);
+      break;
 #endif  // APP_DIAG
     case 't':
       app_host_post(AppCommand::NextTeam);
@@ -366,6 +412,26 @@ void handleSerialByte(int c) {
     default:
       break;  // line ends and anything else are ignored
   }
+}
+
+// Whole-word commands and the one-letter commands share the console; see serial_commands.h.
+SerialCommandSplitter s_splitter({"wifi", "wipe-wifi"});
+
+void handleSerialItem(const SerialCommandSplitter::Item& it) {
+  if (!it.isWord) {
+    handleSerialByte(static_cast<unsigned char>(it.byte));
+  } else if (it.word == "wifi") {
+    app_host_post_call(wifiPrintState);
+  } else if (it.word == "wipe-wifi") {
+    app_host_post_call(wifiWipeAndRestart);
+  }
+}
+
+void pollSerial() {
+  std::vector<SerialCommandSplitter::Item> items;
+  while (Serial.available() > 0) s_splitter.feed(static_cast<char>(Serial.read()), millis(), items);
+  s_splitter.poll(millis(), items);
+  for (const SerialCommandSplitter::Item& it : items) handleSerialItem(it);
 }
 
 }  // namespace
@@ -398,6 +464,11 @@ void setup() {
   // Settings first: a broken NVS must never keep the screen from starting.
   static NvsPrefs prefs;
   s_prefs = &prefs;
+  // The saved Wi-Fi list must be known before the UI is built (it opens the
+  // first-run setup when the list is empty). The radio starts after the first frame.
+  static EspWifiService wifi;
+  s_wifi = &wifi;
+  wifi.load();
   Serial.printf("[heap] %-22s internal free %6u\n", "after NVS", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   lvgl_port_start();
@@ -407,7 +478,7 @@ void setup() {
     Serial.println("[main] FATAL: cannot take the LVGL lock to build the UI");
     for (;;) delay(2000);
   }
-  s_appOk = app_host_start(prefs, backlight);
+  s_appOk = app_host_start(prefs, backlight, wifi);
   lvgl_unlock();
   if (!s_appOk) Serial.println("[main] the UI did not start (see above); the screen stays dark");
 
@@ -427,6 +498,7 @@ void setup() {
   }
   s_firstFrameMs = millis() - s_bootMs;
   if (s_appOk) backlight.open();
+  if (s_appOk && !wifi.start()) Serial.println("[main] the Wi-Fi service did not start (see above)");
   Serial.printf(
       "[boot] first frame after %lu ms (%lu ms of it waiting for a serial monitor); frames %lu, %lu blocks, %lu us "
       "flush, backlight %u%%; demo epoch %lld\n",
@@ -441,7 +513,7 @@ void loop() {
   static uint32_t lastReport = millis();
   static uint32_t lastStep = millis();
 
-  while (Serial.available() > 0) handleSerialByte(Serial.read());
+  pollSerial();
 
   delay(kLoopStepMs);
   const uint32_t now = millis();

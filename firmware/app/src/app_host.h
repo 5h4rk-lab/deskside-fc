@@ -2,9 +2,11 @@
 // HostLoop from an LVGL timer (so every ui/ and LVGL call stays in the LVGL
 // task) and takes commands from other tasks through a queue.
 //
-// This task: demo data only (no Wi-Fi, no real time). The data source is the
-// simulator's MockSource filled by demo_load(), the clock is a fixed demo
-// epoch that advances with the monotonic clock.
+// Demo data only (no real time yet). The data source is the simulator's
+// MockSource filled by demo_load(), the clock is a fixed demo epoch that
+// advances with the monotonic clock. Wi-Fi is real: the app gets the board's
+// EspWifiService (setup on the device, saved networks, auto-join); a successful
+// join does nothing else yet (live data arrives with the HTTP task).
 #pragma once
 
 #include <stdint.h>
@@ -12,6 +14,7 @@
 #include "app_diag.h"
 
 #include "backlight.h"
+#include "platform/esp_wifi_service.h"
 #include "prefs.h"
 
 // Commands any task may post (see app_host_post). The serial console maps
@@ -36,10 +39,12 @@ enum class AppCommand : uint8_t {
 };
 
 // Builds the UI. Call once, with the LVGL lock held (lvgl_lock) and after
-// lvgl_port_start(). `prefs` and `backlight` must outlive the app. Returns
-// false (after printing why) when memory is short; the app is then not
-// running and the other calls do nothing.
-bool app_host_start(Prefs& prefs, Backlight& backlight);
+// lvgl_port_start(). `prefs`, `backlight` and `wifi` must outlive the app;
+// `wifi` must have load()ed its saved list (the UI opens the first-run setup
+// when it is empty) and is pumped from the app's 10 ms timer. Returns false
+// (after printing why) when memory is short; the app is then not running and
+// the other calls do nothing.
+bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi);
 
 // Queues `fn` to run in the LVGL task (for serial commands that touch state
 // the LVGL task owns, such as the settings in flash). Same queue and the same

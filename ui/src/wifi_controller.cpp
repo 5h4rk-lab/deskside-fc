@@ -230,7 +230,7 @@ void WifiController::connect(const std::string& ssid, const std::string& passwor
       autoBackoffIdx_ = 0;
       schedule_auto(0);
     }
-    say("[wifi] cannot join " + wifi_printable(ssid) + ": not an open or WPA2-Personal network, or unusable passphrase");
+    say("[wifi] cannot join " + wifi_printable(ssid) + ": not an open or WPA2-Personal network, or an unusable key");
   }
   if (replaced) replaced(false);
   if (!ok && done) done(false);

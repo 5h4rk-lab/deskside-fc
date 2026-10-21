@@ -46,10 +46,14 @@ class NoImages : public ImageProvider {
 };
 
 struct Host {
-  Host(Prefs& p, Backlight& b)
+  Host(Prefs& p, Backlight& b, EspWifiService& w)
       : prefs(p),
         backlight(b),
-        deps{store, images, source, nullptr, prefs, &backlight},
+        wifi(w),
+        deps{store, images, source, nullptr, prefs, &backlight, &wifi,
+             // A successful join starts nothing yet: the data source is still the demo
+             // one (live data arrives with the HTTP task).
+             [] {}},
         loop(store, source, makeHooks()) {}
 
   HostLoop::Hooks makeHooks() {
@@ -66,6 +70,7 @@ struct Host {
 
   Prefs& prefs;
   Backlight& backlight;
+  EspWifiService& wifi;
   Store store;
   NoImages images;
   MockSource source;
@@ -205,6 +210,7 @@ void runCommand(const Command& c) {
 void onTick(lv_timer_t*) {
   Command c;
   while (s_queue && xQueueReceive(s_queue, &c, 0) == pdTRUE) runCommand(c);
+  s_host->wifi.pump();  // driver events and timers of the Wi-Fi service; its callbacks run here
   s_host->loop.tick(monotonicMs(), epochNow());
 }
 
@@ -219,14 +225,14 @@ static void heapStep(const char* what) {
   last = now;
 }
 
-bool app_host_start(Prefs& prefs, Backlight& backlight) {
+bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi) {
   if (s_host) return true;
   heapStep("before the app");
   s_queue = xQueueCreate(kQueueLength, sizeof(Command));
   if (!s_queue) {
     Serial.println("[app] ERROR: cannot create the command queue (serial commands off)");
   }
-  s_host = new (std::nothrow) Host(prefs, backlight);
+  s_host = new (std::nothrow) Host(prefs, backlight, wifi);
   if (!s_host) {
     Serial.println("[app] ERROR: out of memory for the app state");
     return false;
