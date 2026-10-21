@@ -27,7 +27,7 @@
  * lv_malloc) are limited by the cache budget, not by a pool size, and malloc is
  * thread safe and visible to ASan. The firmware has its own heap hooks
  * (firmware/app/src/board/lvgl_alloc.cpp: PSRAM for big blocks). */
-#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CLIB
+#define LV_USE_STDLIB_MALLOC    LV_STDLIB_CUSTOM  /* sim/sim_alloc.cpp: counted, can fail on demand */
 #define LV_USE_STDLIB_STRING    LV_STDLIB_BUILTIN
 #define LV_USE_STDLIB_SPRINTF   LV_STDLIB_BUILTIN
 

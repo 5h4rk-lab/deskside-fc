@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include <algorithm>
+#include <new>
 #include <optional>
 #include <string>
 
@@ -91,6 +92,7 @@ constexpr float kRayCentreY = 0.715f;    // fraction of the height (mockup: 62 %
 constexpr int32_t kTextWidth = 224;
 constexpr uint8_t kSilhouetteDarken = 70;
 constexpr int64_t kRayBitsMaxBytes = 200 * 1024;  // one phase: 240 x 320 x 2 = 150 KB
+constexpr uint32_t kPrepareMs = 150;     // the picture of the screen under the fade is taken this long before it
 constexpr int kRayPhases = 6;             // pictures per 15 degree period: 2.5 degrees each, one per 42 ms at 60 degrees a second
 constexpr float kPi = 3.14159265f;
 constexpr int32_t kStampMargin = 24;     // transparent border of the baked stamp
@@ -121,6 +123,14 @@ const ConfettiSpec kConfetti[kConfettiCount] = {
     {138, 58, 4, true, 1, 29, 9, 3200, 20},     {206, 286, 6, false, 1, 35, 6, 2600, 210},
 };
 
+struct State;
+
+struct UnderLink {
+  lv_draw_buf_t* buf = nullptr;
+  lv_obj_t* image = nullptr;
+  State* st = nullptr;  // nullptr once the celebration's state is gone
+};
+
 struct State {
   GoalParts parts{};
   lv_color_t background;
@@ -138,6 +148,11 @@ struct State {
   // repaints everything below an opaque overlay too (84 ms for the Live
   // screen on the device).
   lv_obj_t* hiddenScreen = nullptr;
+  // From the start of the fade: a picture of that screen drawn under the
+  // fading overlay (the screen itself stays hidden), so each fade frame costs
+  // a copy instead of a full repaint of the screen. Linked both ways (see
+  // UnderLink) because either side can be deleted first.
+  struct UnderLink* under = nullptr;
 
   // Rays: the flood colour with the rays on it, as kRayPhases RGB565 bitmaps
   // (the fan repeats every 15 degrees, so one period in a few steps is every
@@ -161,6 +176,7 @@ struct State {
   lv_obj_t* stampHost = nullptr;   // transparent box holding `stamp`; what is baked
   lv_obj_t* stampImage = nullptr;
   bool stampBaked = false;
+  bool fadePrepared = false;  // the first call of the lifetime timer has run
 };
 
 State* g_current = nullptr;      // the showing overlay
@@ -244,12 +260,72 @@ void hide_screen_below(State* st) {
   st->hiddenScreen = screen;
 }
 
+// Deletes the picture under the fading overlay, if any.
+void drop_under(State* st) {
+  UnderLink* link = st->under;
+  if (link == nullptr) return;
+  st->under = nullptr;
+  link->st = nullptr;
+  if (link->image != nullptr) {
+    lv_obj_t* image = link->image;
+    link->image = nullptr;
+    lv_obj_delete(image);  // its delete event frees the buffer and the link
+  }
+}
+
 void show_screen_below(State* st) {
+  drop_under(st);
   lv_obj_t* screen = st->hiddenScreen;
   st->hiddenScreen = nullptr;
   if (screen == nullptr || !lv_obj_is_valid(screen)) return;
   lv_obj_remove_flag(screen, LV_OBJ_FLAG_HIDDEN);
   lv_obj_invalidate(screen);
+}
+
+void on_under_delete(lv_event_t* e) {
+  UnderLink* link = static_cast<UnderLink*>(lv_event_get_user_data(e));
+  if (link->st != nullptr) link->st->under = nullptr;
+  if (link->buf != nullptr) lv_draw_buf_destroy(link->buf);
+  delete link;
+}
+
+// The fade shows what is under the overlay. Painting that screen again for each
+// of the fade's frames cost 70 to 110 ms on the device, so it is painted once
+// into a picture (kPrepareMs before the fade, so that frame is not a fade frame)
+// and the screen stays hidden. Out of memory: no picture, and the fade shows the
+// screen itself (the old, slower fade).
+void prepare_fade_under(State* st) {
+  lv_obj_t* screen = st->hiddenScreen;
+  if (st->under != nullptr || screen == nullptr || !lv_obj_is_valid(screen)) return;
+  lv_obj_remove_flag(screen, LV_OBJ_FLAG_HIDDEN);  // a hidden screen cannot be drawn
+  lv_draw_buf_t* snap = lv_snapshot_take(screen, LV_COLOR_FORMAT_RGB565);
+  lv_obj_add_flag(screen, LV_OBJ_FLAG_HIDDEN);     // nothing has been drawn in between
+  if (snap == nullptr) return;
+  lv_obj_t* image = lv_image_create(lv_layer_top());
+  UnderLink* link = image != nullptr ? new (std::nothrow) UnderLink() : nullptr;
+  if (link == nullptr) {
+    if (image != nullptr) lv_obj_delete(image);
+    lv_draw_buf_destroy(snap);
+    return;
+  }
+  link->buf = snap;
+  link->image = image;
+  link->st = st;
+  lv_image_set_src(image, snap);
+  lv_obj_set_pos(image, 0, 0);
+  lv_obj_remove_flag(image, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_flag(image, LV_OBJ_FLAG_HIDDEN);  // shown when the fade starts
+  lv_obj_add_event_cb(image, on_under_delete, LV_EVENT_DELETE, link);
+  lv_obj_move_to_index(image, lv_obj_get_index(st->parts.overlay));  // just under the overlay
+  st->under = link;
+}
+
+void begin_fade_under(State* st) {
+  if (st->under != nullptr && st->under->image != nullptr) {
+    lv_obj_remove_flag(st->under->image, LV_OBJ_FLAG_HIDDEN);
+    return;
+  }
+  show_screen_below(st);
 }
 
 void on_stamp_image_delete(lv_event_t* e) {
@@ -306,14 +382,22 @@ void set_opa(void* obj, int32_t v) {
   lv_obj_set_style_opa(static_cast<lv_obj_t*>(obj), static_cast<lv_opa_t>(v), 0);
 }
 
+// Fires kPrepareMs before the fade (motion only: picture of the screen under the
+// overlay), then at the start of the fade; in reduced motion once, at the end.
 void on_lifetime(lv_timer_t* t) {
   State* st = static_cast<State*>(lv_timer_get_user_data(t));
-  st->lifetime = nullptr;  // one-shot: LVGL deletes it after this call
+  if (!st->reduced && !st->fadePrepared) {
+    st->fadePrepared = true;
+    prepare_fade_under(st);
+    lv_timer_set_period(t, kPrepareMs);
+    return;
+  }
+  st->lifetime = nullptr;  // the last call: LVGL deletes the timer after it
   if (st->reduced) {
     dismiss(st);
     return;
   }
-  show_screen_below(st);  // the fade shows what is under the overlay
+  begin_fade_under(st);
   lv_anim_t a;
   lv_anim_init(&a);
   lv_anim_set_var(&a, st->parts.overlay);
@@ -618,8 +702,8 @@ void build(State* st, const GoalEvent& event) {
   p.fullTime = event.fullTime;
 
   const uint32_t life = event.fullTime ? kWinMs : kGoalMs;
-  st->lifetime = lv_timer_create(on_lifetime, st->reduced ? life : life - kFadeMs, st);
-  lv_timer_set_repeat_count(st->lifetime, 1);
+  st->lifetime = lv_timer_create(on_lifetime, st->reduced ? life : life - kFadeMs - kPrepareMs, st);
+  lv_timer_set_repeat_count(st->lifetime, st->reduced ? 1 : 2);
 
   if (st->reduced) return;
 

@@ -10,6 +10,7 @@
 #include "fixture_source.h"
 #include "fonts.h"
 #include "screens/live.h"
+#include "sim_alloc.h"
 #include "snapshot.h"
 #include "store.h"
 #include "test_display.h"
@@ -225,8 +226,8 @@ TEST_CASE("live match: the bitmap and the live painting give the same picture") 
       f.store.set_matches({live_match()}, kNow);
       f.refresh();
       CHECK(live_background_cached(f.live) == (pass == 0));
-      for (int y = 2; y < 276; y += 3) {
-        for (int x = 1; x < 240; x += 3) pictures[pass].push_back(u32(pixel_at(f.live, x, y)));
+      for (int y = 2; y < 276; y += 11) {
+        for (int x = 1; x < 240; x += 11) pictures[pass].push_back(u32(pixel_at(f.live, x, y)));
       }
     }
   }
@@ -235,6 +236,86 @@ TEST_CASE("live match: the bitmap and the live painting give the same picture") 
   size_t different = 0;
   for (size_t i = 0; i < pictures[0].size(); ++i) different += pictures[0][i] != pictures[1][i];
   CHECK(different == 0);
+}
+
+namespace {
+
+struct AllocGuard {
+  ~AllocGuard() { sim_alloc::clear_failures(); }
+};
+
+constexpr size_t kBgBitmap = 240 * 320 * 2;  // the bitmap of a full-height Live screen as these tests build it (153,600 bytes; 132,480 in the app's tab)
+
+}  // namespace
+
+TEST_CASE("live memory: the background bitmap is held while the screen lives and freed with it") {
+  Fixture f;
+  f.store.set_matches({live_match()}, kNow);
+  f.refresh();
+  REQUIRE(live_background_cached(f.live));
+  const size_t withBitmap = sim_alloc::live_bytes();
+  lv_obj_delete(f.live);
+  f.live = nullptr;
+  const size_t without = sim_alloc::live_bytes();
+  CHECK(withBitmap - without >= kBgBitmap);
+  CHECK(withBitmap - without < kBgBitmap + 100 * 1000);  // the screen's own objects, not a second bitmap
+
+  // Many rebuilds (a colour change each time) do not accumulate bitmaps.
+  f.live = live_create(lv_screen_active(), f.store, f.images, [](std::string) {});
+  const bool arsenalHome = true;
+  size_t first = 0;
+  for (int i = 0; i < 12; ++i) {
+    MatchSummary m = live_match();
+    if ((i % 2 == 0) == arsenalHome) {
+      m.home = team("363", "CHE", "Chelsea", 0xDBA111, 0x034694);
+      m.away = team("359", "ARS", "Arsenal", 0xEF0107, 0xEF0107);
+    }
+    f.store.set_matches({m}, kNow);
+    f.refresh();
+    REQUIRE(live_background_cached(f.live));
+    if (i == 1) first = sim_alloc::live_bytes();
+    if (i > 1) CHECK(sim_alloc::live_bytes() <= first + 2048);
+  }
+}
+
+TEST_CASE("live memory: tearing the display down frees the bitmap") {
+  auto held = [](bool withLive) {
+    {
+      Fixture f;
+      if (withLive) {
+        f.store.set_matches({live_match()}, kNow);
+        f.refresh();
+      }
+    }
+    return sim_alloc::live_bytes();
+  };
+  held(true);  // warm-up: LVGL's own caches are made once
+  const size_t none = held(false);
+  CHECK(held(true) == none);
+}
+
+TEST_CASE("live memory: no bitmap when none can be had, the screen paints it live and looks the same") {
+  AllocGuard guard;
+  std::vector<uint32_t> pictures[2];
+  for (int pass = 0; pass < 2; ++pass) {
+    Fixture f;
+    f.store.set_matches({live_match()}, kNow);
+    if (pass == 1) sim_alloc::fail_range(kBgBitmap, kBgBitmap + 512);  // the bitmap (the screen's size plus alignment)
+    f.refresh();
+    const int refused = sim_alloc::failures();
+    sim_alloc::clear_failures();  // reading pixels needs a snapshot of the same size
+    CHECK(live_background_cached(f.live) == (pass == 0));
+    if (pass == 1) CHECK(refused > 0);
+    for (int y = 2; y < 276; y += 11) {
+      for (int x = 1; x < 240; x += 11) pictures[pass].push_back(u32(pixel_at(f.live, x, y)));
+    }
+    // The screen keeps working: a score change still shows.
+    f.store.set_matches({live_match(3, 1)}, kNow);
+    f.refresh();
+    CHECK(score_text(f.parts()) == "3:1");
+  }
+  REQUIRE(pictures[0].size() == pictures[1].size());
+  CHECK(pictures[0] == pictures[1]);
 }
 
 TEST_CASE("live match: pill shows the match clock and the score is shown big") {

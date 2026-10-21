@@ -81,7 +81,7 @@ set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" "$
   PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # --- Simulator executable ----------------------------------------------------
-add_executable(sim main.cpp fixture_source.cpp mock_image_provider.cpp snapshot.cpp
+add_executable(sim main.cpp sim_alloc.cpp fixture_source.cpp mock_image_provider.cpp snapshot.cpp
   file_prefs.cpp sim_backlight.cpp mock_wifi.cpp curl_transport.cpp mock_power.cpp)
 # Defaults for the simulator's --assets and --fixtures flags.
 target_compile_definitions(sim PRIVATE
@@ -92,7 +92,7 @@ target_compile_options(sim PRIVATE -Wall -Wextra)
 
 # --- Tests (headless: never opens an SDL window) -----------------------------
 enable_testing()
-add_executable(sim_tests tests/test_main.cpp tests/smoke_test.cpp tests/theme_test.cpp tests/parse_test.cpp
+add_executable(sim_tests sim_alloc.cpp tests/test_main.cpp tests/smoke_test.cpp tests/theme_test.cpp tests/parse_test.cpp
   tests/goal_test.cpp tests/store_test.cpp tests/mock_source_test.cpp fixture_source.cpp
   tests/lru_test.cpp tests/image_provider_test.cpp mock_image_provider.cpp
   tests/image_decoder_test.cpp tests/http_image_provider_test.cpp

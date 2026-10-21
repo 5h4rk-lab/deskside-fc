@@ -11,6 +11,7 @@
 #include "demo_data.h"
 #include "mock_source.h"
 #include "screens/goal.h"
+#include "sim_alloc.h"
 #include "snapshot.h"
 #include "store.h"
 #include "test_display.h"
@@ -303,18 +304,19 @@ TEST_CASE("goal overlay: full frame rate for the entrance, then repaints every k
   int draws = 0;
   lv_obj_add_event_cb(goal_parts()->rays, count_draw, LV_EVENT_DRAW_MAIN, &draws);
 
-  // Entrance: every display refresh repaints. With 10 ms steps the 33 ms
-  // refresh timer runs every 40 ms.
-  const int refreshMs = (LV_DEF_REFR_PERIOD + 9) / 10 * 10;
-  const int entrance = frames_drawn(draws, 400);
-  CHECK(entrance >= 400 / refreshMs - 1);
+  // Stepped at 1 ms so the display refresh timer (LV_DEF_REFR_PERIOD, 33 ms) is
+  // not quantised to the step: without the throttle every refresh repaints the
+  // rays (30 a second), with it only every kIdleFrameMs (25 a second).
+  const int entrance = frames_drawn(draws, 400, 1);
+  CHECK(entrance >= 400 / LV_DEF_REFR_PERIOD - 1);  // every refresh
 
   run_for(200);  // past kEntranceMs
-  const int idle = frames_drawn(draws, 1000);
-  const int expected = static_cast<int>(1000 / goal::kIdleFrameMs);
-  CHECK(idle >= expected - 2);
-  CHECK(idle <= expected + 2);
-  CHECK(idle <= 1000 / refreshMs + 2);  // never faster than the display refresh
+  const int idle = frames_drawn(draws, 2000, 1);
+  const int throttled = 50;  // 25 fps over 2 s: written out, so changing kIdleFrameMs must change this test too
+  const int everyRefresh = static_cast<int>(2000 / LV_DEF_REFR_PERIOD);
+  CHECK(idle >= throttled - 3);
+  CHECK(idle <= throttled + 3);
+  CHECK(idle < everyRefresh - 5);  // fails when the throttle is removed
 }
 
 TEST_CASE("goal overlay: a full-time win stays about 8 s") {
@@ -550,7 +552,7 @@ TEST_CASE("goal overlay: a light accent darkens the background") {
         q565(darken(lv_color_hex(0xFFFFFF), goal::kLightDarken)));
 }
 
-TEST_CASE("goal overlay: the screen under it is hidden while it animates and shown again at the fade, a tap or a replacement") {
+TEST_CASE("goal overlay: the screen under it is hidden while it animates (a picture of it under the fade) and shown again at the end, a tap or a replacement") {
   Fixture f;
   lv_obj_t* screen = lv_screen_active();
   CHECK_FALSE(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
@@ -558,10 +560,15 @@ TEST_CASE("goal overlay: the screen under it is hidden while it animates and sho
   goal_celebrate(goal_event(), f.images);
   run_for(1000);
   CHECK(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
-  run_for(2600);  // 3.6 s: the fade starts at 3.75 s
+  run_for(2500);  // 3.5 s: the picture of the screen is taken at 3.6 s, the fade starts at 3.75 s
   CHECK(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
-  run_for(300);   // the fade shows what is below
-  CHECK_FALSE(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+  CHECK(lv_obj_get_child_count(lv_layer_top()) == 1);
+  run_for(200);   // 3.7 s: taken, still out of sight
+  CHECK(lv_obj_get_child_count(lv_layer_top()) == 2);
+  CHECK(lv_obj_has_flag(lv_obj_get_child(lv_layer_top(), 0), LV_OBJ_FLAG_HIDDEN));
+  run_for(200);   // 3.9 s: the fade shows what is below: the picture of it, the screen itself stays hidden
+  CHECK(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
+  CHECK_FALSE(lv_obj_has_flag(lv_obj_get_child(lv_layer_top(), 0), LV_OBJ_FLAG_HIDDEN));
   run_for(600);
   CHECK_FALSE(goal_active());
   CHECK_FALSE(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));
@@ -667,16 +674,16 @@ TEST_CASE("goal overlay: the settled stamp is baked into a picture that looks li
   lv_obj_add_flag(p->rays, LV_OBJ_FLAG_HIDDEN);
   run_for(380);  // 480 ms: settled, not yet baked (the bake comes at 500 ms)
   std::vector<uint32_t> before;
-  for (int y = 16; y < 112; y += 3) {
-    for (int x = 20; x < 220; x += 3) before.push_back(lv_color_to_u32(pixel_at(lv_layer_top(), x, y)));
+  for (int y = 16; y < 112; y += 6) {
+    for (int x = 20; x < 220; x += 6) before.push_back(lv_color_to_u32(pixel_at(lv_layer_top(), x, y)));
   }
   run_for(120);
   REQUIRE(p->stampImage != nullptr);
   CHECK_FALSE(visible(p->headline));  // its box is hidden now
   CHECK(visible(p->stampImage));
   std::vector<uint32_t> after;
-  for (int y = 16; y < 112; y += 3) {
-    for (int x = 20; x < 220; x += 3) after.push_back(lv_color_to_u32(pixel_at(lv_layer_top(), x, y)));
+  for (int y = 16; y < 112; y += 6) {
+    for (int x = 20; x < 220; x += 6) after.push_back(lv_color_to_u32(pixel_at(lv_layer_top(), x, y)));
   }
   REQUIRE(before.size() == after.size());
   int far = 0;
@@ -708,6 +715,222 @@ TEST_CASE("goal overlay: reduced motion has no baked stamp and no ray pictures")
   REQUIRE(p != nullptr);
   CHECK(p->stampImage == nullptr);
   CHECK(visible(p->headline));
+}
+
+// ------------------------------------------------------------ memory: lifecycle and failures
+
+namespace {
+
+// Ends every test with the allocator behaving again.
+struct AllocGuard {
+  ~AllocGuard() { sim_alloc::clear_failures(); }
+};
+
+constexpr size_t kRayPicture = 240 * 320 * 2;  // one ray picture (and the fade's picture of the screen)
+constexpr size_t kBig = 100 * 1000;            // anything the celebration holds that big is one of its pictures
+
+// Runs one whole celebration so LVGL's own lazily made caches exist, then
+// returns what LVGL holds with nothing showing.
+size_t warm_baseline(Fixture& f) {
+  goal_celebrate(goal_event(), f.images);
+  run_for(4600);
+  REQUIRE_FALSE(goal_active());
+  run_for(100);
+  return sim_alloc::live_bytes();
+}
+
+}  // namespace
+
+TEST_CASE("goal memory: twenty celebrations in a row return LVGL's heap to where it started") {
+  Fixture f;
+  const size_t baseline = warm_baseline(f);
+  size_t peak = 0;
+  for (int i = 0; i < 20; ++i) {
+    goal_celebrate(goal_event(i % 4 == 3), f.images);  // goals, with a win now and then
+    run_for(1000);
+    if (sim_alloc::live_bytes() > peak) peak = sim_alloc::live_bytes();
+    run_for(i % 4 == 3 ? 7500 : 3600);
+    run_for(200);
+    REQUIRE_FALSE(goal_active());
+    CHECK(sim_alloc::live_bytes() == baseline);
+  }
+  // While it ran, the six ray pictures and the baked stamp were held.
+  CHECK(peak > baseline + 6 * kRayPicture);
+  CHECK(peak < baseline + 6 * kRayPicture + 400 * 1000);
+}
+
+TEST_CASE("goal memory: freed on a tap, during the fade, and by a replacement") {
+  Fixture f;
+  const size_t baseline = warm_baseline(f);
+
+  // A tap in the middle of the animation.
+  goal_celebrate(goal_event(), f.images);
+  run_for(1500);
+  REQUIRE(goal_active());
+  CHECK(sim_alloc::live_bytes() > baseline + 6 * kRayPicture);
+  lv_obj_send_event(goal_parts()->overlay, LV_EVENT_CLICKED, nullptr);
+  run_for(100);
+  CHECK_FALSE(goal_active());
+  CHECK(sim_alloc::live_bytes() == baseline);
+
+  // A tap during the fade, while the picture of the screen under it is held.
+  goal_celebrate(goal_event(), f.images);
+  run_for(3900);
+  REQUIRE(goal_active());
+  CHECK(lv_obj_get_child_count(lv_layer_top()) == 2);
+  lv_obj_send_event(goal_parts()->overlay, LV_EVENT_CLICKED, nullptr);
+  run_for(100);
+  CHECK_FALSE(goal_active());
+  CHECK(lv_obj_get_child_count(lv_layer_top()) == 0);
+  CHECK(sim_alloc::live_bytes() == baseline);
+
+  // A second goal replaces the first in the middle of it (and in the middle of its fade).
+  for (uint32_t secondAt : {1200u, 3900u}) {
+    goal_celebrate(goal_event(), f.images);
+    run_for(secondAt);
+    goal_celebrate(goal_event(true), f.images);
+    run_for(600);
+    REQUIRE(goal_active());
+    CHECK(lv_obj_get_child_count(lv_layer_top()) == 1);
+    run_for(8500);
+    CHECK_FALSE(goal_active());
+    run_for(100);
+    CHECK(sim_alloc::live_bytes() == baseline);
+    CHECK(lv_obj_get_child_count(lv_layer_top()) == 0);
+  }
+
+  // The dismissal call.
+  goal_celebrate(goal_event(), f.images);
+  run_for(800);
+  goal_dismiss();
+  run_for(100);
+  CHECK(sim_alloc::live_bytes() == baseline);
+}
+
+namespace {
+
+// What LVGL still holds after a display is torn down, with a celebration of the
+// given age running when it happens (age < 0: none was started).
+size_t held_after_teardown(int age) {
+  size_t held = 0;
+  {
+    Fixture f;
+    if (age >= 0) {
+      goal_celebrate(goal_event(), f.images);
+      run_for(static_cast<uint32_t>(age));
+    }
+  }
+  held = sim_alloc::live_bytes();
+  return held;
+}
+
+}  // namespace
+
+TEST_CASE("goal memory: tearing the display down mid-animation frees everything") {
+  held_after_teardown(4000);  // warm-up: LVGL's own caches are made once
+  const size_t none = held_after_teardown(-1);
+  for (int age : {0, 300, 1000, 3900, 4100}) {  // entrance, bake, steady, fade, end of the fade
+    CAPTURE(age);
+    CHECK(held_after_teardown(age) == none);
+  }
+}
+
+TEST_CASE("goal memory: no ray pictures when none can be had, the celebration still shows") {
+  AllocGuard guard;
+  Fixture f;
+  const size_t baseline = warm_baseline(f);
+  sim_alloc::fail_range(kRayPicture, kRayPicture);
+  goal_celebrate(goal_event(), f.images);
+  run_for(1200);
+  REQUIRE(goal_active());
+  CHECK(sim_alloc::failures() > 0);
+  const GoalParts* p = goal_parts();
+  CHECK(p->stampImage != nullptr);  // the stamp is baked as usual
+  CHECK(text(p->headline) == "GOAL!");
+  CHECK(text(p->scoreLine) == "58'  \xC2\xB7  ARS 2 : 1 CHE");
+  leave_rays_only(p);
+  run_for(100);
+  const uint32_t flood = q565(theme().accent);
+  for (uint32_t c : probe_rays()) CHECK(c == flood);  // no rays, just the flood
+  run_for(3500);
+  CHECK_FALSE(goal_active());
+  sim_alloc::clear_failures();
+  run_for(100);
+  CHECK(sim_alloc::live_bytes() == baseline);
+}
+
+TEST_CASE("goal memory: fewer ray pictures than wanted still turn the rays") {
+  AllocGuard guard;
+  Fixture f;
+  const size_t baseline = warm_baseline(f);
+  sim_alloc::fail_range(kRayPicture, kRayPicture, 3);  // the fourth picture fails
+  goal_celebrate(goal_event(), f.images);
+  run_for(1200);
+  REQUIRE(goal_active());
+  CHECK(sim_alloc::failures() > 0);
+  leave_rays_only(goal_parts());
+  run_for(100);
+  const uint32_t flood = q565(theme().accent);
+  int lit = 0;
+  for (uint32_t c : probe_rays()) lit += c != flood;
+  CHECK(lit > 20);
+  const std::vector<uint32_t> a = probe_rays();
+  run_for(75);
+  CHECK(differing(a, probe_rays()) > 0);  // three phases still step
+  run_for(3500);
+  CHECK_FALSE(goal_active());
+  sim_alloc::clear_failures();
+  run_for(100);
+  CHECK(sim_alloc::live_bytes() == baseline);
+}
+
+TEST_CASE("goal memory: no stamp picture when none can be had, the live stamp stays") {
+  AllocGuard guard;
+  Fixture f;
+  const size_t baseline = warm_baseline(f);
+  sim_alloc::fail_range(100 * 1000, 140 * 1000);  // the stamp's bitmap (about 130 KB); the ray pictures are bigger
+  goal_celebrate(goal_event(), f.images);
+  run_for(1500);
+  REQUIRE(goal_active());
+  const GoalParts* p = goal_parts();
+  CHECK(sim_alloc::failures() > 0);
+  CHECK(p->stampImage == nullptr);
+  CHECK(visible(p->headline));
+  CHECK(lv_obj_get_style_transform_rotation(p->stamp, 0) == goal::kStampRotation);
+  // The stamp is on screen: chalk pixels in its area.
+  const lv_color_t chalk = theme().chalk;
+  int chalky = 0;
+  for (int y = 20; y < 100; y += 5) {
+    for (int x = 30; x < 210; x += 5) {
+      const lv_color_t px = pixel_at(lv_layer_top(), x, y);
+      chalky += abs(px.red - chalk.red) + abs(px.green - chalk.green) + abs(px.blue - chalk.blue) < 60;
+    }
+  }
+  CHECK(chalky > 40);
+  run_for(3000);
+  CHECK_FALSE(goal_active());
+  sim_alloc::clear_failures();
+  run_for(100);
+  CHECK(sim_alloc::live_bytes() == baseline);
+}
+
+TEST_CASE("goal memory: no picture of the screen for the fade, the screen is shown instead") {
+  AllocGuard guard;
+  Fixture f;
+  const size_t baseline = warm_baseline(f);
+  lv_obj_t* screen = lv_screen_active();
+  goal_celebrate(goal_event(), f.images);
+  run_for(3300);
+  sim_alloc::fail_range(kRayPicture, kRayPicture + 512);  // the fade's picture of the screen: the same size plus its alignment
+  run_for(600);  // 3.9 s: the picture is tried at 3.6 s, the fade starts at 3.75 s
+  CHECK(sim_alloc::failures() > 0);
+  CHECK_FALSE(lv_obj_has_flag(screen, LV_OBJ_FLAG_HIDDEN));  // old behaviour: the screen itself shows through
+  CHECK(lv_obj_get_child_count(lv_layer_top()) == 1);
+  run_for(600);
+  CHECK_FALSE(goal_active());
+  sim_alloc::clear_failures();
+  run_for(100);
+  CHECK(sim_alloc::live_bytes() == baseline);
 }
 
 TEST_CASE("goal overlay: deleted with the display, no state left behind") {
