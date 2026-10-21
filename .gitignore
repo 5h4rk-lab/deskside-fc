@@ -6,3 +6,5 @@ build/
 ruvector.db
 agentdb.rvf
 agentdb.rvf.lock
+secrets.ini
+.pio/
