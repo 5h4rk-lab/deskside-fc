@@ -7,11 +7,6 @@
 //   w        the live demo match ends with the favourite ahead (win)
 //   d        reload the demo data (after a win the live match is gone)
 //   s0 s1 s2 show the Live, Matches or News tab
-//   h j n    scripted swipe left / right / scroll, b0..b2 tap a tab button, =xxxyyy tap at x,y
-//            (a frame-time trace of the next 1.5 s is printed: [trace] lines); V starts a trace, v prints it
-//   y        toggle repainting the whole screen (or celebration) every frame, to time a full repaint
-//   x0..x5   diagnostics: hide/show a part of the goal celebration (0 rays, 1 confetti,
-//            2 headline, 3 cutout, 4 strip) to see what costs frame time
 //   t        make the next team of the list the favourite (saved; shows persistence)
 //   p        print the settings in use
 //   e        erase the saved settings and restart (defaults: Arsenal, UTC, full brightness)
@@ -19,6 +14,13 @@
 //   f        toggle one-second performance lines ([perf]) instead of 5 s
 //   m        print the memory report now
 //   r        restart the board
+// Only in the diagnostics builds (pio run -e app_diag, also app_debug; -DAPP_DIAG), never in the
+// release `app` env, because they can inject a touch:
+//   h j n    scripted swipe left / right / list scroll, b0..b2 tap a tab button, =xxxyyy tap at x,y
+//            (a frame-time trace of the next 1.5 s is printed: [trace] lines); V starts a trace, v prints it
+//   y        toggle repainting the whole screen (or celebration) every frame, to time a full repaint
+//   x0..x5   hide/show a part of the goal celebration (0 rays, 1 confetti, 2 stamp box, 3 cutout,
+//            4 strip, 5 baked stamp) to see what costs frame time
 // The commands are read here (the Arduino loop task) and handed to the LVGL
 // task through a queue (the settings erase and the NVS self-test too), so the
 // console never slows the screen and nothing but the LVGL task touches the UI
@@ -31,6 +33,7 @@
 #include <lvgl.h>
 #include <stdio.h>
 
+#include "app_diag.h"
 #include "app_host.h"
 #include "board/backlight_ledc.h"
 #include "board/display_st7789.h"
@@ -225,11 +228,13 @@ void eraseSettingsAndRestart() {
     delay(100);
     esp_restart();
   }
+  Serial.println("[cmd] erase FAILED: the settings were not cleared (no restart)");
 }
 
 // ---- serial commands ---------------------------------------------------------------
 
 bool s_wantTabDigit = false;
+#if APP_DIAG
 bool s_wantHideDigit = false;
 bool s_wantButtonDigit = false;
 int s_tapDigits = -1;  // after '=': collecting the 6 digits xxxyyy of a scripted tap
@@ -245,6 +250,7 @@ void scriptedGesture(const char* label, int x0, int y0, int x1, int y1, uint32_t
   s_dumpAtMs = millis() + durMs + 1500;
   Serial.printf("[cmd] gesture: %s\n", label);
 }
+#endif  // APP_DIAG
 
 void handleSerialByte(int c) {
   if (s_wantTabDigit) {
@@ -255,6 +261,7 @@ void handleSerialByte(int c) {
     }
     // Not a digit: treat it as a fresh command below.
   }
+#if APP_DIAG
   if (s_tapDigits >= 0) {
     if (c >= '0' && c <= '9') {
       s_tapValue = s_tapValue * 10 + (c - '0');
@@ -286,6 +293,7 @@ void handleSerialByte(int c) {
       return;
     }
   }
+#endif  // APP_DIAG
   switch (c) {
     case 'g':
       app_host_post(AppCommand::Goal);
@@ -299,6 +307,7 @@ void handleSerialByte(int c) {
     case 's':
       s_wantTabDigit = true;
       break;
+#if APP_DIAG
     case 'x':
       s_wantHideDigit = true;
       break;
@@ -328,6 +337,7 @@ void handleSerialByte(int c) {
     case 'v':
       lvgl_port_trace_dump("now");
       break;
+#endif  // APP_DIAG
     case 't':
       app_host_post(AppCommand::NextTeam);
       break;
@@ -439,10 +449,12 @@ void loop() {
   lastStep = now;
   if (step > kLoopStepMs && step - kLoopStepMs > s_loopLagMaxMs) s_loopLagMaxMs = step - kLoopStepMs;
 
+#if APP_DIAG
   if (s_dumpLabel && (int32_t)(now - s_dumpAtMs) >= 0) {
     lvgl_port_trace_dump(s_dumpLabel);
     s_dumpLabel = nullptr;
   }
+#endif
 
   const uint32_t period = s_fast ? kFastStatusMs : kStatusMs;
   if (now - lastReport >= period) {

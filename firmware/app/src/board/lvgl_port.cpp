@@ -8,6 +8,7 @@
 #include "lvgl_port.h"
 
 #include <Arduino.h>
+#include <atomic>
 #include <esp_heap_caps.h>
 #include <esp_system.h>
 #include <esp_timer.h>
@@ -131,6 +132,7 @@ void onFlushWaitFinish(lv_event_t*) {
   portEXIT_CRITICAL(&s_statsMux);
 }
 
+#if APP_DIAG
 // Scripted finger (diagnostics).
 struct Script {
   volatile bool active = false;
@@ -151,8 +153,12 @@ volatile int s_traceCount = 0;
 volatile bool s_traceOn = false;
 int64_t s_traceStartUs = 0;
 
+#endif
+
 void touchReadCb(lv_indev_t*, lv_indev_data_t* data) {
+#if APP_DIAG
   if (s_script.active) {
+    std::atomic_thread_fence(std::memory_order_acquire);  // the script's fields were written by another task
     const int64_t t = esp_timer_get_time() - s_script.startUs;
     const int64_t dur = (int64_t)s_script.durMs * 1000;
     if (t <= dur) {
@@ -168,6 +174,7 @@ void touchReadCb(lv_indev_t*, lv_indev_data_t* data) {
     if (t > dur + 60000) s_script.active = false;
     return;
   }
+#endif
   TouchPoint p;
   const bool pressed = touch_poll(p);
   data->point.x = p.x;
@@ -191,11 +198,14 @@ void lvglTask(void*) {
     }
     xSemaphoreGiveRecursive(s_lock);
 
+#if APP_DIAG
     if (s_traceOn && us > kBusyCallUs && s_traceCount < kTraceMax) {
       s_trace[s_traceCount].atMs = (uint32_t)((t0 - s_traceStartUs) / 1000);
       s_trace[s_traceCount].us = us;
+      std::atomic_thread_fence(std::memory_order_release);  // the entry before the count
       s_traceCount = s_traceCount + 1;
     }
+#endif
     portENTER_CRITICAL(&s_statsMux);
     s_stats.handlerCalls++;
     s_stats.handlerUs += us;
@@ -261,6 +271,7 @@ bool lvgl_port_try_start() {
   return true;
 }
 
+#if APP_DIAG
 void lvgl_port_inject_drag(int x0, int y0, int x1, int y1, uint32_t durMs) {
   s_traceCount = 0;
   s_traceStartUs = esp_timer_get_time();
@@ -271,6 +282,7 @@ void lvgl_port_inject_drag(int x0, int y0, int x1, int y1, uint32_t durMs) {
   s_script.y1 = y1;
   s_script.durMs = durMs;
   s_script.startUs = s_traceStartUs;
+  std::atomic_thread_fence(std::memory_order_release);  // the fields before `active`
   s_script.active = true;
 }
 
@@ -283,6 +295,7 @@ void lvgl_port_trace_start() {
 void lvgl_port_trace_dump(const char* label) {
   s_traceOn = false;
   const int n = s_traceCount;
+  std::atomic_thread_fence(std::memory_order_acquire);
   uint32_t sum = 0, mx = 0;
   for (int i = 0; i < n; ++i) {
     sum += s_trace[i].us;
@@ -302,6 +315,8 @@ void lvgl_port_trace_dump(const char* label) {
     }
   }
 }
+
+#endif  // APP_DIAG
 
 const char* lvgl_port_last_error() { return s_lastError; }
 

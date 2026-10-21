@@ -8,6 +8,8 @@
 
 #include <stdint.h>
 
+#include "../app_diag.h"
+
 // Initialises LVGL, the display and the touch controller, then starts the LVGL
 // task (core 1, 16 KB stack). Prints `[display] ok [touch] <name>`.
 // A failure of the display, a draw buffer or the task is fatal here: the reason
@@ -54,7 +56,8 @@ void lvgl_port_take_stats(LvglPortStats& out);
 // Smallest free stack the LVGL task ever had, in bytes (0 before it runs).
 uint32_t lvgl_port_stack_free_bytes();
 
-// ---- diagnostics (serial test hooks) ----------------------------------------
+#if APP_DIAG
+// ---- diagnostics (serial test hooks), built only with -DAPP_DIAG (env app_diag, app_debug) ----
 // A scripted finger: from (x0,y0) to (x1,y1) over durMs, then released. The
 // position follows the clock, so a slow frame makes the finger jump rather than
 // stretch the gesture, as a real finger would. While a script runs the real
@@ -68,3 +71,4 @@ void lvgl_port_trace_dump(const char* label);
 
 // Starts the same recording without a scripted finger (up to 256 calls).
 void lvgl_port_trace_start();
+#endif  // APP_DIAG

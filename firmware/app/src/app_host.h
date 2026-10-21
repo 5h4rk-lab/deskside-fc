@@ -9,6 +9,8 @@
 
 #include <stdint.h>
 
+#include "app_diag.h"
+
 #include "backlight.h"
 #include "prefs.h"
 
@@ -22,12 +24,15 @@ enum class AppCommand : uint8_t {
   NextTeam,    // make the next team of the team list the favourite (the path the team picker
                // takes: saved to NVS, colours and screens rebuilt), to test persistence
   Settings,    // print the settings in use
-  Hide,        // diagnostics: toggle one part of the showing goal celebration (0 rays,
-               // 1 confetti, 2 headline, 3 cutout, 4 bottom strip) to find what costs
-               // frame time; no effect when none shows
   Call,        // run a function in the LVGL task (see app_host_post_call)
-  Churn,       // diagnostics: toggle repainting the whole overlay every frame (profiling
-               // single elements of the celebration at full-screen cost)
+#if APP_DIAG
+  // Measurement commands, only in the diagnostics builds (env app_diag, app_debug).
+  Hide,        // toggle one part of the showing goal celebration (0 rays, 1 confetti,
+               // 2 stamp box, 3 cutout, 4 bottom strip, 5 baked stamp) to find what costs
+               // frame time; no effect when none shows
+  Churn,       // toggle repainting the whole overlay every frame (profiling single
+               // elements of the celebration at full-screen cost)
+#endif
 };
 
 // Builds the UI. Call once, with the LVGL lock held (lvgl_lock) and after

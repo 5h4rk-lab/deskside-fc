@@ -150,6 +150,7 @@ void runCommand(const Command& c) {
     case AppCommand::Call:
       if (c.fn) c.fn();
       break;
+#if APP_DIAG
     case AppCommand::Churn: {
       static lv_timer_t* churn = nullptr;
       if (churn) {
@@ -192,10 +193,11 @@ void runCommand(const Command& c) {
         if (hide) lv_obj_add_flag(part, LV_OBJ_FLAG_HIDDEN); else lv_obj_remove_flag(part, LV_OBJ_FLAG_HIDDEN);
         Serial.printf("[cmd] hide: part %d %s\n", c.arg, hide ? "hidden" : "shown");
       } else {
-        Serial.printf("[cmd] hide: no part %d (0 rays, 1 confetti, 2 headline, 3 cutout, 4 strip)\n", c.arg);
+        Serial.printf("[cmd] hide: no part %d (0 rays, 1 confetti, 2 stamp box, 3 cutout, 4 strip, 5 baked stamp)\n", c.arg);
       }
       break;
     }
+#endif
   }
 }
 
