@@ -13,8 +13,10 @@ namespace pins {
 // Power hold (SYS_EN / BAT_Control). Must be driven high to stay on when
 // running from the battery. [vendor] PWR_Key.h PWR_Control_PIN, [cpy]
 constexpr int kPowerHold = 7;
-// Power key input, active low. [vendor] PWR_Key.h PWR_KEY_Input_PIN (unused here)
+// Power key input, active low. [vendor] PWR_Key.h PWR_KEY_Input_PIN (logged only)
 constexpr int kPowerKey = 6;
+// Battery voltage ADC (through a divider on the board). [vendor] BAT_Driver.cpp BAT_ADC
+constexpr int kBatteryAdc = 8;
 // BOOT button, active low (strapping pin). [cpy] BUTTON0
 constexpr int kBootButton = 0;
 

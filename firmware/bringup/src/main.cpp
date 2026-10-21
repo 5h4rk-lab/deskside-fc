@@ -2,8 +2,8 @@
 //
 // Order: [sys] chip + PSRAM, [display] backlight + colour phases + test card,
 // [touch] controller detection + I2C scans, [wifi] scan (+ optional HTTPS GET),
-// then the BRINGUP RESULT line and an endless touch-test loop with a 5 s
-// heartbeat. Every step is logged on the native USB serial port at 115200.
+// [power] battery voltage + power key, then the BRINGUP RESULT line and an
+// endless touch-test loop with a 5 s heartbeat. Every step is logged on the native USB serial port at 115200.
 //
 // Serial commands: 'r' replays the boot log, 'p' reruns the colour phases,
 // 's' prints the result line again.
@@ -14,6 +14,7 @@
 #include "board_pins.h"
 #include "bringup_log.h"
 #include "display_st7789.h"
+#include "power.h"
 #include "touch.h"
 #include "wifi_scan.h"
 
@@ -153,8 +154,10 @@ void runDisplayPhases() {
 // ---- result line ----------------------------------------------------------------
 
 void printResult() {
-  logf("BRINGUP RESULT display=%s touch=%s wifi=%d networks", g_result.displayConfirmed ? "ok" : "?",
-       touch::name(g_result.touch), g_result.wifiNetworks);
+  char battery[16] = "none";
+  if (power::batteryPresent()) snprintf(battery, sizeof(battery), "%lu", (unsigned long)power::batteryMv());
+  logf("BRINGUP RESULT display=%s touch=%s wifi=%d networks battery=%s", g_result.displayConfirmed ? "ok" : "?",
+       touch::name(g_result.touch), g_result.wifiNetworks, battery);
 }
 
 // ---- touch test mode ---------------------------------------------------------------
@@ -258,6 +261,7 @@ void setup() {
 
   g_result.wifiNetworks = wifi_test::run();
 
+  power::begin();
   pinMode(pins::kBootButton, INPUT_PULLUP);
   printResult();
   logf("[sys] touch-test mode. Press BOOT if the test card looks right. Serial: r=replay p=phases s=result");
@@ -271,6 +275,7 @@ void loop() {
 
   pollTouch();
   handleBootButton();
+  power::pollKey();
   handleSerialInput();
 
   if (now - lastBeat >= kHeartbeatMs) {
@@ -278,6 +283,7 @@ void loop() {
     logf("[sys] alive %lu s heap=%lu psram=%lu", (unsigned long)(now / 1000), (unsigned long)ESP.getFreeHeap(),
          (unsigned long)ESP.getFreePsram());
     logTouchStats();
+    power::logStatus();
   }
   if (now - lastResult >= kResultRepeatMs) {
     lastResult = now;

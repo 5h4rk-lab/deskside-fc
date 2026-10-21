@@ -5,7 +5,7 @@ board: does the display work, does touch work, does Wi-Fi work. It prints
 everything it does to the USB serial port and ends with one summary line:
 
 ```
-BRINGUP RESULT display=? touch=CST3530 wifi=9 networks
+BRINGUP RESULT display=? touch=CST3530 wifi=9 networks battery=none
 ```
 
 `display=?` means "the program has no way to check the screen; look at it".
@@ -23,6 +23,8 @@ V2 a CST3530; it detects which one is there).
   write `pio`; type `~/.local/bin/pio` if `pio` is not on your PATH.
 - Your user in the `uucp` group (already done) so you can open the serial port.
 - Leave the battery unplugged for the first test.
+- Optional, for the battery test later: a multimeter (DC volts) and the LiPo
+  battery pack (see "Battery test" below).
 
 ## Flash it
 
@@ -146,6 +148,69 @@ To go slower if the picture has noise or wrong pixels, use
 | Square appears away from your finger, mirrored or swapped | touch coordinate mapping | touch the four screen corners in turn (top-left, top-right, bottom-right, bottom-left) and send me the four `[touch] raw` lines |
 | Touch works but the square never appears | display or coordinates out of range | send the `[touch] raw` lines |
 | `wifi=0 networks` | radio / antenna | send the `[wifi]` lines; try near the router |
+| `[power] no battery detected (ADC reads near 0)` | no battery plugged in (normal in the USB-only test), or a loose plug | nothing to do without a battery; with one, check the plug is fully seated |
+| `[power] battery very low or ADC offset wrong` | pack nearly empty, or the voltage formula is off | measure the pack with the multimeter and compare |
+| `[power] voltage above 4.35 V: check wiring` | wrong reading or wiring | unplug the battery and send me the lines |
+| `[power] battery=` far from the multimeter value | ADC offset or divider factor wrong (the formula comes from the vendor demo and is unverified) | send me both numbers; it is a one-line change |
+
+## Battery test (do this AFTER the first USB-only test works)
+
+The battery is a JLJLUP LP103665, 3.7 V, 3000 mAh, single-cell LiPo pack with
+a built-in protection circuit and a 1.25 mm 2-pin plug. Flash and run
+everything above first with the battery **unplugged**. The `[power]` lines
+already work without a battery (they then say `no battery detected`).
+
+**WARNING: Waveshare does not document which pin of the board's battery
+connector is + and which is -, and many packs have the opposite polarity to
+the board. A reversed connection can destroy the board and is a fire risk.
+Never force the plug. Do the polarity check below before the first connection.**
+
+### Safe polarity check (multimeter on DC volts)
+
+1. **Board side.** Power the board from USB only, battery unplugged. Touch the
+   two metal pins of the board's battery header with the probes. The pin that
+   reads positive with the **red** probe is the board's + pin. The charger
+   usually puts about 4.2 V there; the reading may also float or jump, in which
+   case rely on the `+` / `-` or `BAT` marks printed on the board next to the
+   header.
+2. **Battery side.** With the pack unplugged from the board, touch the two
+   metal contacts in the pack's plug. The contact that gives a positive
+   reading with the **red** probe (about 3.7 to 4.2 V) is the pack's + pin.
+   Write that voltage down.
+3. **Compare.** Plug in only if the pack's + pin ends up on the same side as
+   the board's + pin. If not, **STOP** and send me photos. The pins can be
+   swapped inside the plug with a pin extractor, or a reversing adapter can be
+   used. Never swap wires on a pack that is live.
+
+Also look for `+` / `-` or `BAT` marks near the header and compare with the
+pack's wires (red is usually +, black is usually -), but treat the multimeter
+result as the final word.
+
+### What should happen once it is connected correctly
+
+- **USB plugged in, battery attached:** the log shows the battery voltage
+  every 5 seconds, for example
+  `[power] battery=3950 mV (~80%) trend=rising pwr_key=up hold=high`. While
+  the voltage climbs (trend `rising`, 4000 mV or more) you also get
+  `probably charging from USB`. That is inferred from the voltage only; the
+  board has no charger status pin the program can read.
+- **Unplug USB:** the screen should keep running on the battery and the log
+  continues (the `[power]` line then shows `falling` or `steady`). This only
+  works because the program holds GPIO7 (power hold) high from the first
+  instruction, as the vendor says it must.
+- **Power button:** pressing the board's power key prints
+  `[power] pwr_key pressed` and `pwr_key released after N ms`. That is all it
+  does. The vendor's long-press logic (10 s sleep, 15 s restart, 20 s
+  shutdown) is deliberately **not** implemented, so the button is inert.
+- The `~NN%` is a rough guess from the voltage (approximate table). It is not
+  a fuel gauge and is off while charging or under load.
+
+### What to send me
+
+1. The `[power]` lines from before and after plugging the battery in.
+2. The voltage your multimeter reads across the pack's plug.
+3. Whether the screen kept running after the USB cable was unplugged.
+4. Whether the pack gets warm. **Stop and unplug it if it gets hot or swells.**
 
 ## What to send me
 
@@ -181,4 +246,6 @@ address, signal strength, and `[wifi] HTTPS status=200 bytes=...`.
 - `src/display_st7789.*`: display driver and test card.
 - `src/touch.*`: CST328 / CST3530 detection and reading, I2C scans.
 - `src/wifi_scan.*`: Wi-Fi scan, optional connect and HTTPS GET.
+- `src/power.*`: battery voltage (ADC on GPIO8), LiPo percentage estimate,
+  voltage trend, power key (GPIO6) logging.
 - `src/bringup_log.*`: serial logging with the replayable boot log.
