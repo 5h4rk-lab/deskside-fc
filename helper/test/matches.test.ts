@@ -284,7 +284,7 @@ describe("GET /api/matches", () => {
       res,
     );
     expect(res.statusCode).toBe(200);
-    expect(res.headers["Cache-Control"]).toBe("s-maxage=20, stale-while-revalidate=60");
+    expect(res.headers["Cache-Control"]).toBe("s-maxage=20");
     expect(res.headers["Vary"]).toBe("x-token");
     expect(res.headers["x-helper-partial"]).toBeUndefined();
     expect(typeof res.body.updated).toBe("number");
@@ -343,7 +343,7 @@ describe("GET /api/matches", () => {
       );
       expect(res.statusCode).toBe(200);
       expect(res.headers["x-helper-partial"]).toBe("1");
-      expect(res.headers["Cache-Control"]).toBe("s-maxage=5, stale-while-revalidate=60");
+      expect(res.headers["Cache-Control"]).toBe("s-maxage=5");
       expect(res.headers["Vary"]).toBe("x-token");
       expect(res.body.matches).toHaveLength(1);
     } finally {
@@ -450,8 +450,8 @@ describe("GET /api/matches", () => {
       );
       expect(res.statusCode).toBe(200);
       expect(res.headers["x-helper-partial"]).toBe("1");
-      expect(res.headers["Cache-Control"]).toBe("s-maxage=5, stale-while-revalidate=60");
-      expect(t.requested).toEqual([5000, 5000, 5000]);
+      expect(res.headers["Cache-Control"]).toBe("s-maxage=5");
+      expect(t.requested).toEqual([8000, 5000, 5000, 5000]); // call deadline first, then one per request
 
       clearScoreboardCache();
       vi.stubGlobal("fetch", hangingFetch());
@@ -462,6 +462,87 @@ describe("GET /api/matches", () => {
       t.restore();
       errors.mockRestore();
     }
+  });
+
+  it("lower-cases league codes before de-duplication, the cap and the request URLs", async () => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify(load("scoreboard-empty.json")), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const res = stubRes();
+    await handler(
+      { headers: { "x-token": "secret" }, query: { leagues: "ENG.1,eng.1,Esp.1", from: "20261019", to: "20261019" } } as any,
+      res,
+    );
+    expect(res.statusCode).toBe(200);
+    const urls = (fetchMock.mock.calls as any).map((c: any[]) => String(c[0]));
+    expect(urls.sort()).toEqual([
+      "https://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/scoreboard?dates=20261019",
+      "https://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/scoreboard?dates=20261019",
+    ]);
+    // 4 + 4 case variants are 8 distinct leagues; adding a 9th lower/upper pair must trip the cap
+    const many = ["a", "b", "c", "d", "e", "f", "g", "h"].flatMap((x) => [`${x}.1`, `${x.toUpperCase()}.1`]);
+    const ok8 = stubRes();
+    await handler({ headers: { "x-token": "secret" }, query: { leagues: many.join(","), from: "20261019", to: "20261019" } } as any, ok8);
+    expect(ok8.statusCode).toBe(200);
+    const nine = stubRes();
+    await handler({ headers: { "x-token": "secret" }, query: { leagues: [...many, "I.1"].join(","), from: "20261019", to: "20261019" } } as any, nine);
+    expect(nine.statusCode).toBe(400);
+  });
+
+  describe("overall deadline (8 s per call)", () => {
+    // Per-request 5 s timers never fire in these tests; only the 8 s call deadline does (after 30 ms).
+    function deadlineOnly() {
+      const real = AbortSignal.timeout.bind(AbortSignal);
+      const requested: number[] = [];
+      const spy = vi.spyOn(AbortSignal, "timeout").mockImplementation((ms: number) => {
+        requested.push(ms);
+        return real(ms === 8000 ? 30 : 600_000);
+      });
+      return { requested, restore: () => spy.mockRestore() };
+    }
+
+    it("answers within the call deadline with the partial data it had, and stops starting new requests", async () => {
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const d = deadlineOnly();
+      try {
+        const hang = hangingFetch();
+        const fetchMock = vi.fn((url: any, init: any) =>
+          String(url).includes("/eng.1/")
+            ? Promise.resolve(new Response(JSON.stringify(load("scoreboard-live.json")), { status: 200 }))
+            : (hang as any)(url, init),
+        );
+        vi.stubGlobal("fetch", fetchMock);
+        const res = stubRes();
+        const started = Date.now();
+        // 4 leagues x 9 default dates = 36 requests; 27 hang, only 8 can be in flight at once
+        await handler({ headers: { "x-token": "secret" }, query: { leagues: "eng.1,esp.1,ita.1,ger.1" } } as any, res);
+        expect(Date.now() - started).toBeLessThan(2000);
+        expect(res.statusCode).toBe(200);
+        expect(res.headers["x-helper-partial"]).toBe("1");
+        expect(res.headers["Cache-Control"]).toBe("s-maxage=5");
+        expect(res.body.matches).toHaveLength(1);
+        expect(d.requested.filter((ms) => ms === 8000)).toHaveLength(1); // ONE shared deadline
+        // 9 eng.1 answers + the 8 hangers that hold every worker; the other 19 never started
+        expect(fetchMock.mock.calls.length).toBeLessThan(36);
+      } finally {
+        d.restore();
+        errors.mockRestore();
+      }
+    });
+
+    it("502 when nothing succeeded before the deadline", async () => {
+      const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+      const d = deadlineOnly();
+      try {
+        vi.stubGlobal("fetch", hangingFetch());
+        const res = stubRes();
+        await handler({ headers: { "x-token": "secret" }, query: { leagues: "eng.1,esp.1" } } as any, res);
+        expect(res.statusCode).toBe(502);
+        expect(res.headers["Cache-Control"]).toBe("no-store");
+      } finally {
+        d.restore();
+        errors.mockRestore();
+      }
+    });
   });
 
   it("returns 502 when every ESPN request fails", async () => {
@@ -504,7 +585,7 @@ describe("upstream hygiene", () => {
     try {
       const fetchImpl = vi.fn(async () => ok(load("scoreboard-empty.json")));
       await fetchMatchesDetailed(["eng.1"], "20261019", "20261021", fetchImpl as any);
-      expect(t.requested).toEqual([5000, 5000, 5000]);
+      expect(t.requested).toEqual([8000, 5000, 5000, 5000]);
       for (const c of fetchImpl.mock.calls as any[]) expect(c[1].signal).toBeInstanceOf(AbortSignal);
     } finally {
       t.restore();
@@ -558,25 +639,52 @@ describe("scoreboard cache", () => {
     const f = counting();
     const opts = { now: () => t };
     await fetchMatchesDetailed(["eng.1"], "20261021", "20261021", f as any, opts); // a future day
-    await fetchMatchesDetailed(["eng.1"], "20261018", "20261018", f as any, opts); // a past day
+    await fetchMatchesDetailed(["eng.1"], "20261017", "20261017", f as any, opts); // an older day
     t += 599_000;
     await fetchMatchesDetailed(["eng.1"], "20261021", "20261021", f as any, opts);
-    await fetchMatchesDetailed(["eng.1"], "20261018", "20261018", f as any, opts);
+    await fetchMatchesDetailed(["eng.1"], "20261017", "20261017", f as any, opts);
     expect(f).toHaveBeenCalledTimes(2);
     t += 1_000;
     await fetchMatchesDetailed(["eng.1"], "20261021", "20261021", f as any, opts);
-    await fetchMatchesDetailed(["eng.1"], "20261018", "20261018", f as any, opts);
+    await fetchMatchesDetailed(["eng.1"], "20261017", "20261017", f as any, opts);
     expect(f).toHaveBeenCalledTimes(4);
   });
 
-  it("decides 'today' with the injected clock in UTC, so the same date changes TTL at midnight", async () => {
+  it("today AND yesterday (UTC) get the 20 s TTL; the day before yesterday gets 10 min", async () => {
+    let t = Date.parse("2026-10-20T10:00:00Z");
+    const f = counting();
+    const opts = { now: () => t };
+    for (const d of ["20261020", "20261019", "20261018"]) await fetchMatchesDetailed(["eng.1"], d, d, f as any, opts);
+    expect(f).toHaveBeenCalledTimes(3);
+    t += 19_000;
+    for (const d of ["20261020", "20261019", "20261018"]) await fetchMatchesDetailed(["eng.1"], d, d, f as any, opts);
+    expect(f).toHaveBeenCalledTimes(3);
+    t += 1_000; // 20 s: today and yesterday expired, the older day still cached
+    for (const d of ["20261020", "20261019", "20261018"]) await fetchMatchesDetailed(["eng.1"], d, d, f as any, opts);
+    expect(f).toHaveBeenCalledTimes(5);
+  });
+
+  it("yesterday's late matches stay fresh across midnight: written just after UTC midnight, 20 s TTL", async () => {
+    let t = Date.parse("2026-10-20T00:00:10Z");
+    const f = counting();
+    const opts = { now: () => t };
+    await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any, opts);
+    t += 20_000;
+    await fetchMatchesDetailed(["eng.1"], "20261019", "20261019", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(2);
+  });
+
+  it("the TTL is chosen at write time: a date written as 'tomorrow' keeps its 600 s after midnight", async () => {
     let t = Date.parse("2026-10-19T23:59:50Z");
     const f = counting();
     const opts = { now: () => t };
     await fetchMatchesDetailed(["eng.1"], "20261020", "20261020", f as any, opts); // tomorrow: 600 s
-    t = Date.parse("2026-10-20T00:00:30Z"); // now it is "today" but the entry was stored with the long TTL
+    t = Date.parse("2026-10-20T00:00:30Z"); // now "today", but the entry keeps the long TTL
     await fetchMatchesDetailed(["eng.1"], "20261020", "20261020", f as any, opts);
     expect(f).toHaveBeenCalledTimes(1);
+    t = Date.parse("2026-10-20T00:10:00Z"); // 610 s after the write: expired
+    await fetchMatchesDetailed(["eng.1"], "20261020", "20261020", f as any, opts);
+    expect(f).toHaveBeenCalledTimes(2);
   });
 
   it("keys by league and date", async () => {

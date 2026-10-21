@@ -24,7 +24,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
 
   const requested = (first(req.query.leagues) ?? "eng.1")
     .split(",")
-    .map((s) => s.trim())
+    .map((s) => s.trim().toLowerCase())
     .filter(Boolean);
   const from = first(req.query.from) ?? offsetDay(-1);
   const to = first(req.query.to) ?? offsetDay(7);
@@ -33,7 +33,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     sendError(res, 400, "invalid leagues");
     return;
   }
-  const leagues = [...new Set(requested)]; // de-duplicated, first occurrence wins the order
+  const leagues = [...new Set(requested)]; // lower-cased, de-duplicated, first occurrence wins the order
   if (leagues.length > MAX_LEAGUES) {
     sendError(res, 400, "too many leagues");
     return;
@@ -55,7 +55,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
       return;
     }
     // A partial answer is cached only briefly so a recovered upstream shows up quickly.
-    res.setHeader("Cache-Control", `s-maxage=${failed > 0 ? 5 : 20}, stale-while-revalidate=60`);
+    // No stale-while-revalidate: it would stack with the CDN and in-process TTLs and age live scores.
+    res.setHeader("Cache-Control", `s-maxage=${failed > 0 ? 5 : 20}`);
     res.setHeader("Vary", "x-token");
     if (failed > 0) res.setHeader("x-helper-partial", "1");
     res.status(200).json({ updated: Math.floor(Date.now() / 1000), matches });

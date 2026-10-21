@@ -11,7 +11,7 @@ import type {
 } from "./contract.js";
 import { teamColor } from "./colors.js";
 import { layoutFormation, parseFormation } from "./formation.js";
-import { fetchJson } from "./http.js";
+import { fetchJson, UPSTREAM_TIMEOUT_MS } from "./http.js";
 import { isAllowedImageUrl, type Fit } from "./images.js";
 
 const ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports/soccer";
@@ -155,9 +155,20 @@ export interface FetchMatchesOptions {
   now?: () => number;
 }
 
+/**
+ * One deadline for the whole call, shared by all upstream requests. The device gives up
+ * after 10 s; with up to 72 requests at 8 in flight the per-request 5 s limit alone could
+ * add up to far more. When it passes, requests in flight are aborted and requests not yet
+ * started are skipped; both count as failed.
+ */
+export const MATCHES_DEADLINE_MS = 8000;
+
 // In-process cache for single-date scoreboard results, keyed "<league>|<YYYYMMDD>".
-// Only successes are stored. A day that is "today" (UTC, by the injected clock) changes
-// quickly, so it lives 20 s; every other day lives 10 min. Bounded: when full, the
+// Only successes are stored. Today (UTC, by the injected clock) and the previous UTC day
+// change quickly, so they live 20 s (ESPN's dates are not necessarily UTC days, so
+// yesterday's late matches may still be live just after midnight); every other date lives
+// 10 min. The TTL is chosen when the entry is WRITTEN: a date fetched as "tomorrow" keeps
+// its 10 min even after UTC midnight turns it into "today". Bounded: when full, the
 // oldest-inserted entry is evicted first (Map iteration order is insertion order).
 export const SCOREBOARD_CACHE_MAX = 256;
 const TODAY_TTL_MS = 20_000;
@@ -184,7 +195,8 @@ function cacheGet(key: string, now: number): MatchSummary[] | null {
 }
 
 function cacheSet(key: string, date: string, matches: MatchSummary[], now: number): void {
-  const ttl = date === utcYmd(now) ? TODAY_TTL_MS : OTHER_DAY_TTL_MS;
+  const recent = date === utcYmd(now) || date === utcYmd(now - 86_400_000);
+  const ttl = recent ? TODAY_TTL_MS : OTHER_DAY_TTL_MS;
   scoreboardCache.delete(key); // re-inserting moves the key to the newest position
   while (scoreboardCache.size >= SCOREBOARD_CACHE_MAX) {
     const oldest = scoreboardCache.keys().next();
@@ -206,13 +218,22 @@ export async function fetchMatchesDetailed(
 ): Promise<MatchesResult> {
   const clock = options.now ?? Date.now;
   const dates = expandDates(from, to);
+  const callDeadline = AbortSignal.timeout(MATCHES_DEADLINE_MS);
   const jobs = leagues.flatMap((league) =>
     dates.map((date) => async (): Promise<MatchSummary[] | null> => {
       const key = `${league}|${date}`;
       const cached = cacheGet(key, clock());
       if (cached) return cached;
+      if (callDeadline.aborted) {
+        console.error(`ESPN ${league} scoreboard ${date} skipped: call deadline passed`);
+        return null;
+      }
       try {
-        const matches = normalizeScoreboard(await fetchJson(`${ESPN_BASE}/${league}/scoreboard?dates=${date}`, fetchImpl), league);
+        const signal = AbortSignal.any([AbortSignal.timeout(UPSTREAM_TIMEOUT_MS), callDeadline]);
+        const matches = normalizeScoreboard(
+          await fetchJson(`${ESPN_BASE}/${league}/scoreboard?dates=${date}`, fetchImpl, signal),
+          league,
+        );
         cacheSet(key, date, matches, clock());
         return matches;
       } catch (err) {

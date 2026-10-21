@@ -4,7 +4,7 @@ Vercel project (TypeScript, Node 22) between the display device and ESPN: it nor
 and proxies/resizes images. Every endpoint needs the `x-token` header.
 
 - `GET /api/health`: liveness check.
-- `GET /api/matches?leagues=eng.1&from=YYYYMMDD&to=YYYYMMDD`: matches by kickoff. Default window is yesterday..+7 days UTC (9 days); the maximum span is 14 days. Duplicate leagues are ignored (order kept) and at most 8 distinct leagues are accepted. ESPN rejects date ranges, so it makes one request per league per day; partial results (some requests failed or timed out) carry `x-helper-partial: 1` and a shorter cache lifetime.
+- `GET /api/matches?leagues=eng.1&from=YYYYMMDD&to=YYYYMMDD`: matches by kickoff. Default window is yesterday..+7 days UTC (9 days); the maximum span is 14 days. League codes are lower-cased, duplicates are ignored (order kept) and at most 8 distinct leagues are accepted. ESPN rejects date ranges, so it makes one request per league per day; partial results (some requests failed or timed out) carry `x-helper-partial: 1` and a shorter cache lifetime.
 - `GET /api/match/<id>?league=eng.1`: match detail (events, lineups, stats).
 - `GET /api/news?league=eng.1`: latest headlines.
 - `GET /api/teams`: team list for the team picker.
@@ -26,9 +26,9 @@ and proxies/resizes images. Every endpoint needs the `x-token` header.
 ### Caching
 
 - Every success response that sets `s-maxage` also sends `Vary: x-token`, so the CDN never serves a cached body to a request without the right token. Every error response (401, 400, 404, 502) sends `Cache-Control: no-store`.
-- `s-maxage`: matches 20 s (5 s when partial), match detail 15 s, news 300 s, teams 86400 s, images and cutouts 86400 s (with `max-age=86400`).
-- In-process scoreboard cache (per warm function instance, not shared): one entry per league and date. TTL 20 s for the current UTC day and 10 min for every other day. Only successful ESPN answers are cached; at most 256 entries, oldest evicted first.
-- Upstream timeouts: 5 s per ESPN/TheSportsDB request (a timeout counts as a failure); `/api/cutout` shares one 7 s deadline for the player lookup and the image download, because the device gives up after 10 s.
+- `s-maxage`: matches 20 s (5 s when partial; no `stale-while-revalidate`, so live scores are never served stale on top of the TTLs), match detail 15 s, news 300 s, teams 86400 s, images and cutouts 86400 s (with `max-age=86400`).
+- In-process scoreboard cache (per warm function instance, not shared): one entry per league and date. TTL 20 s for the current UTC day and the previous UTC day (ESPN's dates are not necessarily UTC days, so yesterday's late matches may still be live around midnight) and 10 min for every other date. The TTL is chosen when the entry is written: a date fetched as "tomorrow" keeps its 10 min after UTC midnight turns it into "today". Only successful ESPN answers are cached; at most 256 entries, oldest evicted first.
+- Upstream timeouts: 5 s per ESPN/TheSportsDB request (a timeout counts as a failure); `/api/matches` also has one 8 s deadline for the whole call: requests still running are aborted and requests not yet started are skipped, all counted as failed (partial response with `x-helper-partial: 1`, or 502 if nothing succeeded); `/api/cutout` shares one 7 s deadline for the player lookup and the image download, because the device gives up after 10 s.
 
 Deploy (production URL https://soccer-display-helper.vercel.app):
 
