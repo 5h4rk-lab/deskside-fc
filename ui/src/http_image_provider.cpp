@@ -110,8 +110,14 @@ void HttpImageProvider::request(const std::string& path, std::function<void(Imag
   for (Waiters& waiters : dropped) answer(waiters, nullptr);
 }
 
+void HttpImageProvider::set_online(bool online) {
+  if (online == online_) return;
+  online_ = online;
+  if (online_) pump();
+}
+
 void HttpImageProvider::pump() {
-  while (inFlight_ < kMaxConcurrent && !queue_.empty()) {
+  while (online_ && inFlight_ < kMaxConcurrent && !queue_.empty()) {
     std::string path = std::move(queue_.front());
     queue_.pop_front();
     auto it = entries_.find(path);

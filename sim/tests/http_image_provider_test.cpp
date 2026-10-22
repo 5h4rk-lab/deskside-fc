@@ -719,3 +719,60 @@ TEST_CASE("http images: a backwards jump does not keep old failures for the leng
   rig.provider.request(kCrest57, b.cb());
   CHECK(rig.transport.requests.size() == 2);  // tried again after at most the 5 min window
 }
+
+TEST_CASE("http images: offline, requests wait in the queue and go out once online") {
+  Rig rig;
+  CHECK(rig.provider.online());
+  rig.provider.set_online(false);
+  Got a, b, c;
+  rig.provider.request(kCrest57, a.cb());
+  rig.provider.request(kCrest61, b.cb());
+  rig.provider.request(kCrest57, c.cb());  // joins the waiting one
+  CHECK(rig.transport.requests.empty());
+  CHECK(rig.provider.pending() == 2);
+  CHECK(rig.provider.in_flight() == 0);
+  // Waiting offline is not "lost": nothing expires however long it takes.
+  rig.provider.tick(10 * HttpImageProvider::kLostMs);
+  CHECK(a.calls == 0);
+  CHECK(rig.provider.pending() == 2);
+
+  rig.provider.set_online(true);
+  REQUIRE(rig.transport.requests.size() == 2);
+  CHECK(rig.transport.requests[0].url == std::string(kBase) + kCrest57);
+  CHECK(rig.provider.in_flight() == 2);
+  rig.transport.deliver_at(0, 200, "OK");
+  CHECK(a.calls == 1);
+  CHECK(c.calls == 1);
+  CHECK(a.image != nullptr);
+  CHECK(a.image == c.image);
+  CHECK(rig.provider.cached_images() == 1);
+  CHECK(rig.provider.cached_bytes() == 64);
+}
+
+TEST_CASE("http images: going offline lets requests in flight finish but sends no new one") {
+  Rig rig;
+  Got got[4];
+  for (int i = 0; i < 4; ++i) rig.provider.request(path_n(i), got[i].cb());
+  CHECK(rig.transport.requests.size() == 2);  // kMaxConcurrent
+  rig.provider.set_online(false);
+  rig.transport.deliver_at(0, 200, "OK");
+  rig.transport.deliver_at(0, 200, "OK");
+  CHECK(got[0].image != nullptr);
+  CHECK(got[1].image != nullptr);
+  CHECK(rig.transport.requests.size() == 2);  // the other two still wait
+  CHECK(rig.provider.pending() == 2);
+  rig.provider.set_online(true);
+  CHECK(rig.transport.requests.size() == 4);
+}
+
+TEST_CASE("http images: offline, the queue bound still answers the oldest waiting request") {
+  Rig rig;
+  rig.provider.set_online(false);
+  std::vector<Got> got(HttpImageProvider::kMaxQueued + 1);
+  for (size_t i = 0; i < got.size(); ++i) rig.provider.request(path_n(static_cast<int>(i)), got[i].cb());
+  CHECK(got[0].calls == 1);
+  CHECK(got[0].image == nullptr);
+  CHECK(got[1].calls == 0);
+  CHECK(rig.provider.pending() == HttpImageProvider::kMaxQueued);
+  CHECK(rig.transport.requests.empty());
+}

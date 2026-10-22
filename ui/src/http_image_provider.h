@@ -22,6 +22,11 @@
 //   and undecodable bodies; 30 seconds for transport errors, 5xx, 408, 429 and
 //   lost requests; 60 seconds for a 401, which also sets auth_rejected() until
 //   the next success.
+// - While the host says it is offline (set_online(false): no network or no
+//   valid clock yet), nothing new is sent: requests wait in the queue (same
+//   bound) and go out when it is online again, so a picture asked for at boot
+//   is fetched once the network is up instead of failing at once. Requests
+//   already in flight finish as usual. The provider starts online.
 // - The host calls tick() regularly with a monotonic millisecond count: it
 //   expires remembered failures and treats a request with no answer for
 //   kLostMs as lost (its waiters get nullptr; a late answer is ignored). The
@@ -84,11 +89,17 @@ class HttpImageProvider : public ImageProvider {
   // Advances the provider's clock (monotonic milliseconds, any origin).
   void tick(int64_t monotonicMs);
 
+  // Online (the default): queued requests are sent. Offline: they wait.
+  void set_online(bool online);
+  bool online() const { return online_; }
+
   // True when the helper answered 401 and nothing has succeeded since.
   bool auth_rejected() const { return authRejected_; }
 
   // Bytes held by the cache, and requests not answered yet (queued + in flight).
   size_t cached_bytes() const { return cache_.used(); }
+  size_t cached_images() const { return cache_.count(); }
+  size_t in_flight() const { return inFlight_; }
   size_t pending() const { return entries_.size(); }
   size_t negative_entries() const { return negative_.size(); }
 
@@ -123,6 +134,7 @@ class HttpImageProvider : public ImageProvider {
   int64_t nowMs_ = 0;
   bool clockStarted_ = false;
   bool authRejected_ = false;
+  bool online_ = true;
   size_t maxNegative_ = kMaxNegative;
   // Cleared on destruction, for answers delivered after it.
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);

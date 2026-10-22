@@ -39,6 +39,7 @@ class LruBytes {
   }
 
   size_t used() const { return used_; }
+  size_t count() const { return index_.size(); }
 
  private:
   struct Entry {
