@@ -51,6 +51,9 @@ constexpr int32_t kRowHeight = 58;
 constexpr int32_t kRowPad = 8;
 constexpr int32_t kRowRadius = 12;
 constexpr int32_t kThumbSize = 40;
+// A row asks the helper for a small square crop (48x48, about 9 KB decoded)
+// instead of the lead's 240x135 photo (130 KB): five rows stay cheap.
+constexpr int kThumbRequest = 48;
 constexpr int32_t kThumbRadius = 9;
 constexpr int32_t kThumbGap = 10;
 constexpr int32_t kRowTextX = kRowPad + kThumbSize + kThumbGap;
@@ -279,6 +282,12 @@ void picture_load(CoverImage& c, ImageProvider& images, const std::string& path)
   cover_sync(c);
 }
 
+// The row thumbnail's path: the article's photo as a 48x48 cover crop ("" stays "").
+std::string thumb_path(const std::string& image) {
+  if (image.empty()) return image;
+  return sized(with_param(image, "fit", "cover"), kThumbRequest, kThumbRequest);
+}
+
 CoverImage make_cover(lv_obj_t* box, int32_t w, int32_t h) {
   CoverImage c;
   c.img = lv_image_create(box);
@@ -462,7 +471,7 @@ void apply_row(NewsState* st, Row& r, const ArticleView& v) {
   // to end in dots, so comparing against it would always differ.
   if (first || v.headline != r.shown.headline) lv_label_set_text(r.parts.headline, v.headline.c_str());
   set_text(r.parts.time, v.time);
-  if (first || v.image != r.shown.image) picture_load(r.cover, *st->images, v.image);
+  if (first || v.image != r.shown.image) picture_load(r.cover, *st->images, thumb_path(v.image));
   r.shown = v;
   r.applied = true;
 }

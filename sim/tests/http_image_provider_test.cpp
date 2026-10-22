@@ -558,6 +558,45 @@ TEST_CASE("http images: the negative cache stays bounded") {
   CHECK(rig.provider.negative_entries() <= HttpImageProvider::kMaxNegative);
 }
 
+TEST_CASE("http images: the device bound of 64 remembered failures holds, and the newest failures stay") {
+  FakeTransport transport;
+  FakeDecoder decoder;
+  HttpImageProvider provider(transport, decoder, kBase, kToken, HttpImageProvider::kDefaultCacheBytes,
+                             HttpImageProvider::kDeviceMaxNegative);
+  CHECK(HttpImageProvider::kDeviceMaxNegative == 64);
+  int64_t now = 0;
+  provider.tick(now);
+  for (int i = 0; i < 300; ++i) {
+    provider.request(path_n(i), [](ImagePtr) {});
+    transport.deliver_at(0, 404, "");
+    CHECK(provider.negative_entries() <= 64);
+    provider.tick(++now);  // each failure expires a millisecond after the one before
+  }
+  CHECK(provider.negative_entries() == 64);
+  // The last failure is still remembered: no new request for it.
+  const size_t before = transport.requests.size();
+  Got got;
+  provider.request(path_n(299), got.cb());
+  CHECK(got.calls == 1);
+  CHECK(got.image == nullptr);
+  CHECK(transport.requests.size() == before);
+  // One evicted long ago is asked again.
+  provider.request(path_n(0), [](ImagePtr) {});
+  CHECK(transport.requests.size() == before + 1);
+}
+
+TEST_CASE("http images: a bound of 0 remembered failures is taken as 1") {
+  FakeTransport transport;
+  FakeDecoder decoder;
+  HttpImageProvider provider(transport, decoder, kBase, kToken, HttpImageProvider::kDefaultCacheBytes, 0);
+  provider.tick(0);
+  for (int i = 0; i < 5; ++i) {
+    provider.request(path_n(i), [](ImagePtr) {});
+    transport.deliver_at(0, 500, "");
+  }
+  CHECK(provider.negative_entries() == 1);
+}
+
 TEST_CASE("http images: images load into widgets once delivered, and a deleted widget is safe") {
   init_test_display();
   {

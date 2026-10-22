@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -22,7 +23,9 @@ class FakeImages : public ImageProvider {
  public:
   void request(const std::string& path, std::function<void(ImagePtr)> done) override {
     requested.push_back(path);
-    done(deliver ? solid() : nullptr);
+    // A row thumbnail asks for a 48x48 crop, the lead for the 240x135 photo.
+    const bool thumb = path.find("&w=48&h=48") != std::string::npos;
+    done(deliver ? (thumb ? solid(48, 48) : solid()) : nullptr);
   }
 
   static ImagePtr solid(int32_t w = 240, int32_t h = 135) {
@@ -64,6 +67,8 @@ constexpr int64_t kMidnight = kNow - 17 * 3600;  // 00:00 UTC of that Tuesday
 constexpr int kIndia = 5 * 3600 + 30 * 60;
 
 std::string photo(const std::string& name) { return "/api/img?u=x%2F" + name + ".jpg&fit=cover&w=240&h=135"; }
+// What a row asks for: the same photo as a 48x48 cover crop.
+std::string thumb(const std::string& name) { return "/api/img?u=x%2F" + name + ".jpg&fit=cover&w=48&h=48"; }
 
 NewsItem article(const std::string& id, int64_t ageSeconds, const std::string& headline = "",
                  const std::string& image = "") {
@@ -528,7 +533,7 @@ TEST_CASE("a headline or image change updates only that row") {
   b.image = photo("other");
   f.load({article("a", 600), b, article("c", 7200)});
   CHECK(f.images.requested.size() == before + 1);
-  CHECK(f.images.requested.back() == photo("other"));
+  CHECK(f.images.requested.back() == thumb("other"));
 }
 
 TEST_CASE("without a picture the lead is an accent gradient, never empty") {
@@ -605,15 +610,36 @@ TEST_CASE("a delivered picture fills the lead and the thumbnails (cover)") {
   const NewsRowParts row = news_rows(f.screen)[0];
   lv_obj_t* img = lv_obj_get_child(row.thumb, 0);
   REQUIRE(lv_image_get_src(img) != nullptr);
+  const lv_image_dsc_t* dsc = static_cast<const lv_image_dsc_t*>(lv_image_get_src(img));
+  CHECK(dsc->header.w == 48);
+  CHECK(dsc->header.h == 48);
   const int32_t ts = lv_image_get_scale(img);
-  CHECK(240 * ts / 256 >= 40);
-  CHECK(135 * ts / 256 >= 40);
+  CHECK(48 * ts / 256 >= 40);
+  CHECK(48 * ts / 256 <= 41);  // scaled down to the box, not blown up
+  CHECK(lv_obj_get_x(img) <= 0);
+  CHECK(lv_obj_get_y(img) <= 0);
   CHECK(lv_obj_get_width(row.thumb) == 40);
   CHECK(lv_obj_get_height(row.thumb) == 40);
   CHECK(lv_obj_get_style_radius(row.thumb, 0) > 0);
   // The picture is not stretched.
   CHECK(lv_image_get_scale_x(img) == lv_image_get_scale_y(img));
   CHECK(lv_image_get_scale_x(p->leadImage) == lv_image_get_scale_y(p->leadImage));
+}
+
+TEST_CASE("the lead asks for the 240x135 photo, each row for a 48x48 cover crop of its own") {
+  Fixture f;
+  f.load({article("a", 600), article("b", 3600), article("c", 7200)});
+  const std::vector<std::string>& r = f.images.requested;
+  CHECK(std::count(r.begin(), r.end(), photo("a")) == 1);  // the lead (newest)
+  CHECK(std::count(r.begin(), r.end(), thumb("b")) == 1);
+  CHECK(std::count(r.begin(), r.end(), thumb("c")) == 1);
+  CHECK(std::count(r.begin(), r.end(), photo("b")) == 0);
+  CHECK(std::count(r.begin(), r.end(), photo("c")) == 0);
+  // A photo path without fit still gets a cover crop (never a letterboxed thumbnail).
+  NewsItem plain = article("d", 900);
+  plain.image = "/api/img?u=x%2Fd.png&w=240&h=135";
+  f.load({article("a", 600), plain});
+  CHECK(f.images.requested.back() == "/api/img?u=x%2Fd.png&w=48&h=48&fit=cover");
 }
 
 TEST_CASE("the screen scrolls vertically and its rows are not tappable") {

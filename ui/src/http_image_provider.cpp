@@ -27,9 +27,10 @@ bool url_safe(unsigned char c) {
 }  // namespace
 
 HttpImageProvider::HttpImageProvider(HttpTransport& transport, ImageDecoder& decoder,
-                                     std::string baseUrl, std::string token, size_t cacheBytes)
+                                     std::string baseUrl, std::string token, size_t cacheBytes,
+                                     size_t maxNegative)
     : transport_(transport), decoder_(decoder), base_(std::move(baseUrl)), token_(std::move(token)),
-      cache_(cacheBytes) {
+      cache_(cacheBytes), maxNegative_(maxNegative > 0 ? maxNegative : 1) {
   while (!base_.empty() && base_.back() == '/') base_.pop_back();
 }
 
@@ -61,12 +62,12 @@ bool HttpImageProvider::is_negative(const std::string& path) {
 }
 
 void HttpImageProvider::remember_failure(const std::string& path, int64_t forMs) {
-  if (negative_.size() >= kMaxNegative && negative_.find(path) == negative_.end()) {
+  if (negative_.size() >= maxNegative_ && negative_.find(path) == negative_.end()) {
     for (auto it = negative_.begin(); it != negative_.end();) {
       it = it->second <= nowMs_ ? negative_.erase(it) : std::next(it);
     }
     // Still full of live entries: forget the one that expires first.
-    if (negative_.size() >= kMaxNegative) {
+    if (negative_.size() >= maxNegative_) {
       auto soonest = negative_.begin();
       for (auto it = negative_.begin(); it != negative_.end(); ++it) {
         if (it->second < soonest->second) soonest = it;

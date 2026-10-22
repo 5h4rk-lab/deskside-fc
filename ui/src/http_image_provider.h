@@ -60,6 +60,9 @@ class HttpImageProvider : public ImageProvider {
   static constexpr size_t kMaxQueued = 64;
   static constexpr size_t kMaxPathLength = 1024;
   static constexpr size_t kMaxNegative = 256;
+  // The firmware's bound (internal RAM is scarce there; each entry is a path
+  // string plus a map node): passed as `maxNegative`.
+  static constexpr size_t kDeviceMaxNegative = 64;
   static constexpr int kTimeoutMs = 10000;
   static constexpr int64_t kLostMs = 30000;
   static constexpr int64_t kNegativeLongMs = 5 * 60 * 1000;  // 400, 404, decode failures
@@ -67,9 +70,11 @@ class HttpImageProvider : public ImageProvider {
   static constexpr int64_t kNegativeAuthMs = 60 * 1000;      // 401
 
   // `transport` and `decoder` must outlive the provider. A trailing '/' of
-  // baseUrl is ignored.
+  // baseUrl is ignored. `maxNegative` bounds the remembered failures (at least
+  // 1; when full, expired entries go first, then the one that expires first).
   HttpImageProvider(HttpTransport& transport, ImageDecoder& decoder, std::string baseUrl,
-                    std::string token, size_t cacheBytes = kDefaultCacheBytes);
+                    std::string token, size_t cacheBytes = kDefaultCacheBytes,
+                    size_t maxNegative = kMaxNegative);
   ~HttpImageProvider() override;
   HttpImageProvider(const HttpImageProvider&) = delete;
   HttpImageProvider& operator=(const HttpImageProvider&) = delete;
@@ -118,6 +123,7 @@ class HttpImageProvider : public ImageProvider {
   int64_t nowMs_ = 0;
   bool clockStarted_ = false;
   bool authRejected_ = false;
+  size_t maxNegative_ = kMaxNegative;
   // Cleared on destruction, for answers delivered after it.
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };
