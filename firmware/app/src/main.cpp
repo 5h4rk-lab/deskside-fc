@@ -751,7 +751,15 @@ int s_diagKeyMs = 0;
 // Whole-word commands and the one-letter commands share the console; see serial_commands.h.
 SerialCommandSplitter s_splitter;
 
+// A restart while an update is on trial brings the previous image back: say so.
+void warnIfTrialPending() {
+  if (app_host_trial_pending()) {
+    Serial.println("[cmd] WARNING: the update just installed is not confirmed yet (first data or 60 s): this restart rolls it back");
+  }
+}
+
 void restartNow() {
+  warnIfTrialPending();
   Serial.println("[cmd] restarting");
   Serial.flush();
   delay(100);
@@ -867,8 +875,10 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
   } else if (name == "wifi") {
     app_host_post_call(wifiPrintState);
   } else if (name == "wipe-wifi") {
+    warnIfTrialPending();
     app_host_post_call(wifiWipeAndRestart);
   } else if (name == "erase-settings") {
+    warnIfTrialPending();
     app_host_post_call(eraseSettingsAndRestart);  // runs in the LVGL task, like the settings writes
   } else if (name == "restart") {
     restartNow();
@@ -981,12 +991,8 @@ void setup() {
   }
   s_firstFrameMs = millis() - s_bootMs;
   if (s_appOk) backlight.open();
-  if (s_appOk && first.frames > 0) app_host_note_display_up();
-  if (s_appOk && !wifi.start()) {
-    Serial.println("[main] the Wi-Fi service did not start (see above)");
-  } else if (s_appOk) {
-    app_host_note_wifi_started();
-  }
+  // (The update trial's health check reads the frame count and wifi.started() itself.)
+  if (s_appOk && !wifi.start()) Serial.println("[main] the Wi-Fi service did not start (see above)");
   if (xTaskCreatePinnedToCoreWithCaps(soundPrepareTask, "snd_prep", 8192, nullptr, 1, &s_prepTask, 1,
                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
     s_prepTask = nullptr;

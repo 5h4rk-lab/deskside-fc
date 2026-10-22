@@ -298,3 +298,26 @@ TEST_CASE("health: display, Wi-Fi tried, then data or a minute") {
   CHECK_FALSE(noDisplay.ready(600000));
   CHECK(updated_notice(V(0, 1, 1)) == "Updated to 0.1.1");
 }
+
+TEST_CASE("health: inputs read as levels every tick latch, so no missed message keeps a good image unconfirmed") {
+  // The board's host calls observe(frames > 0, wifi started) every tick.
+  TrialHealth h;
+  h.observe(false, false);  // the first ticks: nothing drawn yet, radio not started
+  CHECK_FALSE(h.ready(120000));
+  h.observe(true, false);   // a frame went out
+  CHECK_FALSE(h.ready(120000));
+  h.observe(true, true);    // the Wi-Fi service started
+  CHECK_FALSE(h.ready(59999));
+  CHECK(h.ready(60000));
+  // A level that reads false later (never in practice: both only grow) does not undo it.
+  h.observe(false, false);
+  CHECK(h.ready(60000));
+  TrialHealth d;
+  d.observe(true, true);
+  d.data_ok();
+  CHECK(d.ready(3000));
+  TrialHealth noWifi;  // the radio never starts: only the minute rule cannot help, it stays unconfirmed
+  for (int i = 0; i < 100; ++i) noWifi.observe(true, false);
+  noWifi.data_ok();
+  CHECK_FALSE(noWifi.ready(600000));
+}

@@ -296,6 +296,13 @@ UNTESTED on hardware (needs the user):
 - Unplugging USB: the board keeps running on the pack; the reading drops (the charger's rise goes away); a real drain to 15 % shows the banner (deferred: hours on battery).
 - Charging detection over a real charge from a low pack (voltage inference only).
 
+## Measured on the board: software updates (2026-10-22, Task 9)
+
+- The prebuilt bootloader honours `CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE`: a newly installed image starts in `pending-verify` and is rolled back by the bootloader after its first start that does not confirm it. The firmware's own NVS trial record (`ota` / `ota.trial`, at most 3 starts) is a fallback that never fired on this board.
+- **Rollback window: until the first successful data, or 60 s of running** (TrialHealth: the display drew a frame, the Wi-Fi service started, then the first matches or 60 s). It is not a fixed 15 s: with a slow network the first data can take longer, and without data it is 60 s.
+- **Any restart inside that window reverts a good image to the previous one**: the power key (off, or a press in the off state), `:restart`, `:wipe-wifi`, `:erase-settings`, a crash or a watchdog reset. The console prints a warning before `:restart`, `:wipe-wifi` and `:erase-settings` while the update is not confirmed; `:ota` shows the state. Wait for "[ota] healthy after ..." (or the Settings row "Updated to X") before restarting.
+- The health inputs are read as levels every tick (frames drawn since boot > 0, the Wi-Fi service started), so no dropped message can leave a good image unconfirmed.
+
 ## Physical
 
 From the vendor structure drawing (`ESP32-S3-Touch-LCD-2.8_structure.pdf`; VERIFIED (vendor drawing), read from the rendered image; dimensions in mm):

@@ -154,6 +154,13 @@ class TrialHealth {
   static constexpr int64_t kHealthyMs = 60000;
   void display_up() { display_ = true; }
   void wifi_attempted() { wifi_ = true; }
+  // The host reads both as levels every tick (frames drawn so far > 0, the
+  // Wi-Fi service started) and hands them here: once true they stay true, and
+  // no single dropped notification can keep a good image unconfirmed.
+  void observe(bool displayDrew, bool wifiStarted) {
+    if (displayDrew) display_ = true;
+    if (wifiStarted) wifi_ = true;
+  }
   void data_ok() { data_ = true; }
   bool ready(int64_t uptimeMs) const { return display_ && wifi_ && (data_ || uptimeMs >= kHealthyMs); }
 

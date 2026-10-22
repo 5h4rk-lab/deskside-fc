@@ -72,6 +72,8 @@ bool fail(const char* what) {
 
 uint32_t lvglTickMs() { return (uint32_t)(esp_timer_get_time() / 1000); }
 
+volatile uint32_t s_framesTotal = 0;  // under s_statsMux; never reset
+
 // Runs in the SPI interrupt when the pixel block has been sent.
 void onFlushDone(void*) {
   const uint32_t us = (uint32_t)(esp_timer_get_time() - s_flushStartUs);
@@ -81,6 +83,7 @@ void onFlushDone(void*) {
   s_frameFlushUs += us;
   if (s_flushIsLast) {
     s_stats.frames++;
+    s_framesTotal++;
     if (s_frameFlushUs > s_stats.frameFlushMaxUs) s_stats.frameFlushMaxUs = s_frameFlushUs;
     s_frameFlushUs = 0;
   }
@@ -339,6 +342,13 @@ void lvgl_port_take_stats(LvglPortStats& out) {
   s_stats = {};
   portEXIT_CRITICAL(&s_statsMux);
   out.displayErrors = display_error_count();
+}
+
+uint32_t lvgl_port_frames_total() {
+  portENTER_CRITICAL(&s_statsMux);
+  const uint32_t n = s_framesTotal;
+  portEXIT_CRITICAL(&s_statsMux);
+  return n;
 }
 
 uint32_t lvgl_port_stack_free_bytes() {

@@ -518,7 +518,7 @@ struct EspWifiService::Impl {
   EspRadio radio;
   NvsWifiBlob blob;
   WifiController controller;
-  bool started = false;
+  std::atomic<bool> started{false};  // read by any task (the update trial health check)
 };
 
 EspWifiService::EspWifiService() : impl_(new (std::nothrow) Impl) {
@@ -538,9 +538,12 @@ void EspWifiService::load() {
 }
 
 bool EspWifiService::start() {
-  if (!impl_ || impl_->started) return impl_ && impl_->started;
-  impl_->started = impl_->radio.begin();
-  return impl_->started;
+  if (!impl_ || impl_->started.load()) return impl_ && impl_->started.load();
+  impl_->started.store(impl_->radio.begin());
+  return impl_->started.load();
+}
+
+bool EspWifiService::started() const { return impl_ && impl_->started.load();
 }
 
 void EspWifiService::pump() {
@@ -609,7 +612,7 @@ void EspWifiService::print_state() {
 
 bool EspWifiService::link_up() const { return impl_ && impl_->radio.link_up(); }
 
-bool EspWifiService::stop_radio(uint32_t waitMs) { return !impl_ || !impl_->started || impl_->radio.stop_radio(waitMs); }
+bool EspWifiService::stop_radio(uint32_t waitMs) { return !impl_ || !impl_->started.load() || impl_->radio.stop_radio(waitMs); }
 
 size_t EspWifiService::worker_stack_free_bytes() const { return impl_ ? impl_->radio.stack_free_bytes() : 0; }
 

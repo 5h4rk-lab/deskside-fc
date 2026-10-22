@@ -110,15 +110,17 @@ struct HelperConfig {
 // restart. A failed download resumes everything and shows why in the row.
 // `boot` is what ota_boot() found: an image on trial is confirmed
 // (ota_confirm) from the 10 ms timer once TrialHealth is ready (display up
-// and Wi-Fi started, reported by app_host_note_*; then the first matches or a
-// minute of running).
+// and Wi-Fi started, both read as levels every tick: lvgl_port_frames_total()
+// > 0 and EspWifiService::started(); then the first matches or a minute of
+// running).
 bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, EspPowerService& power,
                     I2sSoundOut* speaker, const HelperConfig& helper, const OtaBoot& boot);
 
-// For the trial's health check (any task): the first frame was drawn; the
-// Wi-Fi service started.
-void app_host_note_display_up();
-void app_host_note_wifi_started();
+// Any task: the running image was just installed and is not confirmed yet
+// (until the first data, or 60 s of running). Any restart before then (the
+// power key, :restart, :wipe-wifi, :erase-settings, a crash) brings the
+// previous image back.
+bool app_host_trial_pending();
 
 // The [ota] lines (slots, states, trial record, the update row). LVGL task (post it).
 void app_host_print_ota();

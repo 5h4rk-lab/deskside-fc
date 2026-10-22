@@ -53,6 +53,10 @@ struct LvglPortStats {
 };
 void lvgl_port_take_stats(LvglPortStats& out);
 
+// Frames completed since boot (never reset; any task). The update trial's
+// health check reads it: > 0 means the display really drew.
+uint32_t lvgl_port_frames_total();
+
 // Smallest free stack the LVGL task ever had, in bytes (0 before it runs).
 uint32_t lvgl_port_stack_free_bytes();
 

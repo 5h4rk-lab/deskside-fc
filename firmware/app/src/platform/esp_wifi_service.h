@@ -48,6 +48,9 @@ class EspWifiService : public WifiService {
   // the task or the queues cannot be created (the service then reports
   // nothing found / not connected). Call once, after the first frame.
   bool start();
+  // Any task: start() succeeded (the worker runs). A level, not an event, so
+  // nobody can miss it (the update trial's health check reads it every tick).
+  bool started() const;
   // LVGL task, every 10 ms: hands driver events to the controller and runs it.
   void pump();
 

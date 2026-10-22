@@ -26,6 +26,7 @@
 #include "update_flow.h"
 #include "version.h"
 #include "platform/esp_ota.h"
+#include "board/lvgl_port.h"
 
 #if APP_DEMO_DATA
 #include "demo/demo_fixtures.gen.h"
@@ -85,6 +86,11 @@ std::atomic<bool> s_diagOffline{false};  // :diag-offline: refuse every request 
 // A software update downloads: the data and picture transports refuse every
 // request (their sessions' memory goes to the download).
 std::atomic<bool> s_updatePause{false};
+#endif
+// An image on trial not confirmed yet (any task reads it: the console warns
+// before a restart, which would roll the update back).
+std::atomic<bool> s_trialPending{false};
+#if !APP_DEMO_DATA
 
 // The link and the clock, without the update pause (the update itself needs them).
 bool linkAndClock() { return s_readyWifi != nullptr && s_readyWifi->link_up() && epoch_now_if_valid() > 0; }
@@ -310,25 +316,19 @@ class EspUpdater : public Updater {
   static constexpr int64_t kPauseLimitMs = 15000;  // requests in flight end within their 10 s deadline
   static constexpr int64_t kRestartDelayMs = 1500;  // "Restarting..." stays on screen this long
 
-  EspUpdater(Host& h, Version running, const std::string& manifestUrl, const std::string& token, bool allowHttp)
-      : h_(h), running_(running), flow_(running, rules_for_manifest_url(manifestUrl, allowHttp)) {
-    configure(manifestUrl, token, allowHttp);
+  EspUpdater(Host& h, Version running, const std::string& manifestUrl, const std::string& token)
+      : h_(h), running_(running), flow_(running, rules_for_manifest_url(manifestUrl, false)) {
+    configure(manifestUrl, token, false);
     flow_.set_start_ms(monotonicMs());
   }
   ~EspUpdater() override { wipe(token_); }
 
+#if APP_DIAG
   // A new manifest address (diagnostics: :ota-url), keeping the row's notice.
-  void configure(const std::string& manifestUrl, const std::string& token, bool allowHttp) {
-    const UpdateStatus old = flow_.status();
-    manifestUrl_ = manifestUrl;
-    wipe(token_);
-    token_ = token;
-    allowHttp_ = allowHttp;
-    flow_ = UpdateFlow(running_, rules_for_manifest_url(manifestUrl, allowHttp));
-    flow_.set_start_ms(monotonicMs());
-    flow_.set_notice(old.notice, old.noticeIsProblem);
-    flow_.set_unconfirmed(unconfirmed_);
+  void diag_configure(const std::string& manifestUrl, const std::string& token, bool allowHttp) {
+    configure(manifestUrl, token, allowHttp);
   }
+#endif
   void set_notice(const std::string& text, bool problem) { flow_.set_notice(text, problem); }
   void set_unconfirmed(bool u) {
     unconfirmed_ = u;
@@ -371,13 +371,34 @@ class EspUpdater : public Updater {
   }
   void check(bool userAsked);
   void resume(const char* why);
+  // The manifest address and token, keeping the row's notice. `allowHttp`
+  // reaches the rules and the download only in a diagnostics build.
+  void configure(const std::string& manifestUrl, const std::string& token, bool allowHttp) {
+#if APP_DIAG
+    allowHttp_ = allowHttp;
+#else
+    allowHttp = false;
+#endif
+    const UpdateStatus old = flow_.status();
+    manifestUrl_ = manifestUrl;
+    wipe(token_);
+    token_ = token;
+    flow_ = UpdateFlow(running_, rules_for_manifest_url(manifestUrl, allowHttp));
+    flow_.set_start_ms(monotonicMs());
+    flow_.set_notice(old.notice, old.noticeIsProblem);
+    flow_.set_unconfirmed(unconfirmed_);
+  }
 
   Host& h_;
   Version running_;
   UpdateFlow flow_;
   std::string manifestUrl_;
   std::string token_;
+#if APP_DIAG
   bool allowHttp_ = false;
+#else
+  static constexpr bool allowHttp_ = false;  // the release build: https only, structurally
+#endif
   bool unconfirmed_ = false;
   bool checkInFlight_ = false;
   Step step_ = Step::None;
@@ -798,8 +819,12 @@ void powerKeyTick() {
 void trialTick() {
   Host& h = *s_host;
   if (!h.boot.onTrial || h.confirmed) return;
+  // Levels, read every tick: the display drew at least one frame, the Wi-Fi
+  // service started (no one-shot message that a full queue could drop).
+  h.health.observe(lvgl_port_frames_total() > 0, h.wifi.started());
   if (!h.health.ready(monotonicMs())) return;
   h.confirmed = true;
+  s_trialPending.store(false);
   Serial.printf("[ota] healthy after %lld ms (%s)\n", (long long)monotonicMs(),
                 h.firstData ? "first data arrived" : "a minute of running");
   ota_confirm();
@@ -870,6 +895,7 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, Es
   }
 #endif
   s_host->boot = boot;
+  s_trialPending.store(boot.onTrial);
 #if !APP_DEMO_DATA
   // Software updates: checks go to the helper's /api/firmware/version (none
   // without a valid helper); the image must come from the same host.
@@ -878,7 +904,7 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, Es
     parse_version(kAppVersion, running);
     auto* updater = new (std::nothrow)
         EspUpdater(*s_host, running, helper.valid ? manifest_url_for_helper(helper.url) : std::string(),
-                   helper.valid ? helper.token : std::string(), false);
+                   helper.valid ? helper.token : std::string());
     if (updater) {
       updater->set_unconfirmed(boot.onTrial);
       if (!boot.notice.empty()) updater->set_notice(boot.notice, true);
@@ -1190,13 +1216,7 @@ void app_host_diag_offline_toggle() {
 }
 #endif
 
-void app_host_note_display_up() {
-  if (s_host) app_host_post_call([] { s_host->health.display_up(); });
-}
-
-void app_host_note_wifi_started() {
-  if (s_host) app_host_post_call([] { s_host->health.wifi_attempted(); });
-}
+bool app_host_trial_pending() { return s_trialPending.load(); }
 
 void app_host_print_ota() {
   ota_print_state();
@@ -1225,7 +1245,7 @@ void app_host_diag_ota_url(const std::string& url) {
     const bool http = s_otaUrl.compare(0, 7, "http://") == 0;
     // A test server gets no token (it is not the helper).
     s_host->transport.set_allow_plain_http(http);
-    static_cast<EspUpdater*>(s_host->updater)->configure(s_otaUrl, std::string(), true);
+    static_cast<EspUpdater*>(s_host->updater)->diag_configure(s_otaUrl, std::string(), true);
     Serial.printf("[ota] diag: manifest from %s (no token sent%s)\n", s_otaUrl.c_str(),
                   http ? ", plain http allowed" : "");
   });
