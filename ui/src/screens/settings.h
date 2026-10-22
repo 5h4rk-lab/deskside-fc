@@ -1,7 +1,7 @@
 // Settings screen: favourite team, time zone, brightness, night dimming,
 // reduced motion, sound (when the host has a speaker), battery (when the host
-// has battery hardware) and (when the host supports it) Wi-Fi, under a "< Back"
-// header. The app hosts it as an overlay above the tab content.
+// has battery hardware), (when the host supports it) Wi-Fi and Software
+// update, under a "< Back" header. The app hosts it as an overlay above the tab content.
 //
 // The screen keeps its own copy of the Settings. Every change made on it
 // updates that copy, refreshes the affected texts and calls onChanged() with
@@ -18,6 +18,7 @@
 #include "../settings.h"  // the Settings model (not this file)
 #include "battery_model.h"
 #include "image_provider.h"
+#include "update_check.h"
 
 struct SettingsCallbacks {
   std::function<void()> onBack;
@@ -28,6 +29,10 @@ struct SettingsCallbacks {
   std::function<void()> onTestSound;
   // The host has battery hardware: the Battery card (Auto, Installed, None).
   bool battery = false;
+  // A tap on the Software update row; when empty there is no such row. What
+  // the tap does (check, install) is the host's business: the row only
+  // shows what settings_set_update() gives it.
+  std::function<void()> onUpdate;
   // While the brightness slider is dragged (not saved yet): the host previews it.
   std::function<void(int percent)> onBrightnessPreview;
   // After any change made on the screen (brightness released, a switch, a
@@ -73,6 +78,12 @@ void settings_set_wifi_status(lv_obj_t* screen, const std::string& text);
 // doing (the host passes Store::data_status_text()). Amber when `problem`.
 // Empty until the host sets it.
 void settings_set_data_status(lv_obj_t* screen, const std::string& text, bool problem);
+
+// The Software update row: update_status_text(status) under the title,
+// amber for a problem, the chosen version's line brighter while an install is
+// offered, and a progress bar while an install runs (update_status_busy).
+// Does nothing without the row (no onUpdate).
+void settings_set_update(lv_obj_t* screen, const UpdateStatus& status);
 
 // The Battery line in the About area, between the version and the data line:
 // battery_status_text() ("78% · On battery", "Low: 18% · On battery", ...)
@@ -136,6 +147,9 @@ struct SettingsParts {
 
   lv_obj_t* wifiRow = nullptr;     // nullptr when there is no Wi-Fi row
   lv_obj_t* wifiStatus = nullptr;  // "Connected to <ssid>" / "Not connected", one line
+  lv_obj_t* updateRow = nullptr;     // nullptr when there is no Software update row (tap: onUpdate)
+  lv_obj_t* updateStatus = nullptr;  // "Up to date (0.1.0)", "Downloading 42%", ... (wraps to two lines)
+  lv_obj_t* updateBar = nullptr;     // progress, hidden unless an install runs
   lv_obj_t* about = nullptr;    // "Soccer display 0.1.0"
   lv_obj_t* batteryLine = nullptr;     // under about: status and voltage, hidden until set
   lv_obj_t* batteryStatus = nullptr;   // "78% · On battery"

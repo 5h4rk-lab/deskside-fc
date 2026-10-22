@@ -86,7 +86,7 @@ set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" "$
 
 # --- Simulator executable ----------------------------------------------------
 add_executable(sim main.cpp sim_alloc.cpp fixture_source.cpp mock_image_provider.cpp snapshot.cpp
-  file_prefs.cpp sim_backlight.cpp mock_wifi.cpp curl_transport.cpp mock_power.cpp)
+  file_prefs.cpp sim_backlight.cpp mock_wifi.cpp curl_transport.cpp mock_power.cpp mock_updater.cpp)
 # Defaults for the simulator's --assets and --fixtures flags.
 target_compile_definitions(sim PRIVATE
   SIM_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
@@ -115,7 +115,8 @@ add_executable(sim_tests sim_alloc.cpp tests/test_main.cpp tests/smoke_test.cpp 
   tests/mock_power_test.cpp mock_power.cpp tests/host_loop_test.cpp tests/demo_data_test.cpp tests/ray_fan_test.cpp tests/wifi_store_test.cpp tests/wifi_controller_test.cpp tests/serial_commands_test.cpp tests/wifi_secrets_static_test.cpp tests/helper_config_test.cpp tests/helper_secrets_static_test.cpp tests/request_deadline_test.cpp
   tests/sound_synth_test.cpp tests/sound_policy_test.cpp tests/sound_app_test.cpp tests/sound_settings_test.cpp tests/sound_voice_test.cpp
   tests/battery_choice_test.cpp tests/power_policy_test.cpp tests/power_ui_test.cpp tests/battery_cal_test.cpp
-  tests/update_check_test.cpp tests/update_flow_test.cpp)
+  tests/update_check_test.cpp tests/update_flow_test.cpp
+  tests/app_update_test.cpp mock_updater.cpp)
 target_include_directories(sim_tests PRIVATE tests "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(sim_tests PRIVATE
   REPO_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/.."

@@ -73,6 +73,10 @@
 //   --banner low|critical|none
 //                    with a snapshot: force the low-battery banner, or remove
 //                    one the battery state raised at start (to see the icon)
+//   --update STATE   the pretend software update: uptodate (the default for snapshots), available,
+//                    downloading (an install at 42 %), none (no Software update row). In the window
+//                    the row checks for real against a pretend helper that offers the next version.
+//   --screen settings-update  Settings scrolled to the Software update row
 //   --stale-min N    with a snapshot: render N minutes after the last update,
 //                    as if the helper had gone quiet (the stale marker shows)
 // Data is fetched by the Poller (ui/src/poller.h) in every mode: every 25 s
@@ -107,6 +111,7 @@
 #include "mock_power.h"
 #include "mock_source.h"
 #include "mock_wifi.h"
+#include "mock_updater.h"
 #include "host_loop.h"
 #include "poller.h"
 #include "prefs.h"
@@ -123,6 +128,8 @@
 #include "sound_out.h"
 #include "store.h"
 #include "timezone.h"
+#include "update_check.h"
+#include "version.h"
 
 namespace {
 
@@ -165,6 +172,7 @@ struct Options {
   int batteryMv = 0;  // --battery-mv: 0 is off
   std::string banner;  // --banner: "", low, critical or none
   int staleMin = 0;    // --stale-min
+  std::string update;  // --update: "", none, uptodate, available, downloading
 };
 
 bool goal_screen(const std::string& screen) { return screen == "goal" || screen == "goal-win"; }
@@ -204,7 +212,7 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
       "           [--screen wifi|wifi-first|wifi-password|wifi-failed|wifi-connecting]\n"
       "           [--helper URL --token T] [--offline-test]\n"
       "           [--battery P[,charging]|none] [--battery-mv MV] [--banner low|critical|none]\n"
-      "           [--stale-min N]\n"
+      "           [--stale-min N] [--update none|uptodate|available|downloading]\n"
       "env: HELPER_URL, HELPER_TOKEN (when the flags are absent)\n"
       "keys: g = favourite scores, w = favourite wins at full time (demo data),\n"
       "      b = next demo battery state, + / - = 50 mV up / down (--battery-mv)\n");
@@ -237,7 +245,7 @@ Options parse_args(int argc, char** argv) {
       o.screen = argv[++i];
       const char* const kScreens[] = {"live",     "live-last", "live-last-away", "matches",  "news",   "detail",
                                       "summary",  "pitch",    "stats",  "goal",
-                                      "goal-win", "settings", "settings-about", "settings-sound", "settings-battery", "power-hint", "powering-off", "zone",   "picker",
+                                      "goal-win", "settings", "settings-about", "settings-sound", "settings-battery", "settings-update", "power-hint", "powering-off", "zone",   "picker",
                                       "picker-search", "wifi", "wifi-first", "wifi-password",
                                       "wifi-failed", "wifi-connecting"};
       bool known = false;
@@ -326,6 +334,12 @@ Options parse_args(int argc, char** argv) {
       o.banner = argv[++i];
       if (o.banner != "low" && o.banner != "critical" && o.banner != "none") {
         std::fprintf(stderr, "invalid --banner '%s' (low, critical or none)\n", o.banner.c_str());
+        std::exit(2);
+      }
+    } else if (std::strcmp(argv[i], "--update") == 0 && hasValue) {
+      o.update = argv[++i];
+      if (o.update != "none" && o.update != "uptodate" && o.update != "available" && o.update != "downloading") {
+        std::fprintf(stderr, "invalid --update '%s' (none, uptodate, available or downloading)\n", o.update.c_str());
         std::exit(2);
       }
     } else if (std::strcmp(argv[i], "--stale-min") == 0 && hasValue) {
@@ -685,6 +699,18 @@ int main(int argc, char** argv) {
   }
 
   SimSound simSound(!headless);
+  // Software updates: a pretend helper and download (MockUpdater).
+  Version running;
+  parse_version(kAppVersion, running);
+  MockUpdater updater(running);
+  updater.tick(monotonic_ms());
+  if (opt.update == "available") {
+    updater.show_available();
+  } else if (opt.update == "downloading") {
+    updater.show_downloading(42);
+  } else if (opt.update == "uptodate" || (headless && opt.update.empty())) {
+    updater.show_up_to_date();  // snapshots: no check running when Settings opens
+  }
   lv_obj_t* app = nullptr;
   PowerStatus lastModelStatus = modelPower.status();
   // The shared host loop: the same sequence the firmware runs. The data path
@@ -724,6 +750,7 @@ int main(int argc, char** argv) {
                *prefs, &backlight, opt.wifi ? &wifi : nullptr,
                // Connected at last: fetch everything now, not at the next due time.
                [&poller] { poller.request_all_now(); }, power, &simSound};
+  if (opt.update != "none") deps.updater = &updater;
   app = app_create(lv_screen_active(), deps);
   // A session-only override of the saved setting.
   if (opt.reducedMotion) goal_set_reduced_motion(true);
@@ -780,8 +807,15 @@ int main(int argc, char** argv) {
   } else if (goal_screen(opt.screen)) {
     demo_change(opt.screen == "goal-win");
   } else if (opt.screen == "settings" || opt.screen == "settings-about" || opt.screen == "settings-sound" ||
-             opt.screen == "settings-battery") {
+             opt.screen == "settings-battery" || opt.screen == "settings-update") {
     app_open_settings(app);
+    if (opt.screen == "settings-update") {  // scrolled to the Software update row
+      const SettingsParts* sp = settings_parts(app_settings_view(app));
+      lv_obj_update_layout(lv_screen_active());
+      if (sp != nullptr && sp->updateRow != nullptr) {
+        lv_obj_scroll_to_y(sp->list, lv_obj_get_y(sp->updateRow) - 150, LV_ANIM_OFF);
+      }
+    }
     if (opt.screen == "settings-battery") {  // scrolled to the Battery card
       const SettingsParts* sp = settings_parts(app_settings_view(app));
       lv_obj_update_layout(lv_screen_active());
@@ -948,6 +982,7 @@ int main(int argc, char** argv) {
       keys.millivolts = 0;
       std::fflush(stdout);
     }
+    updater.tick(monotonic_ms());
     host.tick(monotonic_ms(), now);
     SDL_Delay(5);
   }

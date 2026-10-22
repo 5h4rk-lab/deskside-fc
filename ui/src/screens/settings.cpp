@@ -89,6 +89,7 @@ void on_back(lv_event_t* e) { call(static_cast<SettingsState*>(lv_event_get_user
 void on_team(lv_event_t* e) { call(static_cast<SettingsState*>(lv_event_get_user_data(e))->cb.onTeam); }
 void on_zone(lv_event_t* e) { call(static_cast<SettingsState*>(lv_event_get_user_data(e))->cb.onZone); }
 void on_wifi(lv_event_t* e) { call(static_cast<SettingsState*>(lv_event_get_user_data(e))->cb.onWifi); }
+void on_update(lv_event_t* e) { call(static_cast<SettingsState*>(lv_event_get_user_data(e))->cb.onUpdate); }
 
 void on_test_sound(lv_event_t* e) {
   call(static_cast<SettingsState*>(lv_event_get_user_data(e))->cb.onTestSound);
@@ -470,6 +471,31 @@ void build(SettingsState* st, lv_obj_t* root) {
     chevron(p.wifiRow, 0);
   }
 
+  // Software update, when the host can update: the state under the title, a
+  // bar while an install runs. The whole card is the tap target.
+  if (st->cb.onUpdate) {
+    p.updateRow = column_card(p.list, true);
+    lv_obj_set_style_pad_row(p.updateRow, 2, 0);
+    lv_obj_add_event_cb(p.updateRow, on_update, LV_EVENT_CLICKED, st);
+    text_label(p.updateRow, &hanken_14, pal.chalk, "Software update");
+    p.updateStatus = label(p.updateRow, &hanken_10, pal.dim);
+    lv_obj_set_width(p.updateStatus, LV_PCT(100));
+    lv_label_set_long_mode(p.updateStatus, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(p.updateStatus, "");
+    p.updateBar = lv_bar_create(p.updateRow);
+    lv_obj_remove_style_all(p.updateBar);
+    lv_obj_set_size(p.updateBar, LV_PCT(100), 4);
+    lv_obj_set_style_bg_color(p.updateBar, pal.line, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(p.updateBar, LV_OPA_COVER, LV_PART_MAIN);
+    lv_obj_set_style_radius(p.updateBar, 2, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(p.updateBar, accent_fill(pal.accent), LV_PART_INDICATOR);
+    lv_obj_set_style_bg_opa(p.updateBar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_radius(p.updateBar, 2, LV_PART_INDICATOR);
+    lv_obj_set_style_margin_top(p.updateBar, 4, 0);
+    lv_bar_set_range(p.updateBar, 0, 100);
+    lv_obj_add_flag(p.updateBar, LV_OBJ_FLAG_HIDDEN);
+  }
+
   // About.
   p.about = label(p.list, &hanken_10, pal.dim);
   lv_obj_set_width(p.about, LV_PCT(100));
@@ -594,6 +620,27 @@ void settings_set_data_status(lv_obj_t* screen, const std::string& text, bool pr
   const lv_color_t color = problem ? theme().amber : theme().dim;
   if (lv_color_to_u32(lv_obj_get_style_text_color(l, 0)) != lv_color_to_u32(color)) {
     lv_obj_set_style_text_color(l, color, 0);
+  }
+}
+
+void settings_set_update(lv_obj_t* screen, const UpdateStatus& status) {
+  SettingsState* st = settings_state(screen);
+  if (st == nullptr || st->parts.updateRow == nullptr) return;
+  const SettingsParts& p = st->parts;
+  set_text(p.updateStatus, update_status_text(status));
+  const lv_color_t color = update_status_problem(status)
+                               ? theme().amber
+                               : (status.phase == UpdatePhase::Available ? theme().chalk : theme().dim);
+  if (lv_color_to_u32(lv_obj_get_style_text_color(p.updateStatus, 0)) != lv_color_to_u32(color)) {
+    lv_obj_set_style_text_color(p.updateStatus, color, 0);
+  }
+  const bool busy = update_status_busy(status);
+  show(p.updateBar, busy);
+  if (busy) {
+    const int value = status.phase == UpdatePhase::Downloading
+                          ? status.percent
+                          : (status.phase == UpdatePhase::Preparing ? 0 : 100);
+    if (lv_bar_get_value(p.updateBar) != value) lv_bar_set_value(p.updateBar, value, LV_ANIM_OFF);
   }
 }
 

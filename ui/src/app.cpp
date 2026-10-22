@@ -98,6 +98,9 @@ struct AppState {
   // 64 bits for it, and the fanfare waiting for the whistles to end.
   SoundOut* sound = nullptr;
   SoundGate soundGate;
+
+  // Software updates (optional).
+  Updater* updater = nullptr;
   uint32_t lastTick = 0;
   int64_t monoMs = 0;
   lv_timer_t* fanfareTimer = nullptr;
@@ -390,6 +393,24 @@ void sync_settings_data(AppState* st) {
                            st->store->last_error() != FetchError::None);
 }
 
+// The Software update row (hosts with an updater only).
+void sync_settings_update(AppState* st) {
+  if (st->settingsView == nullptr || st->updater == nullptr) return;
+  settings_set_update(st->settingsView, st->updater->status());
+}
+
+// A tap on the Software update row: install what it offers, else check now.
+// A check or an install already running takes no second one.
+void update_tapped(AppState* st) {
+  const UpdateStatus s = st->updater->status();
+  if (s.phase == UpdatePhase::Available) {
+    st->updater->install(st->store->power());
+  } else if (!update_status_busy(s) && s.phase != UpdatePhase::Checking) {
+    st->updater->check_now();
+  }
+  sync_settings_update(st);
+}
+
 // The About area's battery line (hosts with a battery only).
 void sync_settings_battery(AppState* st) {
   if (st->settingsView == nullptr || st->power == nullptr) return;
@@ -540,6 +561,11 @@ SettingsCallbacks settings_callbacks(AppState* st) {
     };
   }
   cb.battery = st->power != nullptr;
+  if (st->updater != nullptr) {
+    cb.onUpdate = [st, alive] {
+      if (*alive) update_tapped(st);
+    };
+  }
   cb.onBrightnessPreview = [st, alive](int percent) {
     if (*alive) preview_brightness(st, percent);
   };
@@ -558,6 +584,8 @@ void open_settings(AppState* st) {
   sync_settings_wifi(st);
   sync_settings_data(st);
   sync_settings_battery(st);
+  if (st->updater != nullptr) st->updater->settings_opened();
+  sync_settings_update(st);
 }
 
 // ---------------------------------------------------------------- wifi
@@ -879,6 +907,7 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   st->onWifiConnected = deps.onWifiConnected;
   st->power = deps.power;
   st->sound = deps.sound;
+  st->updater = deps.updater;
   st->lastTick = lv_tick_get();
 
   // Saved settings first: the screens capture the accent colour as they are built.
@@ -968,6 +997,7 @@ void app_refresh(lv_obj_t* appRoot, int64_t now) {
   if (st->settingsView != nullptr) settings_refresh(st->settingsView, st->settings, now);
   sync_settings_wifi(st);
   sync_settings_data(st);
+  sync_settings_update(st);
   if (st->wifiView != nullptr) wifi_refresh(st->wifiView);
   sync_picker(st);
 }
@@ -1043,6 +1073,7 @@ static void recolour(AppState* st) {
     sync_settings_wifi(st);
     sync_settings_data(st);
     sync_settings_battery(st);
+    sync_settings_update(st);
   }
 }
 

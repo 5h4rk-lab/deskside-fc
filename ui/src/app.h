@@ -18,6 +18,7 @@
 #include "settings.h"
 #include "sound_out.h"
 #include "store.h"
+#include "update_flow.h"
 #include "wifi_service.h"
 
 // What the UI needs from its host. All references must outlive the UI.
@@ -55,6 +56,14 @@ struct AppDeps {
   // loud: sound_policy.h and the Sound rows in Settings). Without it there is
   // no sound and no Sound row in Settings.
   SoundOut* sound = nullptr;
+  // Optional: software updates. Settings shows a Software update row with
+  // its status (update_status_text) and a progress bar while an install runs.
+  // Opening Settings calls settings_opened() (the host may check then); a tap
+  // on the row installs when it offers a version (install(), with the battery
+  // as the UI shows it), checks otherwise, and does nothing while a check or
+  // an install runs. Nothing installs without that tap. Without it there is
+  // no Software update row.
+  Updater* updater = nullptr;
 };
 
 // Night dimming lifts for this long after the last touch.
