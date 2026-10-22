@@ -42,3 +42,12 @@ void SerialCommandSplitter::poll(uint32_t nowMs) {
     word_.clear();
   }
 }
+
+void split_word(const std::string& word, std::string& name, std::string& value) {
+  const size_t space = word.find(' ');
+  name = word.substr(0, space);
+  value.clear();
+  if (space == std::string::npos) return;
+  const size_t start = word.find_first_not_of(' ', space);
+  if (start != std::string::npos) value = word.substr(start);
+}

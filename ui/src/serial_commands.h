@@ -8,6 +8,8 @@
 // commands that share those letters. A word that is never finished (nothing
 // typed for abandonMs) is dropped, and so is one that grows past kMaxWordLen.
 // Anything that erases or restarts must be a word: no one-letter command does.
+// kMaxWordLen leaves room for the longest settings words (":set-url " plus a
+// 200-character URL, ":set-token " plus a 128-character token).
 #pragma once
 
 #include <stdint.h>
@@ -18,7 +20,7 @@
 class SerialCommandSplitter {
  public:
   static constexpr char kMarker = ':';
-  static constexpr size_t kMaxWordLen = 32;
+  static constexpr size_t kMaxWordLen = 256;
 
   struct Item {
     bool isWord = false;
@@ -40,3 +42,9 @@ class SerialCommandSplitter {
   std::string word_;
   uint32_t lastByteMs_ = 0;
 };
+
+// Splits a word into its name (up to the first space) and its value (after
+// that space and any further leading spaces; the rest is kept as it is).
+// Callers print only the name of a word they do not know: the value may be a
+// secret.
+void split_word(const std::string& word, std::string& name, std::string& value);

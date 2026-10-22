@@ -110,10 +110,59 @@ TEST_CASE("serial commands: the stray colon swallows the rest of the line only")
 }
 
 TEST_CASE("serial commands: an overlong word is dropped at its line end") {
-  const std::string longWord(100, 'a');
+  CHECK(SerialCommandSplitter::kMaxWordLen == 256);
+  const std::string longWord(300, 'a');
   CHECK(run(":" + longWord + "\ng") == "g");
-  CHECK(run(":" + std::string(32, 'a') + "\n") == "<" + std::string(32, 'a') + ">");
-  CHECK(run(":" + std::string(33, 'a') + "\n") == "");
+  CHECK(run(":" + std::string(256, 'a') + "\n") == "<" + std::string(256, 'a') + ">");
+  CHECK(run(":" + std::string(257, 'a') + "\n") == "");
+  // Its letters never ran either, however long it grew.
+  CHECK(run(":" + std::string(5000, 'g') + "\n") == "");
+}
+
+TEST_CASE("serial commands: the longest settings words fit (URL 200, token 128 characters)") {
+  const std::string url = "https://" + std::string(192, 'u');
+  const std::string token(128, 't');
+  CHECK(run(":set-url " + url + "\n") == "<set-url " + url + ">");
+  CHECK(run(":set-token " + token + "\n") == "<set-token " + token + ">");
+  // Typed by hand, a key every 400 ms: still one word, only at Enter.
+  CHECK(run(":set-token " + token + "\n", 400) == "<set-token " + token + ">");
+  // Half typed (no Enter): nothing runs, not even after a minute.
+  SerialCommandSplitter s;
+  std::vector<SerialCommandSplitter::Item> out;
+  uint32_t t = 0;
+  for (char c : ":set-token " + token) s.feed(c, t += 300, out);
+  s.poll(t + 60000);
+  CHECK(out.empty());
+  // A pause of 5 s inside it abandons the word: the rest is never a command.
+  SerialCommandSplitter s2(5000);
+  std::vector<SerialCommandSplitter::Item> o2;
+  for (char c : std::string(":set-url https://exa")) s2.feed(c, 10, o2);
+  for (char c : std::string("mple.com\n")) s2.feed(c, 6000, o2);  // after the pause: plain letters again
+  std::string letters;
+  for (const auto& it : o2) {
+    CHECK_FALSE(it.isWord);
+    letters += it.byte;
+  }
+  CHECK(letters == "mple.com\n");
+}
+
+TEST_CASE("serial commands: a word splits into its name and its value") {
+  std::string name, value;
+  split_word("set-url https://example.com", name, value);
+  CHECK(name == "set-url");
+  CHECK(value == "https://example.com");
+  split_word("wifi", name, value);
+  CHECK(name == "wifi");
+  CHECK(value.empty());
+  split_word("set-token   abc def ", name, value);  // only the first run of spaces separates
+  CHECK(name == "set-token");
+  CHECK(value == "abc def ");
+  split_word("", name, value);
+  CHECK(name.empty());
+  CHECK(value.empty());
+  split_word(" lead", name, value);
+  CHECK(name.empty());
+  CHECK(value == "lead");
 }
 
 TEST_CASE("serial commands: words in a row") {
