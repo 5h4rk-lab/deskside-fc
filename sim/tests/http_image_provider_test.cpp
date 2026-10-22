@@ -808,3 +808,23 @@ TEST_CASE("http images: the device queue holds 256 waiting requests (a whole Mat
     CHECK(got[i].image != nullptr);
   }
 }
+
+TEST_CASE("http images: the entry overhead is charged to the budget, so small pictures cannot pile up") {
+  // A budget of 10 entries of 64 B pixels + 1536 B overhead.
+  Rig rig(10 * (64 + HttpImageProvider::kDeviceEntryOverheadBytes));
+  rig.provider.set_entry_overhead_bytes(HttpImageProvider::kDeviceEntryOverheadBytes);
+  for (int i = 0; i < 25; ++i) {
+    rig.provider.request(path_n(i), [](ImagePtr) {});
+    rig.transport.deliver_at(0, 200, "OK");
+  }
+  CHECK(rig.provider.cached_images() == 10);
+  CHECK(rig.provider.cached_bytes() == 10 * (64 + HttpImageProvider::kDeviceEntryOverheadBytes));
+  // Without the overhead the same budget would hold all 25.
+  Rig plain(10 * (64 + HttpImageProvider::kDeviceEntryOverheadBytes));
+  for (int i = 0; i < 25; ++i) {
+    plain.provider.request(path_n(i), [](ImagePtr) {});
+    plain.transport.deliver_at(0, 200, "OK");
+  }
+  CHECK(plain.provider.cached_images() == 25);
+  CHECK(plain.provider.cached_bytes() == 25 * 64);
+}

@@ -155,7 +155,7 @@ void HttpImageProvider::finish(const std::string& path, uint32_t id, HttpResult 
     image = decoder_.decode(result.body);
     if (image) {
       authRejected_ = false;
-      cache_.put(path, image, image->data_size);
+      cache_.put(path, image, image->data_size + entryOverhead_);
     } else {
       remember_failure(path, kNegativeLongMs);
     }

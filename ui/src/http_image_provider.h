@@ -72,6 +72,11 @@ class HttpImageProvider : public ImageProvider {
   // The firmware's queue: one Matches list alone asks for more than 64
   // distinct crests at once, and a dropped request leaves a placeholder.
   static constexpr size_t kDeviceMaxQueued = 256;
+  // Memory a cached picture costs on the device beyond its pixels (decoder and
+  // heap block overhead, the cache's key and nodes, the descriptor), measured
+  // on the board at about 1.5 KB: charged to the budget with each picture so
+  // that many small crests cannot hold far more than the budget.
+  static constexpr size_t kDeviceEntryOverheadBytes = 1536;
   static constexpr int kTimeoutMs = 10000;
   static constexpr int64_t kLostMs = 30000;
   static constexpr int64_t kNegativeLongMs = 5 * 60 * 1000;  // 400, 404, decode failures
@@ -94,6 +99,10 @@ class HttpImageProvider : public ImageProvider {
   // Advances the provider's clock (monotonic milliseconds, any origin).
   void tick(int64_t monotonicMs);
 
+  // Bytes charged to the cache budget per picture on top of its pixels
+  // (default 0). Affects pictures cached from then on.
+  void set_entry_overhead_bytes(size_t bytes) { entryOverhead_ = bytes; }
+
   // Online (the default): queued requests are sent. Offline: they wait.
   void set_online(bool online);
   bool online() const { return online_; }
@@ -101,7 +110,8 @@ class HttpImageProvider : public ImageProvider {
   // True when the helper answered 401 and nothing has succeeded since.
   bool auth_rejected() const { return authRejected_; }
 
-  // Bytes held by the cache, and requests not answered yet (queued + in flight).
+  // Bytes charged to the cache (pixels plus the entry overhead), and requests
+  // not answered yet (queued + in flight).
   size_t cached_bytes() const { return cache_.used(); }
   size_t cached_images() const { return cache_.count(); }
   size_t in_flight() const { return inFlight_; }
@@ -140,6 +150,7 @@ class HttpImageProvider : public ImageProvider {
   bool clockStarted_ = false;
   bool authRejected_ = false;
   bool online_ = true;
+  size_t entryOverhead_ = 0;
   size_t maxNegative_ = kMaxNegative;
   size_t maxQueued_ = kMaxQueued;
   // Cleared on destruction, for answers delivered after it.
