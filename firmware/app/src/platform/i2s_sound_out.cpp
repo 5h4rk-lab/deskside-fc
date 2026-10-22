@@ -59,13 +59,21 @@ bool I2sSoundOut::begin() {
           },
   };
   // 16-bit samples in 32-bit slots: BCK = 64 fs = 1.024 MHz for the DAC's PLL.
+  // WS must span the whole slot (50 % duty): the default ws_width is the data
+  // width (16), which with 32-bit slots would give a 25 % duty LRCK. The rest
+  // of the default is Philips as the DAC expects it: one-BCK delay (bit_shift),
+  // WS low = left (ws_pol false), both slots, data left-aligned in its slot
+  // (MSB first, the 16 low bits zero).
   sc.slot_cfg.slot_bit_width = I2S_SLOT_BIT_WIDTH_32BIT;
+  sc.slot_cfg.ws_width = 32;
   err = i2s_channel_init_std_mode(tx_, &sc);
   if (err != ESP_OK) {
     fail("i2s_channel_init_std_mode", err);
     return false;
   }
-  // Late refills show up as send-queue overflows (an ISR callback: IRAM, and
+  // Underruns: the driver's send-queue overflow fires only when every DMA
+  // buffer has gone out with no refill (the whole ring ran dry), not for a
+  // refill that was merely late. It is an ISR callback (IRAM, and
   // this object lives in internal RAM: a static in setup()).
   i2s_event_callbacks_t cbs = {};
   cbs.on_send_q_ovf = &I2sSoundOut::on_queue_overflow;
@@ -89,9 +97,10 @@ bool I2sSoundOut::begin() {
     fail("xTaskCreatePinnedToCore", 0);
     return false;
   }
-  Serial.printf("[sound] ready: I2S %lu Hz, 16-bit in 32-bit slots (BCK %lu Hz), %lu x %lu frames DMA (%u B), "
-                "player task core %d prio %u\n",
-                (unsigned long)kRate, (unsigned long)info.bclk_hz, (unsigned long)kDmaBuffers,
+  Serial.printf("[sound] ready: I2S %lu Hz, 16-bit in 32-bit slots, WS %lu BCK high/low (50 %% duty, BCK %lu Hz), "
+                "%lu x %lu frames DMA (%u B), player task core %d prio %u\n",
+                (unsigned long)kRate, (unsigned long)sc.slot_cfg.ws_width, (unsigned long)info.bclk_hz,
+                (unsigned long)kDmaBuffers,
                 (unsigned long)kDmaFrames, (unsigned)dmaBytes_, (int)kTaskCore, (unsigned)kTaskPriority);
   return true;
 }
@@ -165,6 +174,7 @@ void I2sSoundOut::apply(const Command& c) {
 
 void I2sSoundOut::run() {
   bool loggedWriteError = false;
+  bool loggedDisableError = false;
   for (;;) {
     // First wind down (the voice may have gone idle in the last render), then
     // sleep until a command comes; while something plays, only look.
@@ -172,7 +182,11 @@ void I2sSoundOut::run() {
       if (enabled_) {
         // Everything audible left the DAC during the tail: only zeros are
         // queued now. Stopping the clock silences the DAC.
-        i2s_channel_disable(tx_);
+        const esp_err_t derr = i2s_channel_disable(tx_);
+        if (derr != ESP_OK && !loggedDisableError) {
+          loggedDisableError = true;
+          Serial.printf("[sound] ERROR: i2s_channel_disable failed (%d) (logged once)\n", (int)derr);
+        }
         enabled_ = false;
         const uint32_t ranMs = nowMs() - enabledAtMs_;
         lastRunMs_.store(ranMs);

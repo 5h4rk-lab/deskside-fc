@@ -5,9 +5,11 @@
 // I2S: BCLK GPIO48, LRC/WS GPIO38, DOUT GPIO47, no MCLK (the DAC's SCK pin is
 // grounded: it makes its clock from BCK with its PLL). 16 kHz, 16-bit samples,
 // stereo frames (Philips format). Each 16-bit sample is sent in a 32-bit slot,
-// so BCK is 64 x 16 kHz = 1.024 MHz: the PCM510x PLL needs BCK of about
-// 1 MHz or more, which 32 x 16 kHz (512 kHz) is not. DMA: 6 buffers of 240
-// frames (90 ms queued at most).
+// so BCK is 64 x 16 kHz = 1.024 MHz (64 fs instead of 32 fs): the PCM510x PLL
+// needs BCK of about 1 MHz or more, which 32 x 16 kHz (512 kHz) is not. WS is
+// 32 BCK high and 32 low (ws_width = slot width, 50 % duty; the IDF default
+// would make it 16, a 25 % duty LRCK). DMA: 6 buffers of 240 frames (90 ms
+// queued at most).
 //
 // Threads: play(), stop() and busy() are safe from any task and never block.
 // Commands go through a queue of depth 2 to the player task (core 0, priority
@@ -82,9 +84,9 @@ class I2sSoundOut : public SoundOut {
     uint32_t stops = 0;        // stop commands the player took
     uint32_t dropped = 0;      // commands dropped because the queue was full
     uint32_t writeErrors = 0;  // i2s_channel_write failures or short writes
-    uint32_t underruns = 0;    // DMA buffers the driver had to send with nothing new in them
-                               // (its send queue overflowed: the player was late); counted
-                               // only while the channel runs
+    uint32_t underruns = 0;    // times the whole DMA ring ran dry (the driver's send queue
+                               // overflowed: every buffer sent, none refilled); a late refill
+                               // that still came in time is not counted
     uint32_t runs = 0;         // times the channel was started
     uint32_t lastRunMs = 0;    // last channel-on time, enable to disable
     uint32_t lastClipMs = 0;   // length of the last clip started
