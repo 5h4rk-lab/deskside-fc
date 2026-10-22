@@ -612,6 +612,12 @@ void playSoundCommand(int arg) {
     Serial.println("[cmd] sound: stop");
     return;
   }
+#if !APP_DEMO_DATA
+  if (s_updatePause.load()) {
+    Serial.println("[cmd] sound: refused, a software update is running");
+    return;
+  }
+#endif
   const Settings* s = h.app ? app_settings(h.app) : nullptr;
   int volume = (arg >> 8) & 0xFF;
   if (volume == 0) volume = s ? s->soundVolume : 40;

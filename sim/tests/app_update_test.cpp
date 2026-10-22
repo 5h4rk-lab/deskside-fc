@@ -13,6 +13,8 @@
 #include "mock_updater.h"
 #include "prefs.h"
 #include "screens/settings.h"
+#include "sound_out.h"
+#include "sound_synth.h"
 #include "test_display.h"
 #include "theme.h"
 #include "update_check.h"
@@ -42,6 +44,15 @@ Version V(int a, int b, int c) {
   return v;
 }
 
+// Counts what the app asks the speaker to play.
+class CountingSound : public SoundOut {
+ public:
+  void play(const PcmClip&, uint8_t) override { ++plays; }
+  void stop() override {}
+  bool busy() const override { return false; }
+  int plays = 0;
+};
+
 std::string text(lv_obj_t* l) { return lv_label_get_text(l); }
 bool visible(lv_obj_t* o) { return !lv_obj_has_flag(o, LV_OBJ_FLAG_HIDDEN); }
 
@@ -52,14 +63,16 @@ struct Host {
   MemoryPrefs prefs;
   MockPower power;
   MockUpdater updater{V(0, 1, 0)};
+  CountingSound sound;
   lv_obj_t* app = nullptr;
 
-  explicit Host(bool withUpdater = true) {
+  explicit Host(bool withUpdater = true, bool withSound = false) {
     init_test_display();
     theme_reset();
     AppDeps deps{store, images, source, nullptr, prefs};
     deps.power = &power;
     if (withUpdater) deps.updater = &updater;
+    if (withSound) deps.sound = &sound;
     app = app_create(lv_screen_active(), deps);
     app_refresh(app, kNow);
   }
@@ -180,4 +193,36 @@ TEST_CASE("update row: a background check never installs") {
   CHECK(h.updater.checks == 1);
   CHECK(h.updater.status().phase == UpdatePhase::Available);
   CHECK(h.updater.installCalls == 0);
+}
+
+TEST_CASE("update row: no sound plays while an update runs; Test sound is disabled until it ends") {
+  Host h(true, true);
+  h.battery(80);
+  app_open_settings(h.app);
+  h.advance(MockUpdater::kCheckMs);
+  lv_obj_t* test = h.parts()->testSound;
+  REQUIRE(test != nullptr);
+  CHECK_FALSE(lv_obj_has_state(test, LV_STATE_DISABLED));
+  lv_obj_send_event(test, LV_EVENT_CLICKED, nullptr);
+  CHECK(h.sound.plays == 1);  // before the install: it plays
+  h.tap_row();
+  REQUIRE(h.updater.installs == 1);
+  CHECK(lv_obj_has_state(test, LV_STATE_DISABLED));
+  // An event sent straight to the button (as LVGL would not for a disabled
+  // one) still makes no sound: the app itself refuses while the update is busy.
+  lv_obj_send_event(test, LV_EVENT_CLICKED, nullptr);
+  CHECK(h.sound.plays == 1);
+  h.advance(MockUpdater::kCheckMs + MockUpdater::kDownloadMs / 2);
+  CHECK(text(h.parts()->updateStatus).find("Downloading") == 0);
+  lv_obj_send_event(test, LV_EVENT_CLICKED, nullptr);
+  CHECK(h.sound.plays == 1);
+  CHECK(lv_obj_has_state(test, LV_STATE_DISABLED));
+  // The sim's pretend update ends up to date (no restart): Test sound answers again.
+  h.advance(MockUpdater::kCheckMs + MockUpdater::kDownloadMs + 10);  // restarting
+  CHECK(lv_obj_has_state(test, LV_STATE_DISABLED));
+  h.advance(MockUpdater::kCheckMs + MockUpdater::kDownloadMs + MockUpdater::kRestartMs + 20);
+  CHECK_FALSE(update_status_busy(h.updater.status()));
+  CHECK_FALSE(lv_obj_has_state(test, LV_STATE_DISABLED));
+  lv_obj_send_event(test, LV_EVENT_CLICKED, nullptr);
+  CHECK(h.sound.plays == 2);
 }

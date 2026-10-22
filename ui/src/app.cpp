@@ -442,6 +442,9 @@ bool night_dim_active(const AppState* st, int64_t now) {
 // nothing was started (no speaker, muted, a repeat).
 bool app_sound(AppState* st, SoundEvent event, int64_t now) {
   if (st->sound == nullptr) return false;
+  // A software update owns the board's time and memory: nothing plays until it
+  // ends (the install already stopped what was playing).
+  if (st->updater != nullptr && update_status_busy(st->updater->status())) return false;
   if (!sound_should_play(st->settings, event, night_dim_active(st, now))) return false;
   if (!st->soundGate.allow(event, monotonic_ms(st))) return false;
   st->sound->play(sound_clip(event), static_cast<uint8_t>(st->settings.soundVolume));

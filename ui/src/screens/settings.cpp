@@ -636,6 +636,14 @@ void settings_set_update(lv_obj_t* screen, const UpdateStatus& status) {
   }
   const bool busy = update_status_busy(status);
   show(p.updateBar, busy);
+  // No Test sound while an update runs (app_sound refuses it anyway).
+  if (p.testSound != nullptr && lv_obj_has_state(p.testSound, LV_STATE_DISABLED) != busy) {
+    if (busy) {
+      lv_obj_add_state(p.testSound, LV_STATE_DISABLED);
+    } else {
+      lv_obj_remove_state(p.testSound, LV_STATE_DISABLED);
+    }
+  }
   if (busy) {
     const int value = status.phase == UpdatePhase::Downloading
                           ? status.percent
