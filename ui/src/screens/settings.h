@@ -1,6 +1,6 @@
 // Settings screen: favourite team, time zone, brightness, night dimming,
-// reduced motion, sound (when the host has a speaker) and (when the host
-// supports it) Wi-Fi, under a "< Back"
+// reduced motion, sound (when the host has a speaker), battery (when the host
+// has battery hardware) and (when the host supports it) Wi-Fi, under a "< Back"
 // header. The app hosts it as an overlay above the tab content.
 //
 // The screen keeps its own copy of the Settings. Every change made on it
@@ -26,6 +26,8 @@ struct SettingsCallbacks {
   std::function<void()> onWifi;  // the Wi-Fi row; when empty there is no Wi-Fi row
   // The "Test sound" button; when empty there are no sound rows (no speaker).
   std::function<void()> onTestSound;
+  // The host has battery hardware: the Battery card (Auto, Installed, None).
+  bool battery = false;
   // While the brightness slider is dragged (not saved yet): the host previews it.
   std::function<void(int percent)> onBrightnessPreview;
   // After any change made on the screen (brightness released, a switch, a
@@ -45,6 +47,11 @@ constexpr const char* kNightHelp = "Dims the screen at night. Touch the screen t
 constexpr const char* kMotionHelp = "Skips the goal animation effects.";
 constexpr const char* kSoundHelp = "The speaker only plays for your team.";
 constexpr const char* kSoundNightHelp = "Quiet during the night dimming hours.";
+// Under Mute at night while night dimming is off (it only mutes inside the night window).
+constexpr const char* kSoundNightNeedsDim = "Needs night dimming on";
+constexpr const char* kBatteryHelp = "Pick None if no battery is connected.";
+// The three choices of Battery, in BatteryChoice order.
+constexpr const char* kBatteryChoiceText[3] = {"Auto", "Installed", "None"};
 // The three choices of Sound, in SoundMode order.
 constexpr const char* kSoundModeText[3] = {"Off", "Goals only", "Goals and match alerts"};
 
@@ -119,7 +126,13 @@ struct SettingsParts {
   lv_obj_t* volumePlus = nullptr;
   lv_obj_t* soundNightSwitch = nullptr;  // "Mute at night"
   lv_obj_t* soundNightHelp = nullptr;
+  lv_obj_t* soundNightNeedsDim = nullptr;  // "Needs night dimming on", shown while night dimming is off
   lv_obj_t* testSound = nullptr;  // "Test sound" button
+
+  // Battery choice, all nullptr without SettingsCallbacks::battery.
+  lv_obj_t* batteryChoiceRows[3] = {nullptr, nullptr, nullptr};   // tap: choose Auto / Installed / None
+  lv_obj_t* batteryChoiceTicks[3] = {nullptr, nullptr, nullptr};  // visible on the chosen one
+  lv_obj_t* batteryChoiceHelp = nullptr;
 
   lv_obj_t* wifiRow = nullptr;     // nullptr when there is no Wi-Fi row
   lv_obj_t* wifiStatus = nullptr;  // "Connected to <ssid>" / "Not connected", one line

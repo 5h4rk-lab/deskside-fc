@@ -5,6 +5,7 @@
 #include <string>
 
 #include "model.h"
+#include "power_service.h"
 #include "prefs.h"
 
 // What the speaker plays: nothing, the goals and wins of the favourite, or
@@ -26,16 +27,18 @@ struct Settings {
   SoundMode soundMode = SoundMode::GoalsOnly;
   int soundVolume = kDefaultSoundVolume;  // one of kSoundVolumes
   bool soundMuteAtNight = true;           // silent while night dimming is active
+  BatteryChoice battery = BatteryChoice::Auto;  // Auto, Installed, None
 
   Settings();
 };
 
 // Keys: fav.id fav.abbr fav.name fav.color (hex) fav.primary (hex) fav.crest
 // fav.league zone bright night night.start night.end night.pct reduced snd.mode
-// snd.vol snd.night.
+// snd.vol snd.night batt.
 // A missing or malformed fav.primary (settings saved by an older build) is the
 // favourite's colour. A stored sound mode that is not 0..2 is the default; a
 // stored volume is the nearest of 20/40/60/80/100, or the default (40) when it
-// is not a number or outside 10..110.
+// is not a number or outside 10..110. A stored battery choice that is not
+// 0..2 is Auto.
 Settings load_settings(const Prefs& prefs);
 void save_settings(Prefs& prefs, const Settings& settings);

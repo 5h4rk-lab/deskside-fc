@@ -39,6 +39,24 @@ int lipo_percent(int mv) {
   return 100;
 }
 
+PowerStatus apply_battery_choice(const PowerStatus& s, BatteryChoice choice) {
+  switch (choice) {
+    case BatteryChoice::None:
+      return PowerStatus{};
+    case BatteryChoice::Installed: {
+      if (s.present) return s;
+      PowerStatus r = s;
+      r.present = true;
+      r.percent = 0;
+      r.charging = false;
+      return r;
+    }
+    case BatteryChoice::Auto:
+      break;
+  }
+  return s;
+}
+
 // ---------------------------------------------------------------- BatteryModel
 
 int BatteryModel::median() const {

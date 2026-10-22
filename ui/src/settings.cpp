@@ -102,6 +102,8 @@ Settings load_settings(const Prefs& prefs) {
   if (mode >= 0 && mode <= 2) s.soundMode = static_cast<SoundMode>(mode);
   s.soundVolume = sound_volume_from(pref_int(prefs, "snd.vol", s.soundVolume));
   s.soundMuteAtNight = pref_bool(prefs, "snd.night", s.soundMuteAtNight);
+  const int batt = pref_int(prefs, "batt", static_cast<int>(s.battery));
+  if (batt >= 0 && batt <= 2) s.battery = static_cast<BatteryChoice>(batt);
   return s;
 }
 
@@ -123,4 +125,5 @@ void save_settings(Prefs& prefs, const Settings& s) {
   set_pref_int(prefs, "snd.mode", static_cast<int>(s.soundMode));
   set_pref_int(prefs, "snd.vol", s.soundVolume);
   set_pref_bool(prefs, "snd.night", s.soundMuteAtNight);
+  set_pref_int(prefs, "batt", static_cast<int>(s.battery));
 }

@@ -452,7 +452,7 @@ void show_banner(AppState* st, const Alert& alert) {
 // the low-battery banner.
 void sync_power(AppState* st, int64_t now) {
   if (st->power == nullptr) return;
-  const PowerStatus p = st->power->status();
+  const PowerStatus p = apply_battery_choice(st->power->status(), st->settings.battery);
   st->store->set_power(p);
   sync_settings_battery(st);
   const std::optional<Alert> alert = st->batteryAlert.update(p, goal_active(), now);
@@ -470,7 +470,7 @@ bool same_display(const Settings& a, const Settings& b) {
          a.nightStartHour == b.nightStartHour && a.nightEndHour == b.nightEndHour &&
          a.nightPercent == b.nightPercent && a.reducedMotion == b.reducedMotion &&
          a.soundMode == b.soundMode && a.soundVolume == b.soundVolume &&
-         a.soundMuteAtNight == b.soundMuteAtNight;
+         a.soundMuteAtNight == b.soundMuteAtNight && a.battery == b.battery;
 }
 
 // A change made on the Settings screen: take the fields it edits, apply them
@@ -487,7 +487,10 @@ void settings_changed(AppState* st, const Settings& from) {
   s.soundMode = from.soundMode;
   s.soundVolume = from.soundVolume;
   s.soundMuteAtNight = from.soundMuteAtNight;
+  const bool batteryChanged = s.battery != from.battery;
+  s.battery = from.battery;
   if (!same_display(s, st->saved)) save(st);
+  if (batteryChanged) sync_power(st, st->now);  // the Settings line follows at once
   goal_set_reduced_motion(s.reducedMotion);
   st->previewing = false;
   drive_backlight(st, st->now);
@@ -515,6 +518,7 @@ SettingsCallbacks settings_callbacks(AppState* st) {
       if (*alive) app_sound(st, SoundEvent::Preview, st->now);
     };
   }
+  cb.battery = st->power != nullptr;
   cb.onBrightnessPreview = [st, alive](int percent) {
     if (*alive) preview_brightness(st, percent);
   };

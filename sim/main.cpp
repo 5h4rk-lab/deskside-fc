@@ -20,8 +20,9 @@
 //                    animation time (default 900)
 //   --reduced-motion static goal celebration
 //   --demo-goal      the favourite scores 6 s after start (no keyboard needed)
-//   --screen settings|settings-about|settings-sound|zone|picker|picker-search
-//                    Settings (settings-sound: scrolled to the Sound card; settings-about: scrolled to the About area
+//   --screen settings|settings-about|settings-sound|settings-battery|zone|picker|picker-search
+//                    Settings (settings-sound: scrolled to the Sound card; settings-battery: scrolled to the
+//                    Battery card; settings-about: scrolled to the About area
 //                    with the Battery and data lines), the time zone list, the team picker, or the
 //                    picker with "ars" typed and the keyboard up
 //   --prefs FILE     settings file (default ~/.config/soccer-display-sim/prefs.txt,
@@ -195,7 +196,7 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
       "usage: sim [--scale N] [--assets DIR] [--fixtures] [--snapshot PATH]\n"
       "           [--screen live|live-last|live-last-away|matches|news|detail|summary|pitch|stats|goal|goal-win]\n"
       "           [--match ID] [--at-ms N] [--reduced-motion] [--demo-goal]\n"
-      "           [--screen settings|settings-about|settings-sound|zone|picker|picker-search]\n"
+      "           [--screen settings|settings-about|settings-sound|settings-battery|zone|picker|picker-search]\n"
       "           [--prefs FILE|memory] [--reset-prefs] [--fav ABBR] [--live-vs H,A]\n"
       "           [--tz ZONE] [--now EPOCH]\n"
       "           [--wifi none|demo] [--wifi-saved none]\n"
@@ -235,7 +236,7 @@ Options parse_args(int argc, char** argv) {
       o.screen = argv[++i];
       const char* const kScreens[] = {"live",     "live-last", "live-last-away", "matches",  "news",   "detail",
                                       "summary",  "pitch",    "stats",  "goal",
-                                      "goal-win", "settings", "settings-about", "settings-sound", "zone",   "picker",
+                                      "goal-win", "settings", "settings-about", "settings-sound", "settings-battery", "zone",   "picker",
                                       "picker-search", "wifi", "wifi-first", "wifi-password",
                                       "wifi-failed", "wifi-connecting"};
       bool known = false;
@@ -777,8 +778,16 @@ int main(int argc, char** argv) {
     app_refresh(app, start);
   } else if (goal_screen(opt.screen)) {
     demo_change(opt.screen == "goal-win");
-  } else if (opt.screen == "settings" || opt.screen == "settings-about" || opt.screen == "settings-sound") {
+  } else if (opt.screen == "settings" || opt.screen == "settings-about" || opt.screen == "settings-sound" ||
+             opt.screen == "settings-battery") {
     app_open_settings(app);
+    if (opt.screen == "settings-battery") {  // scrolled to the Battery card
+      const SettingsParts* sp = settings_parts(app_settings_view(app));
+      lv_obj_update_layout(lv_screen_active());
+      if (sp != nullptr && sp->batteryChoiceRows[0] != nullptr) {
+        lv_obj_scroll_to_y(sp->list, lv_obj_get_y(lv_obj_get_parent(sp->batteryChoiceRows[0])) - 60, LV_ANIM_OFF);
+      }
+    }
     if (opt.screen == "settings-sound") {  // scrolled to the Sound card
       const SettingsParts* sp = settings_parts(app_settings_view(app));
       lv_obj_update_layout(lv_screen_active());

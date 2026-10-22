@@ -119,6 +119,7 @@ void on_switch(lv_event_t* e) {
     if (on == st->s.nightDim) return;
     st->s.nightDim = on;
     show(st->parts.nightControls, on);
+    if (st->parts.soundNightNeedsDim != nullptr) show(st->parts.soundNightNeedsDim, !on);
   } else if (sw == st->parts.soundNightSwitch) {
     if (on == st->s.soundMuteAtNight) return;
     st->s.soundMuteAtNight = on;
@@ -138,6 +139,16 @@ void on_sound_mode(lv_event_t* e) {
   for (int i = 0; i < 3; ++i) {
     widgets::show(st->parts.soundTicks[i], static_cast<int>(mode) == i);
   }
+  notify_changed(st);
+}
+
+void on_battery_choice(lv_event_t* e) {
+  auto* st = static_cast<SettingsState*>(lv_event_get_user_data(e));
+  lv_obj_t* row = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+  const auto choice = static_cast<BatteryChoice>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(row)));
+  if (choice == st->s.battery) return;
+  st->s.battery = choice;
+  for (int i = 0; i < 3; ++i) widgets::show(st->parts.batteryChoiceTicks[i], static_cast<int>(choice) == i);
   notify_changed(st);
 }
 
@@ -285,6 +296,24 @@ lv_obj_t* help_text(lv_obj_t* parent, const char* text) {
   return l;
 }
 
+// One row of a single-choice list: the text on the left, a tick on the right
+// when chosen. `value` goes into the row's user data for `cb`.
+lv_obj_t* choice_row(lv_obj_t* parent, SettingsState* st, const char* text, int value, lv_event_cb_t cb,
+                     lv_obj_t*& tickOut) {
+  const Palette& pal = theme();
+  lv_obj_t* row = line(parent, kSoundRowH);
+  lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_set_style_radius(row, 8, 0);
+  lv_obj_set_style_bg_color(row, pal.line, LV_STATE_PRESSED);
+  lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
+  lv_obj_set_user_data(row, reinterpret_cast<void*>(static_cast<intptr_t>(value)));
+  lv_obj_add_event_cb(row, cb, LV_EVENT_CLICKED, st);
+  lv_obj_align(text_label(row, &hanken_12, pal.chalk, text), LV_ALIGN_LEFT_MID, 0, 0);
+  tickOut = widgets::tick(row);
+  lv_obj_align(tickOut, LV_ALIGN_RIGHT_MID, 0, 0);
+  return row;
+}
+
 void style_slider(lv_obj_t* slider) {
   const Palette& pal = theme();
   lv_obj_remove_style_all(slider);
@@ -392,17 +421,7 @@ void build(SettingsState* st, lv_obj_t* root) {
     lv_obj_set_style_pad_row(sound, 2, 0);
     text_label(sound, &hanken_14, pal.chalk, "Sound");
     for (int i = 0; i < 3; ++i) {
-      lv_obj_t* row = line(sound, kSoundRowH);
-      lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
-      lv_obj_set_style_radius(row, 8, 0);
-      lv_obj_set_style_bg_color(row, pal.line, LV_STATE_PRESSED);
-      lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
-      lv_obj_set_user_data(row, reinterpret_cast<void*>(static_cast<intptr_t>(i)));
-      lv_obj_add_event_cb(row, on_sound_mode, LV_EVENT_CLICKED, st);
-      lv_obj_align(text_label(row, &hanken_12, pal.chalk, kSoundModeText[i]), LV_ALIGN_LEFT_MID, 0, 0);
-      p.soundRows[i] = row;
-      p.soundTicks[i] = widgets::tick(row);
-      lv_obj_align(p.soundTicks[i], LV_ALIGN_RIGHT_MID, 0, 0);
+      p.soundRows[i] = choice_row(sound, st, kSoundModeText[i], i, on_sound_mode, p.soundTicks[i]);
     }
     p.soundHelp = help_text(sound, kSoundHelp);
 
@@ -423,6 +442,19 @@ void build(SettingsState* st, lv_obj_t* root) {
     lv_obj_align(text_label(quietHead, &hanken_14, pal.chalk, "Mute at night"), LV_ALIGN_LEFT_MID, 0, 0);
     p.soundNightSwitch = make_switch(quietHead, st);
     p.soundNightHelp = help_text(quiet, kSoundNightHelp);
+    p.soundNightNeedsDim = help_text(quiet, kSoundNightNeedsDim);
+  }
+
+  // Battery, when the host has battery hardware: whether one is connected.
+  if (st->cb.battery) {
+    lv_obj_t* battery = column_card(p.list, false);
+    lv_obj_set_style_pad_row(battery, 2, 0);
+    text_label(battery, &hanken_14, pal.chalk, "Battery");
+    for (int i = 0; i < 3; ++i) {
+      p.batteryChoiceRows[i] =
+          choice_row(battery, st, kBatteryChoiceText[i], i, on_battery_choice, p.batteryChoiceTicks[i]);
+    }
+    p.batteryChoiceHelp = help_text(battery, kBatteryHelp);
   }
 
   // Wi-Fi, when the host supports it.
@@ -499,6 +531,10 @@ void apply(SettingsState* st, int64_t now) {
     for (int i = 0; i < 3; ++i) show(p.soundTicks[i], static_cast<int>(s.soundMode) == i);
     set_text(p.volumeValue, percent_text(s.soundVolume));
     set_checked(p.soundNightSwitch, s.soundMuteAtNight);
+    show(p.soundNightNeedsDim, !s.nightDim);
+  }
+  if (p.batteryChoiceHelp != nullptr) {
+    for (int i = 0; i < 3; ++i) show(p.batteryChoiceTicks[i], static_cast<int>(s.battery) == i);
   }
   st->everApplied = true;
 }

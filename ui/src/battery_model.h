@@ -80,6 +80,13 @@ constexpr const char* kAlertCriticalText = "Battery very low. Plug in the charge
 
 }  // namespace battery
 
+// What the UI shows for the measured status `s` under the user's choice:
+// Auto: `s` itself. None: no battery (PowerStatus{}). Installed: `s` when it
+// has a battery; when the model sees none (a reading below 2.5 V or above
+// 4.5 V) an empty, not charging battery (0 %), so a dead or unplugged pack
+// warns instead of vanishing.
+PowerStatus apply_battery_choice(const PowerStatus& s, BatteryChoice choice);
+
 // Approximate state of charge of a single LiPo cell at rest, from an
 // 12-point piecewise-linear discharge curve of the published kind
 // (4.20 V = 100 %, 3.95 V = 50 %, 3.60 V = 10 %, 3.30 V = 0 %), rounded to
