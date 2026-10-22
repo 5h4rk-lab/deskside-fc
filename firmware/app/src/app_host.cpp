@@ -516,6 +516,23 @@ void app_host_diag_burst(int n) {
   burstNext();
 }
 
+void app_host_diag_slow(bool headers) {
+  if (!s_host) return;
+  // Public test endpoints (valid certificates, no token sent): one trickles a
+  // 30-byte body over 30 s, the other holds the headers back for 10 s. Both
+  // must end as a transport error after about 8000 ms (the total deadline).
+  const char* url = headers ? "https://httpbin.org/delay/10"
+                            : "https://httpbin.org/drip?duration=30&numbytes=30&delay=0";
+  const int64_t start = monotonicMs();
+  Serial.printf("[slow] GET %s with an 8000 ms total budget\n", headers ? "/delay/10 (headers after 10 s)"
+                                                                       : "/drip (30 bytes over 30 s)");
+  s_host->transport.get(url, std::string(), 8000, [start](HttpResult r) {
+    Serial.printf("[slow] answer after %lld ms: status %d, transport error %s, %u bytes\n",
+                  (long long)(monotonicMs() - start), r.status, r.transportError ? "yes" : "no",
+                  (unsigned)r.body.size());
+  });
+}
+
 void app_host_diag_offline_toggle() {
   const bool now = !s_diagOffline.load();
   s_diagOffline.store(now);

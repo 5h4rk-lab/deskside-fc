@@ -85,22 +85,37 @@ TEST_CASE("serial commands: a word without Enter does not run, even complete") {
   CHECK(out.empty());
 }
 
-TEST_CASE("serial commands: an unfinished word is abandoned after the idle time, then letters work again") {
+TEST_CASE("serial commands: an unfinished word is abandoned after the idle time, its line is swallowed, then letters work again") {
   SerialCommandSplitter s(5000);
   std::vector<SerialCommandSplitter::Item> out;
   for (char c : std::string(":wip")) s.feed(c, 100, out);
   s.feed('e', 4000, out);       // still within the idle time: swallowed
-  s.feed('g', 9100, out);       // 5.1 s after the last byte: the word is gone, g is a command
+  s.feed('g', 9100, out);       // 5.1 s after the last byte: the word is gone, but its line is still swallowed
+  CHECK(out.empty());
+  s.feed('\n', 9200, out);      // the line ends (swallowed too)
+  CHECK(out.empty());
+  s.feed('g', 9300, out);       // now a command
   REQUIRE(out.size() == 1);
   CHECK(out[0].byte == 'g');
-  // poll() alone also abandons it.
+  // poll() alone abandons it; the swallowing ends after another idle time without input.
   SerialCommandSplitter s2(5000);
   std::vector<SerialCommandSplitter::Item> o2;
   s2.feed(':', 0, o2);
-  s2.poll(5000);
-  s2.feed('r', 5001, o2);
+  s2.poll(5000);                // abandoned: swallowing from 5000
+  s2.feed('r', 5001, o2);       // swallowed
+  CHECK(o2.empty());
+  s2.poll(10001);               // 5 s of silence since that byte: swallowing ends
+  s2.feed('g', 10002, o2);
   REQUIRE(o2.size() == 1);
-  CHECK(o2[0].byte == 'r');
+  CHECK(o2[0].byte == 'g');
+  // A word inside the swallowed line does not start either; the next line's word does.
+  SerialCommandSplitter s3(5000);
+  std::vector<SerialCommandSplitter::Item> o3;
+  s3.feed(':', 0, o3);
+  for (char c : std::string("abc:wifi\n:wifi\n")) s3.feed(c, 6000, o3);
+  REQUIRE(o3.size() == 1);
+  CHECK(o3[0].isWord);
+  CHECK(o3[0].word == "wifi");
 }
 
 TEST_CASE("serial commands: the stray colon swallows the rest of the line only") {
@@ -133,17 +148,25 @@ TEST_CASE("serial commands: the longest settings words fit (URL 200, token 128 c
   for (char c : ":set-token " + token) s.feed(c, t += 300, out);
   s.poll(t + 60000);
   CHECK(out.empty());
-  // A pause of 5 s inside it abandons the word: the rest is never a command.
+  // A pause of 5 s inside it abandons the word, and the rest of the line is
+  // swallowed: the tail of a token never runs as one-letter commands
+  // (t would save a favourite, W/Z/= join Wi-Fi or tap in the diag builds).
   SerialCommandSplitter s2(5000);
   std::vector<SerialCommandSplitter::Item> o2;
-  for (char c : std::string(":set-url https://exa")) s2.feed(c, 10, o2);
-  for (char c : std::string("mple.com\n")) s2.feed(c, 6000, o2);  // after the pause: plain letters again
-  std::string letters;
-  for (const auto& it : o2) {
-    CHECK_FALSE(it.isWord);
-    letters += it.byte;
-  }
-  CHECK(letters == "mple.com\n");
+  for (char c : std::string(":set-token abcdefgh")) s2.feed(c, 10, o2);
+  for (char c : std::string("tWZ=gdpk12345\n")) s2.feed(c, 6000, o2);  // after the pause
+  CHECK(o2.empty());
+  // Even typed slowly after the pause (each key within the idle time).
+  SerialCommandSplitter s3(5000);
+  std::vector<SerialCommandSplitter::Item> o3;
+  for (char c : std::string(":set-token abcdefgh")) s3.feed(c, 10, o3);
+  uint32_t t3 = 6000;
+  for (char c : std::string("tWZgdp")) s3.feed(c, t3 += 3000, o3);
+  CHECK(o3.empty());
+  s3.feed('\r', t3 += 100, o3);
+  s3.feed('g', t3 += 100, o3);
+  REQUIRE(o3.size() == 1);
+  CHECK(o3[0].byte == 'g');
 }
 
 TEST_CASE("serial commands: a word splits into its name and its value") {

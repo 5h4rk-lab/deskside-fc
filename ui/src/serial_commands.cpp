@@ -2,6 +2,11 @@
 
 void SerialCommandSplitter::feed(char c, uint32_t nowMs, std::vector<Item>& out) {
   poll(nowMs);  // a word left unfinished long ago is gone before this byte counts
+  if (discarding_) {
+    lastByteMs_ = nowMs;
+    if (c == '\n' || c == '\r') discarding_ = false;  // the line ends: letters work again
+    return;
+  }
   if (inWord_) {
     lastByteMs_ = nowMs;
     if (c == '\n' || c == '\r') {
@@ -36,10 +41,17 @@ void SerialCommandSplitter::feed(char c, uint32_t nowMs, std::vector<Item>& out)
 }
 
 void SerialCommandSplitter::poll(uint32_t nowMs) {
-  if (inWord_ && static_cast<uint32_t>(nowMs - lastByteMs_) >= abandonMs_) {
+  const bool idle = static_cast<uint32_t>(nowMs - lastByteMs_) >= abandonMs_;
+  if (inWord_ && idle) {
+    // Dropped; what may still come of its line is swallowed, for up to
+    // another abandonMs of silence counted from now.
     inWord_ = false;
     tooLong_ = false;
     word_.clear();
+    discarding_ = true;
+    lastByteMs_ = nowMs;
+  } else if (discarding_ && idle) {
+    discarding_ = false;
   }
 }
 

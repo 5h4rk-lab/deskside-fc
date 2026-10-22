@@ -7,6 +7,7 @@
 #include <esp_timer.h>
 #include <mbedtls/platform.h>
 #include <string.h>
+#include <sys/socket.h>
 
 #include <new>
 #include <utility>
@@ -15,7 +16,9 @@ namespace {
 
 constexpr UBaseType_t kWorkerPriority = 2;  // below the Wi-Fi worker (3), on core 0
 constexpr BaseType_t kWorkerCore = 0;
-constexpr size_t kScratchBytes = 4096;
+constexpr size_t kScratchBytes = 1024;
+constexpr int kChunkBytes = 1024;   // body read size: the deadline is checked between reads
+constexpr int kReadStepMs = 1000;   // client timeout of one read (at most the time left)
 
 int64_t nowMs() { return esp_timer_get_time() / 1000; }
 
@@ -66,12 +69,23 @@ bool EspHttpTransport::start() {
   todo_ = xQueueCreate(kQueueLength, sizeof(Job*));
   done_ = xQueueCreate(kQueueLength, sizeof(Job*));
   scratch_ = static_cast<char*>(heap_caps_malloc(kScratchBytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
-  if (todo_ == nullptr || done_ == nullptr || scratch_ == nullptr ||
+  guard_ = xSemaphoreCreateMutex();
+  esp_timer_create_args_t timerArgs = {};
+  timerArgs.callback = &EspHttpTransport::watchdog_fired;
+  timerArgs.arg = this;
+  timerArgs.dispatch_method = ESP_TIMER_TASK;
+  timerArgs.name = "http_deadline";
+  if (guard_ != nullptr && esp_timer_create(&timerArgs, &watchdog_) != ESP_OK) watchdog_ = nullptr;
+  if (todo_ == nullptr || done_ == nullptr || scratch_ == nullptr || guard_ == nullptr || watchdog_ == nullptr ||
       xTaskCreatePinnedToCore(&EspHttpTransport::task_main, "http_worker", kWorkerStackBytes, this, kWorkerPriority,
                               &task_, kWorkerCore) != pdPASS) {
     Serial.printf("[http] %s: cannot start the worker (out of memory); requests are refused\n", name_);
     if (todo_) vQueueDelete(todo_);
     if (done_) vQueueDelete(done_);
+    if (watchdog_) esp_timer_delete(watchdog_);
+    if (guard_) vSemaphoreDelete(guard_);
+    watchdog_ = nullptr;
+    guard_ = nullptr;
     heap_caps_free(scratch_);
     todo_ = done_ = nullptr;
     scratch_ = nullptr;
@@ -186,6 +200,38 @@ void EspHttpTransport::task_main(void* arg) {
   }
 }
 
+void EspHttpTransport::watchdog_fired(void* arg) {
+  // esp_timer task: end a step that is still blocked at the request's deadline by shutting
+  // the socket down (lwIP is built full-duplex: this wakes a recv() blocked in the worker).
+  auto* self = static_cast<EspHttpTransport*>(arg);
+  if (xSemaphoreTake(self->guard_, portMAX_DELAY) != pdTRUE) return;
+  if (self->watchedFd_ >= 0) {
+    shutdown(self->watchedFd_, SHUT_RDWR);
+    self->watchdogFired_ = true;
+  }
+  xSemaphoreGive(self->guard_);
+}
+
+void EspHttpTransport::watch(int fd, int ms) {
+  xSemaphoreTake(guard_, portMAX_DELAY);
+  watchedFd_ = fd;
+  watchdogFired_ = false;
+  xSemaphoreGive(guard_);
+  if (fd >= 0 && ms > 0) esp_timer_start_once(watchdog_, static_cast<uint64_t>(ms) * 1000u);
+}
+
+bool EspHttpTransport::unwatch() {
+  esp_timer_stop(watchdog_);  // harmless when it is not running
+  // After this the callback can no longer touch the socket, so closing it (and the
+  // descriptor being reused) is safe.
+  xSemaphoreTake(guard_, portMAX_DELAY);
+  watchedFd_ = -1;
+  const bool fired = watchdogFired_;
+  watchdogFired_ = false;
+  xSemaphoreGive(guard_);
+  return fired;
+}
+
 void EspHttpTransport::run(Job& job) {
   HttpResult& r = job.result;
   r = HttpResult();
@@ -195,12 +241,15 @@ void EspHttpTransport::run(Job& job) {
     job.err = err;
   };
   if (ready_ != nullptr && !ready_()) return fail("no network or no valid clock");
-  const int64_t deadline = nowMs() + job.timeoutMs;
+  // The whole request (connect, TLS, headers, body) gets job.timeoutMs from here.
+  const RequestDeadline deadline(nowMs(), job.timeoutMs);
 
   esp_http_client_config_t cfg = {};
   cfg.url = job.url.c_str();
   cfg.method = HTTP_METHOD_GET;
-  cfg.timeout_ms = job.timeoutMs;
+  // Connect and handshake: esp-tls bounds both by this (the whole budget is left now).
+  // The DNS lookup is lwIP's own (not bounded by it).
+  cfg.timeout_ms = deadline.remaining_ms(nowMs());
   cfg.disable_auto_redirect = true;
   cfg.crt_bundle_attach = esp_crt_bundle_attach;
   cfg.buffer_size = 2048;
@@ -209,16 +258,21 @@ void EspHttpTransport::run(Job& job) {
   cfg.addr_type = HTTP_ADDR_TYPE_INET;
   esp_http_client_handle_t c = esp_http_client_init(&cfg);
   if (c == nullptr) return fail("client init failed (out of memory or bad URL)");
-  esp_http_client_set_header(c, "x-token", job.token.c_str());
+  if (!job.token.empty()) esp_http_client_set_header(c, "x-token", job.token.c_str());
   esp_http_client_set_header(c, "Accept", "application/json");
 
   const int64_t tOpen = nowMs();
   esp_err_t err = esp_http_client_open(c, 0);
   if (err != ESP_OK) {
     esp_http_client_cleanup(c);
-    return fail("connect/DNS/TLS failed:", err);
+    return fail(deadline.expired(nowMs()) ? "timed out connecting:" : "connect/DNS/TLS failed:", err);
   }
   job.handshakeMs = static_cast<uint32_t>(nowMs() - tOpen);
+  if (deadline.expired(nowMs())) {
+    esp_http_client_close(c);
+    esp_http_client_cleanup(c);
+    return fail("timed out (total deadline) after the handshake");
+  }
   // Memory with a TLS session open (both record buffers allocated).
   const size_t freeNow = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   const size_t largest = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL);
@@ -228,48 +282,38 @@ void EspHttpTransport::run(Job& job) {
   if (largest < tlsLargestMin_.load()) tlsLargestMin_.store(largest);
   if (psram < tlsPsramMin_.load()) tlsPsramMin_.store(psram);
 
+  // From here every blocking call is also ended from outside at the deadline.
+  watch(esp_http_client_get_socket(c), deadline.remaining_ms(nowMs()));
+  esp_http_client_set_timeout_ms(c, deadline.step_timeout_ms(nowMs(), job.timeoutMs));
   const int64_t len = esp_http_client_fetch_headers(c);
   const bool chunked = esp_http_client_is_chunked_response(c);
-  if (len < 0) {
+  if (len < 0 || deadline.expired(nowMs())) {
+    unwatch();
     esp_http_client_close(c);
     esp_http_client_cleanup(c);
-    return fail(len == -ESP_ERR_HTTP_EAGAIN ? "timed out waiting for the answer" : "reading the headers failed");
+    return fail(deadline.expired(nowMs()) || len == -ESP_ERR_HTTP_EAGAIN ? "timed out (total deadline) waiting for the answer"
+                                                                         : "reading the headers failed");
   }
   r.status = esp_http_client_get_status_code(c);
-  if (static_cast<uint64_t>(len) > cap_) {
-    esp_http_client_close(c);
-    esp_http_client_cleanup(c);
-    return fail("body over the size cap");
-  }
-  if (len > 0) r.body.reserve(static_cast<size_t>(len));
-  bool ok = true;
-  for (;;) {
-    if (nowMs() > deadline) {
-      ok = false;
-      fail("timed out reading the body");
+  const BodyResult body = read_body(
+      [&](char* buf, int n) {
+        const int step = deadline.step_timeout_ms(nowMs(), kReadStepMs);
+        if (step <= 0) return -1;
+        esp_http_client_set_timeout_ms(c, step);
+        const int got = esp_http_client_read(c, buf, n);
+        // A step that timed out with nothing read: try again while time is left.
+        return got == -ESP_ERR_HTTP_EAGAIN ? kBodyReadAgain : got;
+      },
+      [] { return nowMs(); }, deadline, cap_, len > 0 ? len : 0, scratch_, kChunkBytes, r.body);
+  const bool fired = unwatch();
+  switch (body) {
+    case BodyResult::Complete:
+      if (chunked && !esp_http_client_is_complete_data_received(c)) fail("chunked body cut short");
       break;
-    }
-    const int n = esp_http_client_read(c, scratch_, kScratchBytes);
-    if (n < 0) {
-      ok = false;
-      fail(n == -ESP_ERR_HTTP_EAGAIN ? "timed out reading the body" : "reading the body failed");
-      break;
-    }
-    if (n == 0) break;
-    if (r.body.size() + static_cast<size_t>(n) > cap_) {
-      ok = false;
-      fail("body over the size cap");
-      break;
-    }
-    r.body.append(scratch_, static_cast<size_t>(n));
-    if (len > 0 && r.body.size() >= static_cast<size_t>(len)) break;
-  }
-  if (ok) {
-    if (len > 0 && r.body.size() != static_cast<size_t>(len)) {
-      fail("body cut short");
-    } else if (chunked && !esp_http_client_is_complete_data_received(c)) {
-      fail("chunked body cut short");
-    }
+    case BodyResult::TimedOut: fail("timed out (total deadline) reading the body"); break;
+    case BodyResult::ReadError: fail(fired ? "timed out (total deadline) reading the body" : "reading the body failed"); break;
+    case BodyResult::OverCap: fail("body over the size cap"); break;
+    case BodyResult::CutShort: fail("body cut short"); break;
   }
   esp_http_client_close(c);
   esp_http_client_cleanup(c);

@@ -7,6 +7,10 @@
 // swallowed, so typing it by hand, at any speed, can never run the one-letter
 // commands that share those letters. A word that is never finished (nothing
 // typed for abandonMs) is dropped, and so is one that grows past kMaxWordLen.
+// After a word is dropped for the idle time, the rest of its line is
+// swallowed too (until the next CR/LF, or until nothing has come for another
+// abandonMs): the tail of a token typed with a pause in it must never run as
+// one-letter commands.
 // Anything that erases or restarts must be a word: no one-letter command does.
 // kMaxWordLen leaves room for the longest settings words (":set-url " plus a
 // 200-character URL, ":set-token " plus a 128-character token).
@@ -38,6 +42,7 @@ class SerialCommandSplitter {
  private:
   uint32_t abandonMs_;
   bool inWord_ = false;
+  bool discarding_ = false;  // the rest of an abandoned word's line
   bool tooLong_ = false;
   std::string word_;
   uint32_t lastByteMs_ = 0;

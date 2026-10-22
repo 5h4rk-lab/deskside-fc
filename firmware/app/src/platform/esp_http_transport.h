@@ -9,8 +9,15 @@
 //   calls `done`; poll() delivers finished requests, so every `done` runs on
 //   the LVGL task.
 // - One worker task on core 0 (8 KB stack) runs the requests one at a time
-//   from a queue of 8. The whole request (DNS, TLS handshake, headers, body) is
-//   bounded by the caller's timeout.
+//   from a queue of 8.
+// - Time: the caller's timeout is a TOTAL budget per request, counted from the
+//   moment the worker starts it (ui/src/request_deadline.h). Connect and TLS
+//   handshake get the whole budget as esp-tls's timeout; once connected,
+//   headers and every body read get at most the time left (reads are 1 KB,
+//   each with a client timeout of at most 1 s, and the deadline is checked
+//   before each), and a one-shot timer shuts the socket down at the deadline,
+//   which ends any call still blocked in it (a peer that trickles bytes). Not
+//   covered: the DNS lookup before the connection (lwIP's own retries).
 // - A request is refused (status 0, transportError, delivered by the next
 //   poll(), no network use) while `ready()` is false (the host passes "Wi-Fi
 //   has an address and the clock is valid"), when the URL is not https:// or
@@ -20,6 +27,8 @@
 //   certificate that does not verify), timeouts, a truncated body and a body
 //   over the size cap give status 0 and transportError.
 // - The object lives for the whole program (the worker keeps a pointer to it).
+//
+// An empty token sends no x-token header (diagnostics against other hosts).
 //
 // Secrets: the token goes from get() into the request record, into the
 // client's header list and onto the wire; it is never logged, and the record's
@@ -35,11 +44,14 @@
 #include <string>
 #include <vector>
 
+#include <esp_timer.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
+#include <freertos/semphr.h>
 #include <freertos/task.h>
 
 #include "http_transport.h"
+#include "request_deadline.h"
 
 class EspHttpTransport : public HttpTransport {
  public:
@@ -91,6 +103,11 @@ class EspHttpTransport : public HttpTransport {
   static void task_main(void* arg);
   void run(Job& job);
   void refuse(uint32_t id, const char* why);
+  // Deadline watchdog (worker side): watch() arms it for the socket, unwatch()
+  // disarms it before the socket is closed and says whether it fired.
+  static void watchdog_fired(void* arg);
+  void watch(int fd, int ms);
+  bool unwatch();
 
   const char* name_;
   size_t cap_;
@@ -105,6 +122,10 @@ class EspHttpTransport : public HttpTransport {
   // Worker side, read by the LVGL task after the result is taken off the queue.
   std::atomic<size_t> tlsFree_{0}, tlsFreeMin_{SIZE_MAX}, tlsLargestMin_{SIZE_MAX}, tlsPsramMin_{SIZE_MAX};
   char* scratch_ = nullptr;  // worker read buffer (PSRAM)
+  esp_timer_handle_t watchdog_ = nullptr;
+  SemaphoreHandle_t guard_ = nullptr;  // watchedFd_ / watchdogFired_ between the worker and the timer
+  int watchedFd_ = -1;
+  bool watchdogFired_ = false;
 };
 
 // Sends mbedTLS's allocations (TLS record buffers, handshake and certificate

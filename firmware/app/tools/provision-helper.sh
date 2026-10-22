@@ -34,8 +34,25 @@ if [ ! -r "$env_file" ]; then
   echo "cannot read $env_file" >&2
   exit 2
 fi
+# The token file must be private (mode 600 or stricter): refuse otherwise.
+perm=$(stat -c %a "$env_file" 2>/dev/null) || { echo "cannot stat $env_file" >&2; exit 2; }
+if [ $(( 8#$perm & 8#077 )) -ne 0 ]; then
+  echo "$env_file is readable or writable by others (mode $perm): run  chmod 600 $env_file  first" >&2
+  exit 2
+fi
 if [ ! -e "$port" ]; then
   echo "no serial port $port (is the board plugged in?)" >&2
+  exit 2
+fi
+# Another program (a serial monitor, pio upload) holding the port would eat the answers.
+if command -v fuser >/dev/null 2>&1; then
+  if fuser -s "$port" 2>/dev/null; then
+    echo "$port is in use by another process (close the serial monitor first):" >&2
+    fuser -v "$port" 2>&1 | sed -n '2,$p' >&2
+    exit 2
+  fi
+elif command -v lsof >/dev/null 2>&1 && lsof "$port" >/dev/null 2>&1; then
+  echo "$port is in use by another process (close the serial monitor first)" >&2
   exit 2
 fi
 
@@ -44,6 +61,7 @@ fi
 token=""
 file_url=""
 while IFS= read -r line || [ -n "$line" ]; do
+  line="${line%$'\r'}"  # files saved with CRLF line ends
   case "$line" in
     HELPER_TOKEN=*) token="${line#HELPER_TOKEN=}" ;;
     HELPER_URL=*) file_url="${line#HELPER_URL=}" ;;

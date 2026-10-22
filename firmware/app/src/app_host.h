@@ -89,4 +89,7 @@ void app_host_print_net();
 // switch that refuses every request as if the router were off.
 void app_host_diag_burst(int n);
 void app_host_diag_offline_toggle();
+// One request to a deliberately slow public endpoint (no token): `headers`
+// true holds the headers back, false trickles the body. Prints the time it took.
+void app_host_diag_slow(bool headers);
 #endif

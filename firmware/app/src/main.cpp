@@ -18,7 +18,9 @@
 //   m        print the memory report now
 // Word commands start with ':' and run only when you press Enter (echo ':wifi' > /dev/ttyACM0).
 // While you type one its letters are swallowed, so typing by hand can never run a letter
-// command; a word left unfinished for 5 s is dropped:
+// command; a word left unfinished for 5 s is dropped, and the rest of its line is swallowed
+// too (until Enter, or 5 s more without input), so the tail of a token typed with a pause
+// never runs as letter commands:
 //   :wifi            one line: connected network, signal, address, saved networks, memory
 //   :wipe-wifi       forget every saved network and restart (first-run Wi-Fi setup shows again)
 //   :erase-settings  erase the saved settings (not the Wi-Fi networks) and restart
@@ -46,7 +48,9 @@
 //   Z        join a network that does not exist (the 15 s timeout path)
 //   :diag-clock-break    stop SNTP and set the clock to 2023-06-01 (not valid): polling pauses
 //   :diag-clock-restore  start SNTP again
-//   :diag-burst          100 matches requests in a row, heap every 10 (leak check)
+//   :diag-burst [n]      n (default 100, at most 200) matches requests in a row, heap every 10 (leak check)
+//   :diag-slow-body      one GET to a public endpoint that trickles its body (no token): must end at ~8 s
+//   :diag-slow-headers   one GET to a public endpoint that holds its headers 10 s (no token): must end at ~8 s
 //   :diag-offline        toggle: refuse every request as if the router were off (stale marker test)
 // The commands are read here (the Arduino loop task) and handed to the LVGL
 // task through a queue (the settings erase and the NVS self-test too), so the
@@ -560,6 +564,16 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
   std::string value;
   split_word(it.word, name, value);
   wipeString(it.word);  // may hold a token
+#if APP_DIAG && !APP_DEMO_DATA
+  if (name == "diag-burst") {
+    // Optional count, 1 to 200 (default 100).
+    static int s_burstCount = 100;
+    const int n = value.empty() ? 100 : atoi(value.c_str());
+    s_burstCount = n >= 1 && n <= 200 ? n : 100;
+    app_host_post_call([] { app_host_diag_burst(s_burstCount); });
+    return;
+  }
+#endif
   if (name == "set-token") {
     setHelperToken(value);
   } else if (name == "set-url") {
@@ -578,8 +592,10 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
   } else if (name == "diag-clock-restore") {
     time_sync_diag_restore();
 #if !APP_DEMO_DATA
-  } else if (name == "diag-burst") {
-    app_host_post_call([] { app_host_diag_burst(100); });
+  } else if (name == "diag-slow-body") {
+    app_host_post_call([] { app_host_diag_slow(false); });
+  } else if (name == "diag-slow-headers") {
+    app_host_post_call([] { app_host_diag_slow(true); });
   } else if (name == "diag-offline") {
     app_host_post_call(app_host_diag_offline_toggle);
 #endif
@@ -594,7 +610,8 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     restartNow();
   } else if (name == "help") {
     Serial.println("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): :wifi :wipe-wifi :erase-settings :restart "
-                   ":set-url <url> :set-token <token> :show-config :net :help");
+                   ":set-url <url> :set-token <token> :show-config :net :help | a word unfinished for 5 s is "
+                   "dropped with the rest of its line");
   } else {
     // Not echoed: a mistyped word may hold a secret.
     Serial.println("[cmd] unknown command (not echoed; :help lists them)");
