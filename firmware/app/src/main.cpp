@@ -31,6 +31,11 @@
 //                    never echoed; used from the next restart
 //   :show-config     the helper's address and the first 4 characters of its token
 //   :net             one line about the data path and one about pictures ([img]; also in the 5 s status)
+//   :sound <name> [v]  play one sound now at the saved volume (or v, 1..100), ignoring the sound
+//                    settings: goal win kickoff fulltime low critical wifi
+//   :sound tone l|r|both [v]  1 s of 440 Hz on the left channel only, the right only, or both
+//                    (which speaker sounds tells whether the board drives two speakers)
+//   :sound stop      stop what plays (20 ms fade);  :sound  alone prints the speaker's state
 //   :help            list the commands
 // The helper's address and token come from NVS (namespace "helper", keys helper.url and
 // helper.token, written by :set-url / :set-token, see tools/provision-helper.sh), else
@@ -79,9 +84,11 @@
 #include "helper_config.h"
 #include "platform/esp_http_transport.h"
 #include "platform/esp_wifi_service.h"
+#include "platform/i2s_sound_out.h"
 #include "platform/nvs_prefs.h"
 #include "platform/time_sync.h"
 #include "serial_commands.h"
+#include "sound_synth.h"
 #include "version.h"
 
 // Optional build defaults (secrets.ini); the device normally gets them over the
@@ -155,6 +162,7 @@ bool s_appOk = false;
 NvsPrefs* s_prefs = nullptr;
 NvsPrefs* s_helperPrefs = nullptr;  // namespace "helper": helper.url, helper.token
 EspWifiService* s_wifi = nullptr;
+I2sSoundOut* s_speaker = nullptr;
 std::string s_urlInUse;             // the helper address the app runs with ("" when none)
 bool s_helperInUse = false;
 
@@ -548,6 +556,92 @@ void handleSerialByte(int c) {
   }
 }
 
+// ---- speaker ----------------------------------------------------------------------
+
+// :sound [name [volume]] (loop task): parsed here, played in the LVGL task
+// (it owns the saved volume). Bad input is answered with the list, not echoed.
+void soundCommand(const std::string& value) {
+  static const char* const kUsage =
+      "[cmd] sound: :sound goal|win|kickoff|fulltime|low|critical|wifi [1-100], :sound tone l|r|both [1-100], "
+      ":sound stop, :sound (state)";
+  std::string what;
+  std::string rest;
+  split_word(value, what, rest);
+  if (what.empty()) {
+    if (s_speaker) s_speaker->print_status();
+    Serial.println(kUsage);
+    return;
+  }
+  if (what == "stop") {
+    app_host_post(AppCommand::Sound, kSoundArgStop);
+    return;
+  }
+  int sel = -1;
+  SoundChannels ch = SoundChannels::Both;
+  if (what == "tone") {
+    std::string side;
+    std::string after;
+    split_word(rest, side, after);
+    rest = after;
+    if (side == "l" || side == "left") {
+      ch = SoundChannels::Left;
+    } else if (side == "r" || side == "right") {
+      ch = SoundChannels::Right;
+    } else if (side != "both") {
+      Serial.println(kUsage);
+      return;
+    }
+    sel = kSoundArgTone;
+  } else {
+    static const struct {
+      const char* name;
+      SoundEvent event;
+    } kNames[] = {{"goal", SoundEvent::Goal},        {"win", SoundEvent::WinFanfare},
+                  {"kickoff", SoundEvent::KickOff},  {"fulltime", SoundEvent::FullTime},
+                  {"low", SoundEvent::BatteryLow},   {"critical", SoundEvent::BatteryCritical},
+                  {"wifi", SoundEvent::WifiOk}};
+    for (const auto& n : kNames) {
+      if (what == n.name) sel = static_cast<int>(n.event);
+    }
+  }
+  int volume = 0;  // the saved one
+  if (!rest.empty()) {
+    volume = atoi(rest.c_str());
+    if (volume < 1 || volume > 100 || rest.find_first_not_of("0123456789") != std::string::npos) sel = -1;
+  }
+  if (sel < 0) {
+    Serial.println(kUsage);
+    return;
+  }
+  app_host_post(AppCommand::Sound, sound_arg(sel, ch, volume));
+}
+
+// Makes every clip once, after the first frame, on a low-priority task on the
+// display core (below LVGL: it only takes time the screen does not need), so
+// no goal ever waits for the synthesis. The float work buffers and the clips
+// come from PSRAM (C++ new: platform/psram_new.cpp).
+void soundPrepareTask(void*) {
+  const size_t internal0 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  const size_t internalMin0 = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
+  const size_t psram0 = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  const size_t psramMin0 = heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM);
+  const int made0 = sound_generate_calls();
+  const int64_t t0 = esp_timer_get_time();
+  sound_prepare_all();
+  const int64_t us = esp_timer_get_time() - t0;
+  Serial.printf(
+      "[sound] clips ready: %d synthesized in %lld ms | internal free %u -> %u (lowest %u -> %u) | psram free %u -> %u "
+      "(clips %d B), lowest %u -> %u | prepare stack free %u B\n",
+      sound_generate_calls() - made0, (long long)(us / 1000), (unsigned)internal0,
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), (unsigned)internalMin0,
+      (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL), (unsigned)psram0,
+      (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+      (int)psram0 - (int)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)psramMin0,
+      (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
+      (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
+  vTaskDelete(nullptr);
+}
+
 // Whole-word commands and the one-letter commands share the console; see serial_commands.h.
 SerialCommandSplitter s_splitter;
 
@@ -589,6 +683,8 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     setHelperToken(value);
   } else if (name == "set-url") {
     setHelperUrl(value);
+  } else if (name == "sound") {
+    soundCommand(value);
   } else if (!value.empty()) {
     // Only the settings words take a value. Neither the value nor the name is
     // echoed: "set-tokenXYZ..." typed without its space would be a token.
@@ -623,8 +719,9 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     restartNow();
   } else if (name == "help") {
     Serial.println("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): :wifi :wipe-wifi :erase-settings :restart "
-                   ":set-url <url> :set-token <token> :show-config :net :help | a word unfinished for 5 s is "
-                   "dropped with the rest of its line");
+                   ":set-url <url> :set-token <token> :show-config :net :sound [goal|win|kickoff|fulltime|low|critical|"
+                   "wifi|tone l|tone r|tone both|stop] [volume] :help | a word unfinished for 5 s is dropped with the "
+                   "rest of its line");
   } else {
     // Not echoed: a mistyped word may hold a secret.
     Serial.println("[cmd] unknown command (not echoed; :help lists them)");
@@ -685,6 +782,12 @@ void setup() {
   lvgl_port_start();
   Serial.printf("[heap] %-22s internal free %6u\n", "after the LVGL port", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
+  // The speaker: a failed start leaves it silent (logged) and the app runs on.
+  static I2sSoundOut speaker;
+  speaker.begin();
+  s_speaker = &speaker;
+  Serial.printf("[heap] %-22s internal free %6u\n", "after the speaker", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+
   if (!lvgl_lock(1000)) {
     Serial.println("[main] FATAL: cannot take the LVGL lock to build the UI");
     for (;;) delay(2000);
@@ -693,7 +796,7 @@ void setup() {
     HelperConfig helper = loadHelperConfig();
     s_helperInUse = helper.valid;
     s_urlInUse = helper.url;
-    s_appOk = app_host_start(prefs, backlight, wifi, helper);
+    s_appOk = app_host_start(prefs, backlight, wifi, &speaker, helper);
     wipeString(helper.token);
   }
   lvgl_unlock();
@@ -716,6 +819,9 @@ void setup() {
   s_firstFrameMs = millis() - s_bootMs;
   if (s_appOk) backlight.open();
   if (s_appOk && !wifi.start()) Serial.println("[main] the Wi-Fi service did not start (see above)");
+  if (xTaskCreatePinnedToCore(soundPrepareTask, "snd_prep", 8192, nullptr, 1, nullptr, 1) != pdPASS) {
+    Serial.println("[sound] could not start the clip preparation: clips are made on first use");
+  }
   Serial.printf(
       "[boot] first frame after %lu ms (%lu ms of it waiting for a serial monitor); frames %lu, %lu blocks, %lu us "
       "flush, backlight %u%%; epoch %lld (0: clock not set yet)\n",

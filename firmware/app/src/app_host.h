@@ -32,6 +32,7 @@
 
 #include "backlight.h"
 #include "platform/esp_wifi_service.h"
+#include "platform/i2s_sound_out.h"
 #include "prefs.h"
 
 // Commands any task may post (see app_host_post). The serial console maps
@@ -46,6 +47,8 @@ enum class AppCommand : uint8_t {
   NextTeam,    // make the next team of the team list the favourite (the path the team picker
                // takes: saved to NVS, colours and screens rebuilt), to test persistence
   Settings,    // print the settings in use
+  Sound,       // play a sound at the saved volume, ignoring the sound settings and the
+               // gate (the serial :sound command): arg = kSoundArg* (see below)
   Call,        // run a function in the LVGL task (see app_host_post_call)
 #if APP_DIAG
   // Measurement commands, only in the diagnostics builds (env app_diag, app_debug).
@@ -57,6 +60,15 @@ enum class AppCommand : uint8_t {
 #endif
 };
 
+// AppCommand::Sound's argument: bits 0-3 the SoundEvent, or 15 for the test
+// tone; bits 4-5 the channels for the tone (SoundChannels); bits 8-15 a volume
+// 1..100 (0: the saved volume); kSoundArgStop stops whatever plays.
+constexpr int kSoundArgTone = 15;
+constexpr int kSoundArgStop = -1;
+constexpr int sound_arg(int what, SoundChannels channels, int volume) {
+  return what | (static_cast<int>(channels) << 4) | (volume << 8);
+}
+
 // The helper's address and token as loaded and checked at start (main.cpp).
 // `valid` false: the app makes no requests.
 struct HelperConfig {
@@ -66,13 +78,15 @@ struct HelperConfig {
 };
 
 // Builds the UI. Call once, with the LVGL lock held (lvgl_lock) and after
-// lvgl_port_start(). `prefs`, `backlight` and `wifi` must outlive the app;
+// lvgl_port_start(). `prefs`, `backlight`, `wifi` and `speaker` (nullable:
+// then no sound and no Sound rows in Settings) must outlive the app;
 // `wifi` must have load()ed its saved list (the UI opens the first-run setup
 // when it is empty) and is pumped from the app's 10 ms timer. `helper` is
 // copied (the caller wipes its own copy of the token). Returns false (after
 // printing why) when memory is short; the app is then not running and the
 // other calls do nothing.
-bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, const HelperConfig& helper);
+bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, I2sSoundOut* speaker,
+                    const HelperConfig& helper);
 
 // Queues `fn` to run in the LVGL task (for serial commands that touch state
 // the LVGL task owns, such as the settings in flash). Same queue and the same

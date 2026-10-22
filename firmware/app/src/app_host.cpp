@@ -20,6 +20,7 @@
 #include "format.h"
 #include "settings.h"
 #include "store.h"
+#include "sound_synth.h"
 
 #if APP_DEMO_DATA
 #include "demo/demo_fixtures.gen.h"
@@ -86,7 +87,7 @@ bool networkReady() {
 #endif
 
 struct Host {
-  Host(Prefs& p, Backlight& b, EspWifiService& w, const HelperConfig& helper)
+  Host(Prefs& p, Backlight& b, EspWifiService& w, I2sSoundOut* sp, const HelperConfig& helper)
       : prefs(p),
         backlight(b),
         wifi(w),
@@ -108,8 +109,10 @@ struct Host {
              // A join made on the Wi-Fi pages: fetch everything now (auto-joins are
              // noticed by the link watch in onTick, which does the same).
              [this] { loop.poller().request_all_now(); }},
-        loop(store, source, makeHooks()) {
+        loop(store, source, makeHooks()),
+        speaker(sp) {
     (void)helper;
+    deps.sound = speaker;
   }
 
   HostLoop::Hooks makeHooks() {
@@ -170,6 +173,7 @@ struct Host {
   int64_t linkUpAtMs = -1;
   AppDeps deps;
   HostLoop loop;
+  I2sSoundOut* speaker;
   lv_obj_t* app = nullptr;
 };
 
@@ -256,6 +260,44 @@ void printSettings() {
                 s->reducedMotion ? "on" : "off");
 }
 
+// The serial :sound command: one clip (or the test tone) now, at the saved
+// volume unless the command named one; the settings and the gate are not asked.
+void playSoundCommand(int arg) {
+  Host& h = *s_host;
+  if (!h.speaker || !h.speaker->ok()) {
+    Serial.println("[cmd] sound: no speaker (init failed at start, see [sound] above)");
+    return;
+  }
+  if (arg == kSoundArgStop) {
+    h.speaker->stop();
+    Serial.println("[cmd] sound: stop");
+    return;
+  }
+  const Settings* s = h.app ? app_settings(h.app) : nullptr;
+  int volume = (arg >> 8) & 0xFF;
+  if (volume == 0) volume = s ? s->soundVolume : 40;
+  const int what = arg & 0x0F;
+  if (what == kSoundArgTone) {
+    // 440 Hz for 1 s on one channel: which speaker sounds tells left from right.
+    static const PcmClip tone = sound_test_tone(440, 1000, 12000);  // PSRAM, made on first use, kept
+    const SoundChannels ch = static_cast<SoundChannels>((arg >> 4) & 0x3);
+    h.speaker->play_on(tone, static_cast<uint8_t>(volume), ch);
+    Serial.printf("[cmd] sound: test tone 440 Hz 1 s on %s at %d%%\n",
+                  ch == SoundChannels::Left ? "the LEFT channel only"
+                                            : (ch == SoundChannels::Right ? "the RIGHT channel only" : "both channels"),
+                  volume);
+    return;
+  }
+  if (what >= kSoundEventCount) return;
+  const SoundEvent e = static_cast<SoundEvent>(what);
+  const uint32_t t0 = static_cast<uint32_t>(esp_timer_get_time());
+  const PcmClip& clip = sound_clip(e);
+  const uint32_t lookupUs = static_cast<uint32_t>(esp_timer_get_time()) - t0;
+  h.speaker->play(clip, static_cast<uint8_t>(volume));
+  Serial.printf("[cmd] sound: event %d, %d ms clip (expected %d ms) at %d%%, clip ready in %lu us\n", what,
+                clip.duration_ms(), sound_clip_duration_ms(e), volume, (unsigned long)lookupUs);
+}
+
 void runCommand(const Command& c) {
   Host& h = *s_host;
   switch (c.what) {
@@ -321,6 +363,9 @@ void runCommand(const Command& c) {
     }
     case AppCommand::Settings:
       printSettings();
+      break;
+    case AppCommand::Sound:
+      playSoundCommand(c.arg);
       break;
     case AppCommand::Call:
       if (c.fn) c.fn();
@@ -400,7 +445,8 @@ static void heapStep(const char* what) {
   last = now;
 }
 
-bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, const HelperConfig& helper) {
+bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, I2sSoundOut* speaker,
+                    const HelperConfig& helper) {
   if (s_host) return true;
   heapStep("before the app");
   s_queue = xQueueCreate(kQueueLength, sizeof(Command));
@@ -410,7 +456,7 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, co
 #if !APP_DEMO_DATA
   s_readyWifi = &wifi;
 #endif
-  s_host = new (std::nothrow) Host(prefs, backlight, wifi, helper);
+  s_host = new (std::nothrow) Host(prefs, backlight, wifi, speaker, helper);
   if (!s_host) {
     Serial.println("[app] ERROR: out of memory for the app state");
     return false;

@@ -42,7 +42,9 @@ constexpr uint32_t kTouchI2cHz = 400000;  // vendor I2C_MASTER_FREQ_HZ
 constexpr int kMainSda = 11;
 constexpr int kMainScl = 10;
 
-// I2S audio (PCM5101A DAC + amplifier), no MCLK. [vendor] Audio_PCM5101.h
+// I2S audio (PCM5101A DAC + APA2068 stereo amplifier), no MCLK. [vendor] Audio_PCM5101.h
+// No pin enables or mutes the DAC or the amplifier (schematic: XSMT to 3V3,
+// amp MUTE pulled low, /SD pulled high); the speaker driver only stops I2S.
 constexpr int kI2sBclk = 48;
 constexpr int kI2sLrc = 38;
 constexpr int kI2sDout = 47;
