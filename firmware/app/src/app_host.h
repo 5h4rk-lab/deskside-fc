@@ -33,6 +33,7 @@
 #include "backlight.h"
 #include "platform/esp_power_service.h"
 #include "platform/esp_wifi_service.h"
+#include "platform/esp_ota.h"
 #include "platform/i2s_sound_out.h"
 #include "prefs.h"
 
@@ -98,8 +99,29 @@ struct HelperConfig {
 // once the key is up; still powered (USB), it stays in the off state
 // (backlight 0, nothing drawn, no network, the key looked at every 10 s or
 // when its level changes) until a press restarts it.
+//
+// Software updates (real-data builds with a helper): the Settings row
+// "Software update" checks the helper's /api/firmware/version (see
+// ui/src/update_flow.h for when) and installs on a tap: the data poller is
+// paused and both transports refuse requests, requests in flight are waited
+// for, the picture connection is closed and the speaker stopped, then
+// EspOta downloads into the idle slot (the only network session), checks it
+// and switches the boot slot; "Restarting..." shows for 1.5 s before the
+// restart. A failed download resumes everything and shows why in the row.
+// `boot` is what ota_boot() found: an image on trial is confirmed
+// (ota_confirm) from the 10 ms timer once TrialHealth is ready (display up
+// and Wi-Fi started, reported by app_host_note_*; then the first matches or a
+// minute of running).
 bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, EspPowerService& power,
-                    I2sSoundOut* speaker, const HelperConfig& helper);
+                    I2sSoundOut* speaker, const HelperConfig& helper, const OtaBoot& boot);
+
+// For the trial's health check (any task): the first frame was drawn; the
+// Wi-Fi service started.
+void app_host_note_display_up();
+void app_host_note_wifi_started();
+
+// The [ota] lines (slots, states, trial record, the update row). LVGL task (post it).
+void app_host_print_ota();
 
 // The [power] line (battery reading, calibration, model, setting, key, hold
 // pin, USB data). LVGL task (post it).
@@ -152,4 +174,10 @@ void app_host_diag_offline_toggle();
 // One request to a deliberately slow public endpoint (no token): `headers`
 // true holds the headers back, false trickles the body. Prints the time it took.
 void app_host_diag_slow(bool headers);
+// Software update tests against a local server (diagnostics builds only):
+// the manifest address (http allowed, no token sent), a check now and an
+// install now (exactly as the row's tap: the battery rule applies).
+void app_host_diag_ota_url(const std::string& url);  // any task
+void app_host_diag_ota_check();                      // LVGL task (post it)
+void app_host_diag_ota_install();                    // LVGL task (post it)
 #endif

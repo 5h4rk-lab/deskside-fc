@@ -112,7 +112,8 @@ void EspHttpTransport::get(const std::string& url, const std::string& token, int
   const uint32_t id = ++nextId_;
   pending_[id] = std::move(done);
   if (task_ == nullptr) return refuse(id, "worker not running");
-  if (url.compare(0, 8, "https://") != 0) return refuse(id, "not an https URL");
+  const bool plainOk = allowHttp_ && url.compare(0, 7, "http://") == 0;
+  if (url.compare(0, 8, "https://") != 0 && !plainOk) return refuse(id, "not an https URL");
   if (ready_ != nullptr && !ready_()) return refuse(id, "no network or no valid clock yet");
   Job* job = new (std::nothrow) Job();
   if (job == nullptr) return refuse(id, "out of memory");
@@ -202,7 +203,10 @@ void EspHttpTransport::task_main(void* arg) {
       self->drop_connection();
       continue;
     }
-    if (job == nullptr) continue;
+    if (job == nullptr) {  // drop_kept_connection()
+      self->drop_connection();
+      continue;
+    }
     const int64_t t0 = nowMs();
     self->run(*job);
     job->ms = static_cast<uint32_t>(nowMs() - t0);
@@ -259,7 +263,7 @@ esp_http_client_handle_t EspHttpTransport::new_client(const Job& job, int timeou
   // lwIP's own (not bounded by it).
   cfg.timeout_ms = timeoutMs;
   cfg.disable_auto_redirect = true;
-  cfg.crt_bundle_attach = esp_crt_bundle_attach;
+  if (job.url.compare(0, 8, "https://") == 0) cfg.crt_bundle_attach = esp_crt_bundle_attach;
   cfg.buffer_size = 2048;
   cfg.buffer_size_tx = 1024;
   cfg.keep_alive_enable = false;  // TCP keep-alive probes; HTTP connection reuse is keepConnection_
@@ -276,7 +280,14 @@ void EspHttpTransport::drop_connection() {
   esp_http_client_close(conn_);
   esp_http_client_cleanup(conn_);
   conn_ = nullptr;
+  connOpen_.store(false);
   connOrigin_.clear();
+}
+
+void EspHttpTransport::drop_kept_connection() {
+  if (todo_ == nullptr) return;
+  Job* none = nullptr;
+  xQueueSend(todo_, &none, pdMS_TO_TICKS(100));
 }
 
 void EspHttpTransport::run(Job& job) {
@@ -306,6 +317,7 @@ void EspHttpTransport::run(Job& job) {
         esp_http_client_set_url(conn_, job.url.c_str()) == ESP_OK) {
       c = conn_;
       reused = true;
+      connOpen_.store(false);
       if (!job.token.empty()) {
         esp_http_client_set_header(c, "x-token", job.token.c_str());
       } else {
@@ -335,6 +347,7 @@ void EspHttpTransport::run(Job& job) {
     auto release = [&](bool keep) {
       if (keep && keepConnection_) {
         conn_ = c;
+        connOpen_.store(true);
         connOrigin_ = origin;
         connLastMs_ = nowMs();
       } else {

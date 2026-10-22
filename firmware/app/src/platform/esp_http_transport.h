@@ -135,6 +135,16 @@ class EspHttpTransport : public HttpTransport {
   uint32_t heap_waits() const { return heapWaits_.load(); }
   uint32_t heap_refusals() const { return heapRefusals_.load(); }
 
+  // Asks the worker to close a kept connection now (before a software update:
+  // its TLS session's memory is needed). Any task; the worker does it after
+  // the request it may be running. has_kept_connection() tells when it is gone.
+  void drop_kept_connection();
+  bool has_kept_connection() const { return connOpen_.load(); }
+
+  // Diagnostics builds only (a local update test server): also accept plain
+  // http:// URLs. Never set in the release build.
+  void set_allow_plain_http(bool allow) { allowHttp_ = allow; }
+
  private:
   struct Job;
   static void task_main(void* arg);
@@ -173,6 +183,8 @@ class EspHttpTransport : public HttpTransport {
   std::string connOrigin_;
   int64_t connLastMs_ = 0;
   std::atomic<uint32_t> reuses_{0}, reconnects_{0}, heapWaits_{0}, heapRefusals_{0};
+  std::atomic<bool> connOpen_{false};  // conn_ != nullptr, readable from any task
+  bool allowHttp_ = false;
   size_t minInternalFree_ = 0;
 };
 

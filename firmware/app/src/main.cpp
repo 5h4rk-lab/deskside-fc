@@ -41,6 +41,8 @@
 //   :cal-battery <mV>  calibrate the battery reading: <mV> is a multimeter's reading of the pack now
 //                    (3000..4400); stored in NVS batt.cal. :cal-battery clear  back to the factory
 //                    formula;  :cal-battery  alone shows the state
+//   :ota             the software update state: running and idle slots, image states, the trial
+//                    record, the Settings row and the manifest address (read-only)
 //   :help            list the commands
 // The helper's address and token come from NVS (namespace "helper", keys helper.url and
 // helper.token, written by :set-url / :set-token, see tools/provision-helper.sh), else
@@ -70,6 +72,12 @@
 //   :diag-key <ms>       a power key press of 30..20000 ms (OR'ed with the real key); makes any
 //                        power-off a dry run: 200 toggles the screen, 1500 shows the hint, 3500 switches off
 //   :diag-batt <mV>|off  the battery model gets <mV> (2000..4500) instead of the ADC (low-battery banner test)
+//   :ota-url <url>       take the update manifest from <url> instead of the helper (plain http allowed:
+//                        a local test server; no token is sent to it); until the next restart
+//   :ota-check           check for an update now (as a tap on the Software update row)
+//   :ota-install         install the offered update now (as a tap on "available · Install")
+// A diagnostics image built with -DAPP_DIAG_CRASH_AT_BOOT=1 aborts 2 s after every start (the
+// rollback test: it must never be confirmed, and the previous image comes back by itself).
 // The commands are read here (the Arduino loop task) and handed to the LVGL
 // task through a queue (the settings erase and the NVS self-test too), so the
 // console never slows the screen and nothing but the LVGL task touches the UI
@@ -94,6 +102,7 @@
 #include "helper_config.h"
 #include "battery_cal.h"
 #include "platform/esp_http_transport.h"
+#include "platform/esp_ota.h"
 #include "platform/esp_power_service.h"
 #include "platform/esp_wifi_service.h"
 #include "platform/i2s_sound_out.h"
@@ -115,6 +124,10 @@
 #ifndef APP_TLS_INTERNAL
 #define APP_TLS_INTERNAL 0
 #endif
+
+// An image installed over the air confirms itself only once it is healthy
+// (platform/esp_ota.h): the Arduino core must not mark it valid at start.
+extern "C" bool verifyRollbackLater() { return true; }
 
 // The app is built inside setup(); give the Arduino loop task room for it.
 SET_LOOP_TASK_STACK_SIZE(12 * 1024);  // measured use about 6.4 KB (Task 4)
@@ -782,6 +795,17 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     }
     return;
   }
+#if !APP_DEMO_DATA
+  if (name == "ota-url") {
+    if (value.empty() || value.size() > 200 || value.find_first_of(" \t\r\n") != std::string::npos ||
+        (value.compare(0, 7, "http://") != 0 && value.compare(0, 8, "https://") != 0)) {
+      Serial.println("[cmd] ota-url: :ota-url http://<host>:<port>/<manifest>.json (or https://)");
+    } else {
+      app_host_diag_ota_url(value);
+    }
+    return;
+  }
+#endif
   if (name == "diag-batt") {
     const int mv = value == "off" ? 0 : diagNumber(value, 2000, 4500);
     if (mv < 0 || !s_power) {
@@ -812,6 +836,14 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     app_host_post_call(app_host_print_net);
   } else if (name == "power") {
     app_host_post_call(app_host_print_power);
+  } else if (name == "ota") {
+    app_host_post_call(app_host_print_ota);
+#if APP_DIAG && !APP_DEMO_DATA
+  } else if (name == "ota-check") {
+    app_host_post_call(app_host_diag_ota_check);
+  } else if (name == "ota-install") {
+    app_host_post_call(app_host_diag_ota_install);
+#endif
 #if APP_DIAG
   } else if (name == "diag-power-off") {
     app_host_post_call(app_host_diag_power_off);
@@ -842,7 +874,7 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     restartNow();
   } else if (name == "help") {
     Serial.println("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): :wifi :wipe-wifi :erase-settings :restart "
-                   ":set-url <url> :set-token <token> :show-config :net :sound [goal|win|kickoff|fulltime|low|critical|"
+                   ":set-url <url> :set-token <token> :show-config :net :ota :sound [goal|win|kickoff|fulltime|low|critical|"
                    "wifi|tone l|tone r|tone both|stop] [volume] :power :cal-battery [<mV>|clear] :help | a word unfinished for 5 s is dropped with the "
                    "rest of its line");
   } else {
@@ -875,6 +907,9 @@ void setup() {
   while (!Serial && millis() - s_bootMs < kSerialWaitMs) delay(10);
   s_serialWaitedMs = millis() - s_bootMs;
   Serial.printf("soccer-display app %s built %s %s\n", kAppVersion, __DATE__, __TIME__);
+  // Before anything else that could fail: an update on trial that keeps
+  // failing to start is rolled back here (this call then restarts).
+  const OtaBoot otaBoot = ota_boot();
   Serial.printf("reset reason %d, power hold GPIO%d level %d, CPU %lu MHz, flash %lu MHz\n", (int)esp_reset_reason(),
                 pins::kPowerHold, gpio_get_level((gpio_num_t)pins::kPowerHold), (unsigned long)getCpuFrequencyMhz(),
                 (unsigned long)(ESP.getFlashChipSpeed() / 1000000));
@@ -924,7 +959,7 @@ void setup() {
     HelperConfig helper = loadHelperConfig();
     s_helperInUse = helper.valid;
     s_urlInUse = helper.url;
-    s_appOk = app_host_start(prefs, backlight, wifi, power, &speaker, helper);
+    s_appOk = app_host_start(prefs, backlight, wifi, power, &speaker, helper, otaBoot);
     wipeString(helper.token);
   }
   lvgl_unlock();
@@ -946,7 +981,12 @@ void setup() {
   }
   s_firstFrameMs = millis() - s_bootMs;
   if (s_appOk) backlight.open();
-  if (s_appOk && !wifi.start()) Serial.println("[main] the Wi-Fi service did not start (see above)");
+  if (s_appOk && first.frames > 0) app_host_note_display_up();
+  if (s_appOk && !wifi.start()) {
+    Serial.println("[main] the Wi-Fi service did not start (see above)");
+  } else if (s_appOk) {
+    app_host_note_wifi_started();
+  }
   if (xTaskCreatePinnedToCoreWithCaps(soundPrepareTask, "snd_prep", 8192, nullptr, 1, &s_prepTask, 1,
                                       MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
     s_prepTask = nullptr;
@@ -992,6 +1032,15 @@ void loop() {
     lastPowerSample = now;
     s_power->sample();
   }
+
+#if APP_DIAG && defined(APP_DIAG_CRASH_AT_BOOT) && APP_DIAG_CRASH_AT_BOOT
+  // The rollback test image: never healthy.
+  if (millis() - s_bootMs > 2000) {
+    Serial.println("[diag] APP_DIAG_CRASH_AT_BOOT: aborting on purpose (rollback test)");
+    Serial.flush();
+    abort();
+  }
+#endif
 
   const uint32_t period = s_fast ? kFastStatusMs : kStatusMs;
   if (now - lastReport >= period) {

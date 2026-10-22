@@ -8,6 +8,7 @@
 #include <lvgl.h>
 
 #include <atomic>
+#include <cstring>
 #include <memory>
 #include <new>
 #include <string>
@@ -22,6 +23,9 @@
 #include "settings.h"
 #include "store.h"
 #include "sound_synth.h"
+#include "update_flow.h"
+#include "version.h"
+#include "platform/esp_ota.h"
 
 #if APP_DEMO_DATA
 #include "demo/demo_fixtures.gen.h"
@@ -78,13 +82,19 @@ EspWifiService* s_readyWifi = nullptr;
 #if APP_DIAG
 std::atomic<bool> s_diagOffline{false};  // :diag-offline: refuse every request as if the router were off
 #endif
+// A software update downloads: the data and picture transports refuse every
+// request (their sessions' memory goes to the download).
+std::atomic<bool> s_updatePause{false};
+
+// The link and the clock, without the update pause (the update itself needs them).
+bool linkAndClock() { return s_readyWifi != nullptr && s_readyWifi->link_up() && epoch_now_if_valid() > 0; }
 
 // The transport's gate (LVGL task and HTTP worker): an address and a valid clock.
 bool networkReady() {
 #if APP_DIAG
   if (s_diagOffline.load()) return false;
 #endif
-  return s_readyWifi != nullptr && s_readyWifi->link_up() && epoch_now_if_valid() > 0;
+  return !s_updatePause.load() && linkAndClock();
 }
 #endif
 
@@ -232,6 +242,7 @@ struct Host {
     h.onMatchesChanged = [this](int64_t now) {
       if (!firstData) {
         firstData = true;
+        health.data_ok();
         Serial.printf("[data] first matches: %u matches at %lld ms after start (link up at %lld ms)\n",
                       (unsigned)store.matches().size(), (long long)(esp_timer_get_time() / 1000),
                       (long long)linkUpAtMs);
@@ -269,6 +280,12 @@ struct Host {
 #endif
   bool firstData = false;
   int64_t linkUpAtMs = -1;
+  // Software updates: what ota_boot() found, the health of an image on trial,
+  // and the updater (real-data builds with a helper).
+  OtaBoot boot;
+  TrialHealth health;
+  bool confirmed = false;
+  Updater* updater = nullptr;
   AppDeps deps;
   HostLoop loop;
   I2sSoundOut* speaker;
@@ -281,6 +298,95 @@ struct Host {
 
 Host* s_host = nullptr;
 QueueHandle_t s_queue = nullptr;
+
+#if !APP_DEMO_DATA
+// The board's software updates (LVGL task): checks through the data
+// transport (one more small JSON request, token-gated), installs with EspOta
+// after pausing everything else that uses the network. See update_flow.h for
+// when it checks; nothing installs without the user's tap.
+class EspUpdater : public Updater {
+ public:
+  static constexpr int kCheckTimeoutMs = 8000;
+  static constexpr int64_t kPauseLimitMs = 15000;  // requests in flight end within their 10 s deadline
+  static constexpr int64_t kRestartDelayMs = 1500;  // "Restarting..." stays on screen this long
+
+  EspUpdater(Host& h, Version running, const std::string& manifestUrl, const std::string& token, bool allowHttp)
+      : h_(h), running_(running), flow_(running, rules_for_manifest_url(manifestUrl, allowHttp)) {
+    configure(manifestUrl, token, allowHttp);
+    flow_.set_start_ms(monotonicMs());
+  }
+  ~EspUpdater() override { wipe(token_); }
+
+  // A new manifest address (diagnostics: :ota-url), keeping the row's notice.
+  void configure(const std::string& manifestUrl, const std::string& token, bool allowHttp) {
+    const UpdateStatus old = flow_.status();
+    manifestUrl_ = manifestUrl;
+    wipe(token_);
+    token_ = token;
+    allowHttp_ = allowHttp;
+    flow_ = UpdateFlow(running_, rules_for_manifest_url(manifestUrl, allowHttp));
+    flow_.set_start_ms(monotonicMs());
+    flow_.set_notice(old.notice, old.noticeIsProblem);
+    flow_.set_unconfirmed(unconfirmed_);
+  }
+  void set_notice(const std::string& text, bool problem) { flow_.set_notice(text, problem); }
+  void set_unconfirmed(bool u) {
+    unconfirmed_ = u;
+    flow_.set_unconfirmed(u);
+  }
+
+  UpdateStatus status() const override { return flow_.status(); }
+  void check_now() override { check(true); }
+  void settings_opened() override {
+    if (flow_.check_wanted_on_open(monotonicMs())) check(false);
+  }
+  void install(const PowerStatus& power) override {
+    if (!flow_.install_requested(power)) {
+      Serial.printf("[ota] install refused: %s\n", update_status_text(flow_.status()).c_str());
+      return;
+    }
+    const UpdateInfo& i = flow_.info();
+    Serial.printf("[ota] install %s (%d B): pausing data, pictures and sound | internal free %u\n",
+                  version_text(i.version).c_str(), i.sizeBytes, (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    step_ = Step::Pausing;
+    stepStart_ = monotonicMs();
+    dropSent_ = false;
+    s_updatePause.store(true);
+    h_.loop.set_fetches_paused(true);
+    if (h_.speaker && h_.speaker->ok()) {
+      h_.speaker->stop();
+      h_.speaker->wait_idle(300);
+    }
+  }
+
+  // Every host-loop tick (LVGL task).
+  void tick();
+  void print() const;
+
+ private:
+  enum class Step { None, Pausing, Downloading, Restarting };
+  static void wipe(std::string& s) {
+    if (!s.empty()) memset(&s[0], 0, s.size());
+    s.clear();
+  }
+  void check(bool userAsked);
+  void resume(const char* why);
+
+  Host& h_;
+  Version running_;
+  UpdateFlow flow_;
+  std::string manifestUrl_;
+  std::string token_;
+  bool allowHttp_ = false;
+  bool unconfirmed_ = false;
+  bool checkInFlight_ = false;
+  Step step_ = Step::None;
+  int64_t stepStart_ = 0;
+  bool dropSent_ = false;
+  int lastLoggedTenth_ = -1;
+  EspOta ota_;
+};
+#endif
 
 int64_t epochNow() {
 #if APP_DEMO_DATA
@@ -354,6 +460,132 @@ void watchNetwork(int64_t epoch) {
   }
   h.clockWasValid = epoch > 0;
 }
+
+void EspUpdater::check(bool userAsked) {
+  const int64_t now = monotonicMs();
+  if (checkInFlight_ || flow_.busy() || flow_.status().phase == UpdatePhase::Checking) return;
+  if (userAsked && !flow_.can_check()) return;  // a tap on an offer installs instead
+  if (manifestUrl_.empty()) {  // no helper configured: nothing to ask
+    flow_.check_started(now, userAsked);
+    flow_.check_answered(now, true, 0, "");
+    return;
+  }
+  if (!networkReady()) {
+    flow_.check_offline(now, userAsked);
+    return;
+  }
+  flow_.check_started(now, userAsked);
+  checkInFlight_ = true;
+  Serial.printf("[ota] checking for updates (%s)\n", userAsked ? "asked" : "background");
+  h_.transport.get(manifestUrl_, token_, kCheckTimeoutMs, [this](HttpResult r) {
+    checkInFlight_ = false;
+    flow_.check_answered(monotonicMs(), r.transportError, r.status, r.body);
+    const UpdateStatus st = flow_.status();
+    Serial.printf("[ota] check: %s, answer %d%s -> %s\n", r.transportError ? "transport error" : "answered",
+                  r.status, r.transportError ? "" : "", update_status_text(st).c_str());
+  });
+}
+
+void EspUpdater::resume(const char* why) {
+  s_updatePause.store(false);
+  h_.loop.set_fetches_paused(false);
+  h_.loop.poller().request_matches_now();
+  step_ = Step::None;
+  Serial.printf("[ota] data and pictures resumed (%s)\n", why);
+}
+
+void EspUpdater::tick() {
+  const int64_t now = monotonicMs();
+  switch (step_) {
+    case Step::None:
+      if (flow_.check_due(now) && !manifestUrl_.empty() && networkReady()) check(false);
+      return;
+    case Step::Pausing: {
+      // Every request in flight delivered, then the picture transport's kept
+      // connection closed: from then on the download is the only session.
+      const bool drained = h_.transport.outstanding() == 0 && h_.imageTransport.outstanding() == 0;
+      if (drained && !dropSent_) {
+        h_.imageTransport.drop_kept_connection();
+        dropSent_ = true;
+      }
+      if (drained && dropSent_ && !h_.imageTransport.has_kept_connection()) {
+        if (!linkAndClock()) {
+          flow_.failed(UpdateError::Offline);
+          resume("no network");
+          return;
+        }
+        Serial.printf("[ota] paused after %lld ms | internal free %u (largest %u) | downloading %s\n",
+                      (long long)(now - stepStart_), (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                      (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                      flow_.info().url.substr(0, flow_.info().url.find('/', 8)).c_str());
+        lastLoggedTenth_ = -1;
+        if (ota_.start(flow_.info(), running_, allowHttp_)) {
+          step_ = Step::Downloading;
+          stepStart_ = now;
+          flow_.download_progress(0);
+        } else {
+          flow_.failed(ota_.error());
+          Serial.printf("[ota] the download did not start: %s\n", ota_.stats().why);
+          resume("download did not start");
+        }
+        return;
+      }
+      if (now - stepStart_ > kPauseLimitMs) {
+        flow_.failed(UpdateError::LowMemory);
+        resume("requests in flight did not end in time");
+      }
+      return;
+    }
+    case Step::Downloading: {
+      const EspOta::State st = ota_.state();
+      if (st == EspOta::State::Running) {
+        const int pct = ota_.percent();
+        flow_.download_progress(pct);
+        if (pct / 10 != lastLoggedTenth_) {
+          lastLoggedTenth_ = pct / 10;
+          Serial.printf("[ota] %d%% after %lld ms | internal free %u\n", pct, (long long)(now - stepStart_),
+                        (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        }
+        return;
+      }
+      const EspOta::Stats s = ota_.stats();
+      Serial.printf("[ota] download %s: %lu B in %lu ms (handshake %lu ms) | internal free min %u (largest min %u) "
+                    "| task stack free %lu B%s%s%s\n",
+                    st == EspOta::State::Done ? "verified and set to boot" : "FAILED", (unsigned long)s.bytes,
+                    (unsigned long)s.ms, (unsigned long)s.handshakeMs, (unsigned)s.internalFreeMin,
+                    (unsigned)s.internalLargestMin, (unsigned long)s.stackFree, s.why[0] ? " | " : "", s.why,
+                    s.espErr ? (std::string(" ") + esp_err_to_name(s.espErr)).c_str() : "");
+      if (st == EspOta::State::Done) {
+        flow_.installing();
+        flow_.restarting();
+        step_ = Step::Restarting;
+        stepStart_ = now;
+      } else {
+        flow_.failed(ota_.error());
+        resume("the download failed");
+      }
+      return;
+    }
+    case Step::Restarting:
+      if (now - stepStart_ >= kRestartDelayMs) {
+        Serial.printf("[ota] restarting into %s\n", version_text(flow_.info().version).c_str());
+        Serial.flush();
+        delay(50);
+        esp_restart();
+      }
+      return;
+  }
+}
+
+void EspUpdater::print() const {
+  const UpdateStatus st = flow_.status();
+  Serial.printf("[ota] update row: \"%s\" | manifest %s%s | last check %lld ms ago%s\n",
+                update_status_text(st).c_str(), manifestUrl_.empty() ? "(none: no helper)" : manifestUrl_.c_str(),
+                allowHttp_ ? " (http allowed: diagnostics)" : "",
+                flow_.last_check_ms() < 0 ? -1LL : (long long)(monotonicMs() - flow_.last_check_ms()),
+                s_updatePause.load() ? " | DATA AND PICTURES PAUSED" : "");
+}
+
 #endif
 
 // Names and numbers only: nothing secret is stored in the settings.
@@ -555,6 +787,25 @@ void powerKeyTick() {
   h.keyLevel = level;
 }
 
+// An image on trial confirms itself once healthy (LVGL task, every tick: that
+// this runs at all shows the UI task is alive).
+void trialTick() {
+  Host& h = *s_host;
+  if (!h.boot.onTrial || h.confirmed) return;
+  if (!h.health.ready(monotonicMs())) return;
+  h.confirmed = true;
+  Serial.printf("[ota] healthy after %lld ms (%s)\n", (long long)monotonicMs(),
+                h.firstData ? "first data arrived" : "a minute of running");
+  ota_confirm();
+#if !APP_DEMO_DATA
+  if (h.updater) {
+    auto* u = static_cast<EspUpdater*>(h.updater);
+    u->set_unconfirmed(false);
+    if (h.boot.action == BootAction::Trial) u->set_notice(updated_notice(h.boot.running), false);
+  }
+#endif
+}
+
 // Runs in the LVGL task every kTickMs, inside lv_timer_handler().
 void onTick(lv_timer_t*) {
   Command c;
@@ -563,10 +814,12 @@ void onTick(lv_timer_t*) {
   // Switching off or off: no data, no refresh, nothing new to draw.
   if (s_host->powerKey.mode() != PowerController::Mode::On) return;
   s_host->wifi.pump();  // driver events and timers of the Wi-Fi service; its callbacks run here
+  trialTick();
   const int64_t epoch = epochNow();
 #if !APP_DEMO_DATA
   watchNetwork(epoch);
   if (epoch <= 0) untimedBacklight();
+  if (s_host->updater) static_cast<EspUpdater*>(s_host->updater)->tick();
 #endif
   s_host->loop.tick(monotonicMs(), epoch);
 }
@@ -583,7 +836,7 @@ static void heapStep(const char* what) {
 }
 
 bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, EspPowerService& power,
-                    I2sSoundOut* speaker, const HelperConfig& helper) {
+                    I2sSoundOut* speaker, const HelperConfig& helper, const OtaBoot& boot) {
   if (s_host) return true;
   heapStep("before the app");
   s_queue = xQueueCreate(kQueueLength, sizeof(Command));
@@ -608,6 +861,26 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, Es
   s_host->imageTransport.set_min_internal_free(EspHttpTransport::kImagesMinInternalFree);
   if (s_host->httpImages && !s_host->imageTransport.start()) {
     Serial.println("[app] the picture transport did not start: placeholders only");
+  }
+#endif
+  s_host->boot = boot;
+#if !APP_DEMO_DATA
+  // Software updates: checks go to the helper's /api/firmware/version (none
+  // without a valid helper); the image must come from the same host.
+  {
+    Version running;
+    parse_version(kAppVersion, running);
+    auto* updater = new (std::nothrow)
+        EspUpdater(*s_host, running, helper.valid ? manifest_url_for_helper(helper.url) : std::string(),
+                   helper.valid ? helper.token : std::string(), false);
+    if (updater) {
+      updater->set_unconfirmed(boot.onTrial);
+      if (!boot.notice.empty()) updater->set_notice(boot.notice, true);
+      s_host->updater = updater;
+      s_host->deps.updater = updater;
+    } else {
+      Serial.println("[app] ERROR: out of memory for the updater (no Software update row)");
+    }
   }
 #endif
   heapStep("app state allocated");
@@ -908,5 +1181,57 @@ void app_host_diag_offline_toggle() {
   s_diagOffline.store(now);
   Serial.printf("[net] diag: %s\n", now ? "OFFLINE (every request refused, as with the router off)" : "online again");
   if (!now && s_host) s_host->loop.poller().request_all_now();
+}
+#endif
+
+void app_host_note_display_up() {
+  if (s_host) app_host_post_call([] { s_host->health.display_up(); });
+}
+
+void app_host_note_wifi_started() {
+  if (s_host) app_host_post_call([] { s_host->health.wifi_attempted(); });
+}
+
+void app_host_print_ota() {
+  ota_print_state();
+  if (!s_host) return;
+  const Host& h = *s_host;
+  Serial.printf("[ota] this start: %s%s, health: %s\n",
+                h.boot.action == BootAction::Trial        ? "on trial"
+                : h.boot.action == BootAction::RolledBack ? "after a rollback"
+                                                          : "normal",
+                h.boot.onTrial && !h.confirmed ? " (NOT confirmed yet)" : (h.confirmed ? " (confirmed)" : ""),
+                h.boot.onTrial ? (h.confirmed ? "ok" : "waiting") : "-");
+#if !APP_DEMO_DATA
+  if (h.updater) static_cast<const EspUpdater*>(h.updater)->print();
+#endif
+}
+
+#if APP_DIAG && !APP_DEMO_DATA
+namespace {
+std::string s_otaUrl;  // :ota-url, handed to the LVGL task
+}
+
+void app_host_diag_ota_url(const std::string& url) {
+  s_otaUrl = url;
+  app_host_post_call([] {
+    if (!s_host || !s_host->updater) return;
+    const bool http = s_otaUrl.compare(0, 7, "http://") == 0;
+    // A test server gets no token (it is not the helper).
+    s_host->transport.set_allow_plain_http(http);
+    static_cast<EspUpdater*>(s_host->updater)->configure(s_otaUrl, std::string(), true);
+    Serial.printf("[ota] diag: manifest from %s (no token sent%s)\n", s_otaUrl.c_str(),
+                  http ? ", plain http allowed" : "");
+  });
+}
+
+void app_host_diag_ota_check() {
+  if (s_host && s_host->updater) s_host->updater->check_now();
+}
+
+void app_host_diag_ota_install() {
+  if (!s_host || !s_host->updater) return;
+  // As a tap on the row: with the battery the UI shows.
+  s_host->updater->install(s_host->store.power());
 }
 #endif
