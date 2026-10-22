@@ -316,6 +316,18 @@ void EspHttpTransport::run(Job& job) {
       connOrigin_.clear();
     } else {
       drop_connection();
+      // Heap guard: a new TCP + TLS session needs internal RAM; wait for it
+      // (another session may be ending) rather than squeeze the system.
+      if (minInternalFree_ > 0 && heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < minInternalFree_) {
+        ++heapWaits_;
+        while (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < minInternalFree_) {
+          if (deadline.remaining_ms(nowMs()) <= kHeapGuardStepMs) {
+            ++heapRefusals_;
+            return fail("low internal RAM: no new connection before the deadline");
+          }
+          vTaskDelay(pdMS_TO_TICKS(kHeapGuardStepMs));
+        }
+      }
       c = new_client(job, deadline.remaining_ms(nowMs()));
       if (c == nullptr) return fail("client init failed (out of memory or bad URL)");
     }

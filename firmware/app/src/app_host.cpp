@@ -422,6 +422,7 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, co
   if (s_host->httpImages) {
     s_host->httpImages->set_entry_overhead_bytes(HttpImageProvider::kDeviceEntryOverheadBytes);
   }
+  s_host->imageTransport.set_min_internal_free(EspHttpTransport::kImagesMinInternalFree);
   if (s_host->httpImages && !s_host->imageTransport.start()) {
     Serial.println("[app] the picture transport did not start: placeholders only");
   }
@@ -507,7 +508,7 @@ void app_host_print_net() {
   Serial.printf(
       "[img] cache %u KB of %u KB, %u pictures | waiting %u, in flight %u, remembered failures %u%s%s | decoded %lu "
       "(failed %lu), last %lu.%lu ms, avg %lu.%lu ms, max %lu.%lu ms | http ok %lu failed %lu refused %lu, last %d "
-      "%u B in %lu ms (handshake %lu ms), kept connection used %lu times, reopened %lu | internal free in TLS min %d KB "
+      "%u B in %lu ms (handshake %lu ms), kept connection used %lu times, reopened %lu, heap guard waits %lu refusals %lu | internal free in TLS min %d KB "
       "| worker stack free %u B\n",
       (unsigned)(p.cached_bytes() / 1024), (unsigned)(HttpImageProvider::kDefaultCacheBytes / 1024),
       (unsigned)p.cached_images(), (unsigned)(p.pending() - p.in_flight()), (unsigned)p.in_flight(),
@@ -517,7 +518,8 @@ void app_host_print_net() {
       (unsigned long)(avgUs % 1000 / 100), (unsigned long)(d.maxUs / 1000), (unsigned long)(d.maxUs % 1000 / 100),
       (unsigned long)is.ok, (unsigned long)is.failed, (unsigned long)is.refused, is.lastStatus,
       (unsigned)is.lastBytes, (unsigned long)is.lastMs, (unsigned long)is.lastHandshakeMs,
-      (unsigned long)h.imageTransport.reuses(), (unsigned long)h.imageTransport.reconnects(), kb(is.internalFreeInTlsMin),
+      (unsigned long)h.imageTransport.reuses(), (unsigned long)h.imageTransport.reconnects(), (unsigned long)h.imageTransport.heap_waits(),
+      (unsigned long)h.imageTransport.heap_refusals(), kb(is.internalFreeInTlsMin),
       (unsigned)h.imageTransport.worker_stack_free_bytes());
 #endif
 }

@@ -66,6 +66,12 @@ class EspHttpTransport : public HttpTransport {
   static constexpr int kQueueLength = 8;
   static constexpr uint32_t kWorkerStackBytes = 8192;
   static constexpr int64_t kIdleCloseMs = 15000;
+  // Heap guard default for the images transport: a new connection (TCP + TLS
+  // handshake, about 25 KB of internal RAM while it runs) is opened only with
+  // at least this much internal RAM free; otherwise the worker waits in
+  // kHeapGuardStepMs steps, within the request's total deadline.
+  static constexpr size_t kImagesMinInternalFree = 80u * 1024u;
+  static constexpr int kHeapGuardStepMs = 50;
 
   struct Stats {
     uint32_t ok = 0;           // answered with any HTTP status
@@ -97,6 +103,12 @@ class EspHttpTransport : public HttpTransport {
   EspHttpTransport(const EspHttpTransport&) = delete;
   EspHttpTransport& operator=(const EspHttpTransport&) = delete;
 
+  // Heap guard (0, the default, turns it off): before opening a NEW
+  // connection (never before reusing a kept one) wait until internal RAM free
+  // is at least `bytes`, or fail the request ("low internal RAM") at its
+  // deadline. Call before start().
+  void set_min_internal_free(size_t bytes) { minInternalFree_ = bytes; }
+
   // Creates the queues and the worker (core 0). False (and logged) when out of
   // memory: every request is then refused.
   bool start();
@@ -118,6 +130,10 @@ class EspHttpTransport : public HttpTransport {
   // (the request then went out again on a fresh one). Worker counters.
   uint32_t reuses() const { return reuses_.load(); }
   uint32_t reconnects() const { return reconnects_.load(); }
+  // Heap guard: requests that had to wait for internal RAM, and those that
+  // failed because it never came back in time.
+  uint32_t heap_waits() const { return heapWaits_.load(); }
+  uint32_t heap_refusals() const { return heapRefusals_.load(); }
 
  private:
   struct Job;
@@ -156,7 +172,8 @@ class EspHttpTransport : public HttpTransport {
   esp_http_client_handle_t conn_ = nullptr;
   std::string connOrigin_;
   int64_t connLastMs_ = 0;
-  std::atomic<uint32_t> reuses_{0}, reconnects_{0};
+  std::atomic<uint32_t> reuses_{0}, reconnects_{0}, heapWaits_{0}, heapRefusals_{0};
+  size_t minInternalFree_ = 0;
 };
 
 // Sends mbedTLS's allocations (TLS record buffers, handshake and certificate

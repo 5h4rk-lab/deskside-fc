@@ -17,6 +17,9 @@
 //   second EspHttpTransport ("images", 512 KB cap, one kept connection), decoded
 //   by LvglImageDecoder on the LVGL task, at most one picture per host-loop
 //   tick. While the network or the clock is not ready, picture requests wait.
+//   A new picture connection is opened only with at least 80 KB of internal
+//   RAM free (EspHttpTransport::kImagesMinInternalFree; it waits within the
+//   request's deadline otherwise).
 // - Demo data (`app_demo`, -DAPP_DEMO_DATA=1): the simulator's MockSource
 //   filled by demo_load() and a fixed demo clock; no network use besides Wi-Fi.
 #pragma once
