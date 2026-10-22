@@ -1,12 +1,15 @@
-// Soccer display firmware: boots the board, starts the shared UI with demo data
-// and the persistent settings, and prints a compact status and memory report on
-// the serial console.
+// Soccer display firmware: boots the board, starts the shared UI with live data
+// from the helper (HTTPS, after Wi-Fi and the SNTP clock; the `app_demo` env
+// runs the demo data instead) and the persistent settings, and prints a compact
+// status and memory report on the serial console.
 //
 // Serial commands. One-letter commands act at once, no Enter needed
 // (echo -n g > /dev/ttyACM0); none of them erases or restarts anything:
-//   g        the favourite scores in its live demo match (goal celebration)
-//   w        the live demo match ends with the favourite ahead (win)
-//   d        reload the demo data (after a win the live match is gone)
+//   g        goal celebration: demo build, the favourite scores in its live demo match;
+//            live build, a test celebration for the favourite (the data is not touched)
+//   w        full-time win: demo build, the live demo match ends with the favourite
+//            ahead; live build, a test full-time celebration
+//   d        demo build: reload the demo data; live build: fetch everything now
 //   s0 s1 s2 show the Live, Matches or News tab
 //   t        make the next team of the list the favourite (saved; shows persistence)
 //   p        print the settings in use
@@ -20,7 +23,17 @@
 //   :wipe-wifi       forget every saved network and restart (first-run Wi-Fi setup shows again)
 //   :erase-settings  erase the saved settings (not the Wi-Fi networks) and restart
 //   :restart         restart the board
+//   :set-url <url>   save the helper's address (https only, at most 200 characters);
+//                    used from the next restart
+//   :set-token <t>   save the helper's token (16 to 128 printable characters, no spaces);
+//                    never echoed; used from the next restart
+//   :show-config     the helper's address and the first 4 characters of its token
+//   :net             one line about the data path (also in the 5 s status)
 //   :help            list the commands
+// The helper's address and token come from NVS (namespace "helper", keys helper.url and
+// helper.token, written by :set-url / :set-token, see tools/provision-helper.sh), else
+// from the optional build defaults HELPER_URL / HELPER_TOKEN (secrets.ini). A value that
+// fails the checks of ui/src/helper_config.h is never used: then no request goes out.
 // Only in the diagnostics builds (pio run -e app_diag, also app_debug; -DAPP_DIAG), never in the
 // release `app` env, because they can inject a touch:
 //   h j n    scripted swipe left / right / list scroll, b0..b2 tap a tab button, =xxxyyy tap at x,y
@@ -31,6 +44,10 @@
 //   S        scan and print the networks in range (SSID, signal, open/secured)
 //   W        join the most recently saved network with a deliberately wrong throw-away key (failure path)
 //   Z        join a network that does not exist (the 15 s timeout path)
+//   :diag-clock-break    stop SNTP and set the clock to 2023-06-01 (not valid): polling pauses
+//   :diag-clock-restore  start SNTP again
+//   :diag-burst          100 matches requests in a row, heap every 10 (leak check)
+//   :diag-offline        toggle: refuse every request as if the router were off (stale marker test)
 // The commands are read here (the Arduino loop task) and handed to the LVGL
 // task through a queue (the settings erase and the NVS self-test too), so the
 // console never slows the screen and nothing but the LVGL task touches the UI
@@ -52,10 +69,26 @@
 #include <string>
 #include <vector>
 
+#include "helper_config.h"
+#include "platform/esp_http_transport.h"
 #include "platform/esp_wifi_service.h"
 #include "platform/nvs_prefs.h"
+#include "platform/time_sync.h"
 #include "serial_commands.h"
 #include "version.h"
+
+// Optional build defaults (secrets.ini); the device normally gets them over the
+// serial console into NVS instead (tools/provision-helper.sh).
+#ifndef HELPER_URL
+#define HELPER_URL ""
+#endif
+#ifndef HELPER_TOKEN
+#define HELPER_TOKEN ""
+#endif
+// Measurement only: 1 keeps mbedTLS in internal RAM (the IDF default).
+#ifndef APP_TLS_INTERNAL
+#define APP_TLS_INTERNAL 0
+#endif
 
 // The app is built inside setup(); give the Arduino loop task room for it.
 SET_LOOP_TASK_STACK_SIZE(12 * 1024);  // measured use about 6.4 KB (Task 4)
@@ -113,7 +146,10 @@ bool s_fast = false;            // [perf] line every second
 uint32_t s_loopLagMaxMs = 0;    // worst overshoot of the loop's own 20 ms step since the last report
 bool s_appOk = false;
 NvsPrefs* s_prefs = nullptr;
+NvsPrefs* s_helperPrefs = nullptr;  // namespace "helper": helper.url, helper.token
 EspWifiService* s_wifi = nullptr;
+std::string s_urlInUse;             // the helper address the app runs with ("" when none)
+bool s_helperInUse = false;
 
 void printMemory() {
   lv_mem_monitor_t mon = {};
@@ -166,7 +202,10 @@ void printStatus(uint32_t elapsedMs, bool fast) {
       (unsigned long)s.displayErrors,
       (unsigned long)s_loopLagMaxMs);
   s_loopLagMaxMs = 0;
-  if (!fast) printMemory();
+  if (!fast) {
+    printMemory();
+    app_host_post_call(app_host_print_net);
+  }
 }
 
 // ---- NVS self-test --------------------------------------------------------------------
@@ -271,6 +310,96 @@ void wifiDiagTimeout() {
   if (s_wifi) s_wifi->diag_timeout_test();
 }
 #endif
+
+// ---- helper address and token ------------------------------------------------------
+
+constexpr const char* kUrlKey = "helper.url";
+constexpr const char* kTokenKey = "helper.token";
+
+// Reads one value: NVS first, else the build default. `from` says which.
+std::string readHelperValue(const char* key, const char* buildDefault, const char*& from) {
+  std::string v;
+  if (s_helperPrefs && s_helperPrefs->get(key, v)) {
+    from = "saved";
+    return v;
+  }
+  v = buildDefault;
+  from = v.empty() ? "none" : "build default";
+  return v;
+}
+
+void wipeString(std::string& s) {
+  if (!s.empty()) memset(&s[0], 0, s.size());
+  s.clear();
+}
+
+HelperConfig loadHelperConfig() {
+  HelperConfig c;
+  const char* urlFrom = "";
+  const char* tokenFrom = "";
+  c.url = readHelperValue(kUrlKey, HELPER_URL, urlFrom);
+  c.token = readHelperValue(kTokenKey, HELPER_TOKEN, tokenFrom);
+  const bool urlOk = valid_helper_url(c.url);
+  const bool tokenOk = valid_token(c.token);
+  c.valid = urlOk && tokenOk;
+  // The URL is not a secret; of the token only whether it is usable.
+  Serial.printf("[helper] url %s (%s, %s), token %s (%s): %s\n", urlOk ? c.url.c_str() : "-", urlFrom,
+                urlOk ? "ok" : (c.url.empty() ? "missing" : "INVALID"), tokenOk ? "ok" : (c.token.empty() ? "missing" : "INVALID"),
+                tokenFrom, c.valid ? "live data on" : "no requests will be made (:set-url / :set-token, then :restart)");
+  if (!c.valid) {
+    c.url.clear();
+    wipeString(c.token);
+  }
+  return c;
+}
+
+// :set-url / :set-token / :show-config run in the loop task (their own NVS
+// namespace; the NVS API is thread-safe). Values are never echoed: the URL is
+// printed only after it passed the checks, the token never.
+void setHelperUrl(const std::string& value) {
+  if (!valid_helper_url(value)) {
+    Serial.printf("[cmd] URL refused: it must start with https://, name a host, have no user, query, spaces or control characters, and be at most %u characters\n",
+                  (unsigned)kHelperUrlMaxLen);
+    return;
+  }
+  if (!s_helperPrefs) return;
+  s_helperPrefs->set(kUrlKey, value);
+  std::string check;
+  const bool ok = s_helperPrefs->get(kUrlKey, check) && check == value;
+  Serial.printf("[cmd] helper URL %s: %s%s\n", ok ? "saved" : "NOT saved", value.c_str(),
+                ok ? " (used after :restart)" : "");
+}
+
+void setHelperToken(std::string& value) {
+  if (!valid_token(value)) {
+    Serial.printf("[cmd] token refused: it must be %u to %u printable characters without spaces (nothing saved)\n",
+                  (unsigned)kTokenMinLen, (unsigned)kTokenMaxLen);
+    wipeString(value);
+    return;
+  }
+  if (!s_helperPrefs) return;
+  s_helperPrefs->set(kTokenKey, value);
+  std::string check;
+  const bool ok = s_helperPrefs->get(kTokenKey, check) && check == value;
+  const size_t n = value.size();
+  wipeString(check);
+  wipeString(value);
+  Serial.printf("[cmd] helper token %s (%u characters)%s\n", ok ? "saved" : "NOT saved", (unsigned)n,
+                ok ? " (used after :restart)" : "");
+}
+
+void showHelperConfig() {
+  const char* urlFrom = "";
+  const char* tokenFrom = "";
+  std::string url = readHelperValue(kUrlKey, HELPER_URL, urlFrom);
+  std::string token = readHelperValue(kTokenKey, HELPER_TOKEN, tokenFrom);
+  const bool urlOk = valid_helper_url(url);
+  Serial.printf("[cmd] helper url %s (%s%s), token %s (%s) | in use since start: %s\n",
+                urlOk ? url.c_str() : (url.empty() ? "(none)" : "(invalid)"), urlFrom, urlOk || url.empty() ? "" : ", not used",
+                masked_token(token).c_str(), tokenFrom,
+                s_helperInUse ? s_urlInUse.c_str() : "nothing (no requests)");
+  wipeString(token);
+}
 
 // ---- serial commands ---------------------------------------------------------------
 
@@ -419,21 +548,52 @@ void restartNow() {
   esp_restart();
 }
 
-void handleSerialItem(const SerialCommandSplitter::Item& it) {
+void handleSerialItem(SerialCommandSplitter::Item& it) {
   if (!it.isWord) {
     handleSerialByte(static_cast<unsigned char>(it.byte));
-  } else if (it.word == "wifi") {
+    return;
+  }
+  std::string name;
+  std::string value;
+  split_word(it.word, name, value);
+  wipeString(it.word);  // may hold a token
+  if (name == "set-token") {
+    setHelperToken(value);
+  } else if (name == "set-url") {
+    setHelperUrl(value);
+  } else if (!value.empty()) {
+    // Only the settings words take a value; never print it (it may be a secret).
+    Serial.printf("[cmd] ':%s' takes no value (:help lists the commands)\n", name.c_str());
+  } else if (name == "show-config") {
+    showHelperConfig();
+  } else if (name == "net") {
+    app_host_post_call(app_host_print_net);
+#if APP_DIAG
+  } else if (name == "diag-clock-break") {
+    time_sync_diag_break();
+  } else if (name == "diag-clock-restore") {
+    time_sync_diag_restore();
+#if !APP_DEMO_DATA
+  } else if (name == "diag-burst") {
+    app_host_post_call([] { app_host_diag_burst(100); });
+  } else if (name == "diag-offline") {
+    app_host_post_call(app_host_diag_offline_toggle);
+#endif
+#endif
+  } else if (name == "wifi") {
     app_host_post_call(wifiPrintState);
-  } else if (it.word == "wipe-wifi") {
+  } else if (name == "wipe-wifi") {
     app_host_post_call(wifiWipeAndRestart);
-  } else if (it.word == "erase-settings") {
+  } else if (name == "erase-settings") {
     app_host_post_call(eraseSettingsAndRestart);  // runs in the LVGL task, like the settings writes
-  } else if (it.word == "restart") {
+  } else if (name == "restart") {
     restartNow();
-  } else if (it.word == "help") {
-    Serial.println("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): :wifi :wipe-wifi :erase-settings :restart :help");
+  } else if (name == "help") {
+    Serial.println("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): :wifi :wipe-wifi :erase-settings :restart "
+                   ":set-url <url> :set-token <token> :show-config :net :help");
   } else {
-    Serial.printf("[cmd] unknown command ':%s' (:help lists them)\n", it.word.c_str());
+    // The name only (never a value), cut short: it may be a mistyped secret.
+    Serial.printf("[cmd] unknown command ':%.24s' (:help lists them)\n", name.c_str());
   }
 }
 
@@ -441,7 +601,7 @@ void pollSerial() {
   std::vector<SerialCommandSplitter::Item> items;
   while (Serial.available() > 0) s_splitter.feed(static_cast<char>(Serial.read()), millis(), items);
   s_splitter.poll(millis());
-  for (const SerialCommandSplitter::Item& it : items) handleSerialItem(it);
+  for (SerialCommandSplitter::Item& it : items) handleSerialItem(it);
 }
 
 }  // namespace
@@ -474,6 +634,13 @@ void setup() {
   // Settings first: a broken NVS must never keep the screen from starting.
   static NvsPrefs prefs;
   s_prefs = &prefs;
+  static NvsPrefs helperPrefs("helper");
+  s_helperPrefs = &helperPrefs;
+  // mbedTLS (HTTPS, and the Wi-Fi supplicant's crypto) allocates in PSRAM from
+  // here on: internal RAM is too short for TLS record buffers next to Wi-Fi.
+#if !APP_TLS_INTERNAL
+  tls_use_psram();
+#endif
   // The saved Wi-Fi list must be known before the UI is built (it opens the
   // first-run setup when the list is empty). The radio starts after the first frame.
   static EspWifiService wifi;
@@ -488,7 +655,13 @@ void setup() {
     Serial.println("[main] FATAL: cannot take the LVGL lock to build the UI");
     for (;;) delay(2000);
   }
-  s_appOk = app_host_start(prefs, backlight, wifi);
+  {
+    HelperConfig helper = loadHelperConfig();
+    s_helperInUse = helper.valid;
+    s_urlInUse = helper.url;
+    s_appOk = app_host_start(prefs, backlight, wifi, helper);
+    wipeString(helper.token);
+  }
   lvgl_unlock();
   if (!s_appOk) Serial.println("[main] the UI did not start (see above); the screen stays dark");
 
@@ -511,7 +684,7 @@ void setup() {
   if (s_appOk && !wifi.start()) Serial.println("[main] the Wi-Fi service did not start (see above)");
   Serial.printf(
       "[boot] first frame after %lu ms (%lu ms of it waiting for a serial monitor); frames %lu, %lu blocks, %lu us "
-      "flush, backlight %u%%; demo epoch %lld\n",
+      "flush, backlight %u%%; epoch %lld (0: clock not set yet)\n",
       (unsigned long)s_firstFrameMs, (unsigned long)s_serialWaitedMs, (unsigned long)first.frames,
       (unsigned long)first.flushes, (unsigned long)first.flushUs, (unsigned)backlight.percent(),
       (long long)app_host_epoch());

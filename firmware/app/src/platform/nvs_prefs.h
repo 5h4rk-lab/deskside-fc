@@ -1,5 +1,7 @@
-// Prefs over the ESP-IDF NVS API (namespace "app", partition "nvs" of
-// partitions.csv, which a USB upload never wipes).
+// Prefs over the ESP-IDF NVS API (namespace "app" by default, partition "nvs"
+// of partitions.csv, which a USB upload never wipes). The helper's URL and
+// token live in their own namespace "helper", so erasing the settings
+// (clear()) leaves them alone.
 //
 // - Keys: 1 to 15 characters of [a-z0-9._] (prefs_key_valid, ui/src/prefs.h);
 //   set() and remove() reject (and log) any other key, get() answers false.
@@ -23,8 +25,9 @@
 class NvsPrefs : public Prefs {
  public:
   // Initialises the NVS partition (erasing and re-initialising it when it is
-  // full or written by a newer NVS version, logged) and opens namespace "app".
-  NvsPrefs();
+  // full or written by a newer NVS version, logged) and opens `ns` (at most 15
+  // characters, a string literal: it is kept by pointer).
+  explicit NvsPrefs(const char* ns = "app");
   ~NvsPrefs() override;
   NvsPrefs(const NvsPrefs&) = delete;
   NvsPrefs& operator=(const NvsPrefs&) = delete;
@@ -41,6 +44,7 @@ class NvsPrefs : public Prefs {
   bool persistent() const { return handle_ != 0; }
 
  private:
+  const char* ns_;
   nvs_handle_t handle_ = 0;
   MemoryPrefs fallback_;
 };

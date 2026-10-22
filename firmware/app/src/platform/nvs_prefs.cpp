@@ -6,14 +6,12 @@
 
 namespace {
 
-constexpr const char* kNamespace = "app";
-
 // One read buffer (value plus its terminating NUL) on the stack: no heap.
 constexpr size_t kBufBytes = kPrefsMaxValueLen + 1;
 
 }  // namespace
 
-NvsPrefs::NvsPrefs() {
+NvsPrefs::NvsPrefs(const char* ns) : ns_(ns) {
   esp_err_t err = nvs_flash_init();
   if (err == ESP_ERR_NVS_NO_FREE_PAGES || err == ESP_ERR_NVS_NEW_VERSION_FOUND) {
     Serial.printf("[nvs] %s: erasing the partition and starting empty\n", esp_err_to_name(err));
@@ -26,19 +24,19 @@ NvsPrefs::NvsPrefs() {
     return;
   }
   nvs_handle_t h = 0;
-  err = nvs_open(kNamespace, NVS_READWRITE, &h);
+  err = nvs_open(ns_, NVS_READWRITE, &h);
   if (err != ESP_OK) {
-    Serial.printf("[nvs] ERROR: cannot open namespace '%s': %s; settings will not be saved\n", kNamespace,
+    Serial.printf("[nvs] ERROR: cannot open namespace '%s': %s; settings will not be saved\n", ns_,
                   esp_err_to_name(err));
     return;
   }
   handle_ = h;
   nvs_stats_t stats;
   if (nvs_get_stats(nullptr, &stats) == ESP_OK) {
-    Serial.printf("[nvs] ok, namespace '%s': %u entries used, %u free of %u\n", kNamespace,
+    Serial.printf("[nvs] ok, namespace '%s': %u entries used, %u free of %u\n", ns_,
                   (unsigned)stats.used_entries, (unsigned)stats.free_entries, (unsigned)stats.total_entries);
   } else {
-    Serial.printf("[nvs] ok, namespace '%s'\n", kNamespace);
+    Serial.printf("[nvs] ok, namespace '%s'\n", ns_);
   }
 }
 
@@ -127,6 +125,6 @@ bool NvsPrefs::clear() {
     Serial.printf("[nvs] clear FAILED: %s\n", esp_err_to_name(err));
     return false;
   }
-  Serial.println("[nvs] all settings erased");
+  Serial.printf("[nvs] namespace '%s' erased\n", ns_);
   return true;
 }
