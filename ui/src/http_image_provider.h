@@ -13,7 +13,8 @@
 // - A cached image is answered at once. A miss for a path already queued or
 //   in flight just adds a waiter: all waiters get the same ImagePtr, each
 //   exactly once. Otherwise the request is queued: first in first out, at most
-//   kMaxConcurrent transport requests outstanding, at most kMaxQueued waiting
+//   kMaxConcurrent transport requests outstanding, at most `maxQueued`
+//   (default kMaxQueued) waiting
 //   (past that the oldest waiting request is answered with nullptr; it was
 //   never tried, so it is not remembered as failed).
 // - A 200 whose body decodes is cached (LRU by data_size) and answered. Any
@@ -68,6 +69,9 @@ class HttpImageProvider : public ImageProvider {
   // The firmware's bound (internal RAM is scarce there; each entry is a path
   // string plus a map node): passed as `maxNegative`.
   static constexpr size_t kDeviceMaxNegative = 64;
+  // The firmware's queue: one Matches list alone asks for more than 64
+  // distinct crests at once, and a dropped request leaves a placeholder.
+  static constexpr size_t kDeviceMaxQueued = 256;
   static constexpr int kTimeoutMs = 10000;
   static constexpr int64_t kLostMs = 30000;
   static constexpr int64_t kNegativeLongMs = 5 * 60 * 1000;  // 400, 404, decode failures
@@ -77,9 +81,10 @@ class HttpImageProvider : public ImageProvider {
   // `transport` and `decoder` must outlive the provider. A trailing '/' of
   // baseUrl is ignored. `maxNegative` bounds the remembered failures (at least
   // 1; when full, expired entries go first, then the one that expires first).
+  // `maxQueued` bounds the requests waiting to be sent (at least 1).
   HttpImageProvider(HttpTransport& transport, ImageDecoder& decoder, std::string baseUrl,
                     std::string token, size_t cacheBytes = kDefaultCacheBytes,
-                    size_t maxNegative = kMaxNegative);
+                    size_t maxNegative = kMaxNegative, size_t maxQueued = kMaxQueued);
   ~HttpImageProvider() override;
   HttpImageProvider(const HttpImageProvider&) = delete;
   HttpImageProvider& operator=(const HttpImageProvider&) = delete;
@@ -136,6 +141,7 @@ class HttpImageProvider : public ImageProvider {
   bool authRejected_ = false;
   bool online_ = true;
   size_t maxNegative_ = kMaxNegative;
+  size_t maxQueued_ = kMaxQueued;
   // Cleared on destruction, for answers delivered after it.
   std::shared_ptr<bool> alive_ = std::make_shared<bool>(true);
 };

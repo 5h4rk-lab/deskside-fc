@@ -776,3 +776,35 @@ TEST_CASE("http images: offline, the queue bound still answers the oldest waitin
   CHECK(rig.provider.pending() == HttpImageProvider::kMaxQueued);
   CHECK(rig.transport.requests.empty());
 }
+
+TEST_CASE("http images: the device queue holds 256 waiting requests (a whole Matches list of crests)") {
+  FakeTransport transport;
+  FakeDecoder decoder;
+  HttpImageProvider provider(transport, decoder, kBase, kToken, HttpImageProvider::kDefaultCacheBytes,
+                             HttpImageProvider::kDeviceMaxNegative, HttpImageProvider::kDeviceMaxQueued);
+  CHECK(HttpImageProvider::kDeviceMaxQueued == 256);
+  provider.tick(0);
+  // 2 in flight + 256 waiting: nobody is dropped.
+  std::vector<Got> got(2 + 256 + 1);
+  for (size_t i = 0; i + 1 < got.size(); ++i) provider.request(path_n(static_cast<int>(i)), got[i].cb());
+  for (size_t i = 0; i + 1 < got.size(); ++i) CHECK(got[i].calls == 0);
+  CHECK(provider.pending() == 258);
+  // One more: the oldest WAITING one (not one in flight) gives up.
+  provider.request(path_n(9999), got.back().cb());
+  CHECK(got[0].calls == 0);
+  CHECK(got[1].calls == 0);
+  CHECK(got[2].calls == 1);
+  CHECK(got[2].image == nullptr);
+  // All the others are fetched in order as answers come back.
+  int delivered = 0;
+  while (transport.pending() > 0) {
+    transport.deliver_at(0, 200, "OK");
+    ++delivered;
+  }
+  CHECK(delivered == 258);
+  for (size_t i = 0; i < got.size(); ++i) {
+    if (i == 2) continue;
+    CHECK(got[i].calls == 1);
+    CHECK(got[i].image != nullptr);
+  }
+}

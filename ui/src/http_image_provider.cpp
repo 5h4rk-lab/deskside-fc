@@ -28,9 +28,10 @@ bool url_safe(unsigned char c) {
 
 HttpImageProvider::HttpImageProvider(HttpTransport& transport, ImageDecoder& decoder,
                                      std::string baseUrl, std::string token, size_t cacheBytes,
-                                     size_t maxNegative)
+                                     size_t maxNegative, size_t maxQueued)
     : transport_(transport), decoder_(decoder), base_(std::move(baseUrl)), token_(std::move(token)),
-      cache_(cacheBytes), maxNegative_(maxNegative > 0 ? maxNegative : 1) {
+      cache_(cacheBytes), maxNegative_(maxNegative > 0 ? maxNegative : 1),
+      maxQueued_(maxQueued > 0 ? maxQueued : 1) {
   while (!base_.empty() && base_.back() == '/') base_.pop_back();
 }
 
@@ -100,7 +101,7 @@ void HttpImageProvider::request(const std::string& path, std::function<void(Imag
 
   // Too many waiting: the oldest ones give up (they were never attempted).
   std::vector<Waiters> dropped;
-  while (queue_.size() > kMaxQueued) {
+  while (queue_.size() > maxQueued_) {
     auto it = entries_.find(queue_.front());
     queue_.pop_front();
     if (it == entries_.end()) continue;
