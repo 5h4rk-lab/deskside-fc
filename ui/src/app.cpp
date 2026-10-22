@@ -16,6 +16,7 @@
 #include "screens/live.h"
 #include "screens/matches.h"
 #include "screens/news.h"
+#include "screens/power.h"
 #include "screens/settings.h"
 #include "screens/team_picker.h"
 #include "screens/wifi.h"
@@ -100,6 +101,14 @@ struct AppState {
   uint32_t lastTick = 0;
   int64_t monoMs = 0;
   lv_timer_t* fanfareTimer = nullptr;
+
+  // Power key: the screen off (and its touch shield), the hold hint and the
+  // Powering off view, all on lv_layer_sys().
+  bool screenOff = false;
+  lv_obj_t* shield = nullptr;
+  lv_obj_t* hint = nullptr;
+  lv_obj_t* hintBar = nullptr;
+  lv_obj_t* poweringOff = nullptr;
 
   // Cleared when the tab view is deleted, for callbacks that outlive it.
   std::shared_ptr<bool> alive = std::make_shared<bool>(true);
@@ -327,7 +336,9 @@ void drive_backlight(AppState* st, int64_t now) {
   if (st->backlight == nullptr || st->previewing) return;
   const Settings& s = st->settings;
   int percent = s.dayBrightness;
-  if (s.nightDim) {
+  if (st->screenOff) {
+    percent = 0;
+  } else if (s.nightDim) {
     const bool touched = lv_display_get_inactive_time(nullptr) < kTouchWakeMs;
     const int night = std::min(s.nightPercent, s.dayBrightness);
     const DimSchedule schedule(s.nightStartHour, s.nightEndHour, static_cast<uint8_t>(night),
@@ -344,6 +355,7 @@ void preview_brightness(AppState* st, int percent) {
   // In use at once (refreshes keep it), saved only when the finger lifts.
   st->settings.dayBrightness = percent;
   st->previewing = true;
+  if (st->screenOff) return;
   if (st->backlight == nullptr || percent == st->lastPercent) return;
   st->lastPercent = percent;
   st->backlight->set_percent(static_cast<uint8_t>(percent));
@@ -666,7 +678,46 @@ void on_app_delete(lv_event_t* e) {
   auto* st = static_cast<AppState*>(lv_event_get_user_data(e));
   *st->alive = false;
   cancel_fanfare(st);
+  // The power widgets live on lv_layer_sys(), outside the app.
+  for (lv_obj_t* o : {st->shield, st->hint, st->poweringOff}) {
+    if (o != nullptr) lv_obj_delete(o);
+  }
   delete st;
+}
+
+// ---------------------------------------------------------------- power key
+
+void set_screen_off(AppState* st, bool off);
+
+void on_shield_pressed(lv_event_t* e) {
+  auto* st = static_cast<AppState*>(lv_event_get_user_data(e));
+  set_screen_off(st, false);
+}
+
+void set_screen_off(AppState* st, bool off) {
+  if (off == st->screenOff) return;
+  st->screenOff = off;
+  if (off) {
+    st->shield = lv_obj_create(lv_layer_sys());
+    lv_obj_remove_style_all(st->shield);
+    lv_obj_set_pos(st->shield, 0, 0);
+    lv_obj_set_size(st->shield, LV_PCT(100), LV_PCT(100));
+    lv_obj_add_flag(st->shield, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_remove_flag(st->shield, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(st->shield, on_shield_pressed, LV_EVENT_PRESSED, st);
+  } else if (st->shield != nullptr) {
+    // Possibly from the shield's own event: hidden now, deleted next cycle.
+    // It keeps the rest of the touch (release, click), so nothing below sees it.
+    lv_obj_t* old = st->shield;
+    st->shield = nullptr;
+    lv_obj_remove_event_cb(old, on_shield_pressed);
+    lv_obj_add_flag(old, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_delete_async(old);
+  }
+  // The backlight follows at once (a drag preview ends: the finger is gone).
+  st->previewing = false;
+  st->lastPercent = -1;
+  drive_backlight(st, st->now);
 }
 
 // Picking a main tab leaves the detail and Settings.
@@ -1070,4 +1121,59 @@ lv_obj_t* app_battery_banner(lv_obj_t* appRoot) {
 void app_show_battery_banner(lv_obj_t* appRoot, const Alert& alert) {
   AppState* st = app_state(appRoot);
   if (st != nullptr) show_banner(st, alert);
+}
+
+void app_set_screen_off(lv_obj_t* appRoot, bool off) {
+  AppState* st = app_state(appRoot);
+  if (st != nullptr) set_screen_off(st, off);
+}
+
+bool app_screen_off(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr && st->screenOff;
+}
+
+lv_obj_t* app_screen_off_shield(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->shield : nullptr;
+}
+
+void app_show_power_hint(lv_obj_t* appRoot, bool show) {
+  AppState* st = app_state(appRoot);
+  if (st == nullptr || show == (st->hint != nullptr)) return;
+  if (show) {
+    st->hint = power_hint_create(lv_layer_sys(), &st->hintBar);
+  } else {
+    lv_obj_delete(st->hint);
+    st->hint = nullptr;
+    st->hintBar = nullptr;
+  }
+}
+
+lv_obj_t* app_power_hint(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->hint : nullptr;
+}
+
+lv_obj_t* app_power_hint_bar(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->hintBar : nullptr;
+}
+
+void app_show_powering_off(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  if (st == nullptr || st->poweringOff != nullptr) return;
+  app_show_power_hint(appRoot, false);
+  set_screen_off(st, false);
+  st->poweringOff = powering_off_create(lv_layer_sys());
+}
+
+lv_obj_t* app_powering_off_view(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->poweringOff : nullptr;
+}
+
+void app_save_settings(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  if (st != nullptr) save(st);
 }

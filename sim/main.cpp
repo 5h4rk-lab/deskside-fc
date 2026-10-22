@@ -43,6 +43,7 @@
 //                    networks (default; results arrive after a short delay)
 //   --wifi-saved none
 //                    start with no saved network: the guided setup opens
+//   --screen power-hint|powering-off  the power key's "Hold to power off" card, the "Powering off" screen
 //   --screen wifi|wifi-first|wifi-password|wifi-failed|wifi-connecting
 //                    the network list, the first-start setup, the password
 //                    page (a few characters typed), after a wrong password,
@@ -236,7 +237,7 @@ Options parse_args(int argc, char** argv) {
       o.screen = argv[++i];
       const char* const kScreens[] = {"live",     "live-last", "live-last-away", "matches",  "news",   "detail",
                                       "summary",  "pitch",    "stats",  "goal",
-                                      "goal-win", "settings", "settings-about", "settings-sound", "settings-battery", "zone",   "picker",
+                                      "goal-win", "settings", "settings-about", "settings-sound", "settings-battery", "power-hint", "powering-off", "zone",   "picker",
                                       "picker-search", "wifi", "wifi-first", "wifi-password",
                                       "wifi-failed", "wifi-connecting"};
       bool known = false;
@@ -800,6 +801,21 @@ int main(int argc, char** argv) {
       lv_obj_update_layout(lv_screen_active());
       if (sp != nullptr) lv_obj_scroll_to_y(sp->list, LV_COORD_MAX, LV_ANIM_OFF);
     }
+  } else if (opt.screen == "power-hint") {  // the power key held for about 2 s
+    app_refresh(app, start);
+    app_show_power_hint(app, true);
+    lv_obj_t* bar = app_power_hint_bar(app);
+    if (bar != nullptr) {
+      lv_anim_delete(bar, nullptr);
+      lv_bar_set_value(bar, 50, LV_ANIM_OFF);
+    }
+    // Snapshots take the active screen: show the card on it (on the device it
+    // sits on lv_layer_sys(), above everything).
+    if (!opt.snapshot.empty() && app_power_hint(app) != nullptr) {
+      lv_obj_set_parent(app_power_hint(app), lv_screen_active());
+    }
+  } else if (opt.screen == "powering-off") {
+    app_show_powering_off(app);
   } else if (opt.screen == "zone") {
     app_open_zones(app);
   } else if (opt.screen == "picker" || opt.screen == "picker-search") {
@@ -874,6 +890,9 @@ int main(int argc, char** argv) {
         lv_timer_handler();
       }
       if (const GoalParts* p = goal_parts()) target = p->overlay;
+    } else if (opt.screen == "powering-off" && app_powering_off_view(app) != nullptr) {
+      for (int i = 0; i < 10; ++i) lv_timer_handler();
+      target = app_powering_off_view(app);
     } else if (wifi_screen(opt.screen)) {
       // Fixed animation time: the spinner is always drawn at the same angle,
       // and the last typed character is already masked.

@@ -152,3 +152,28 @@ lv_obj_t* app_battery_banner(lv_obj_t* appRoot);
 // Shows the banner for `alert` now, replacing one that shows (screenshots
 // and tests; app_refresh() decides by itself otherwise).
 void app_show_battery_banner(lv_obj_t* appRoot, const Alert& alert);
+
+// --- Power key (the host runs PowerController: power_policy.h) -------------
+
+// Screen off (a short press of the power key): the backlight goes to 0 and
+// stays there through refreshes until app_set_screen_off(false) or a touch
+// anywhere (the waking touch is swallowed by a full-screen shield on
+// lv_layer_sys()). Turning it on gives the backlight back to the schedule.
+void app_set_screen_off(lv_obj_t* appRoot, bool off);
+bool app_screen_off(lv_obj_t* appRoot);
+// The touch shield while the screen is off, else nullptr (tests).
+lv_obj_t* app_screen_off_shield(lv_obj_t* appRoot);
+
+// The "Hold to power off" card (with its filling bar) above everything while
+// the key is held; showing it twice keeps one.
+void app_show_power_hint(lv_obj_t* appRoot, bool show);
+lv_obj_t* app_power_hint(lv_obj_t* appRoot);
+lv_obj_t* app_power_hint_bar(lv_obj_t* appRoot);
+
+// The full-screen "Powering off" view above everything (removes the hint and
+// lights a screen that was off). It stays until the app is deleted.
+void app_show_powering_off(lv_obj_t* appRoot);
+lv_obj_t* app_powering_off_view(lv_obj_t* appRoot);
+
+// Writes the settings in use to the prefs now (before the power is cut).
+void app_save_settings(lv_obj_t* appRoot);
