@@ -176,7 +176,6 @@ NvsPrefs* s_helperPrefs = nullptr;  // namespace "helper": helper.url, helper.to
 EspWifiService* s_wifi = nullptr;
 I2sSoundOut* s_speaker = nullptr;
 EspPowerService* s_power = nullptr;
-int s_calPpm = 0;  // a calibration on its way from the loop task to the LVGL task
 TaskHandle_t s_prepTask = nullptr;  // "snd_prep": deleted by the loop task once it has suspended itself
 std::string s_urlInUse;             // the helper address the app runs with ("" when none)
 bool s_helperInUse = false;
@@ -711,15 +710,16 @@ void calBatteryCommand(const std::string& value) {
                       "nothing saved\n", c.mv, factory);
         return;
       }
-      s_calPpm = *ppm;
       Serial.printf("[cmd] cal-battery: reading %d mV, multimeter %d mV -> scale %d ppm\n", factory, c.mv, *ppm);
-      app_host_post_call([] {
-        save_battery_cal(*s_prefs, s_calPpm);
-        const std::optional<int> back = load_battery_cal(*s_prefs);
-        s_power->set_calibration(back);
-        Serial.printf("[cmd] cal-battery: %s\n", back && *back == s_calPpm ? "saved (batt.cal), in use now"
-                                                                          : "NOT saved; the factory formula stays");
-      });
+      app_host_post_call_arg(
+          [](int value) {
+            save_battery_cal(*s_prefs, value);
+            const std::optional<int> back = load_battery_cal(*s_prefs);
+            s_power->set_calibration(back);
+            Serial.printf("[cmd] cal-battery: %s\n", back && *back == value ? "saved (batt.cal), in use now"
+                                                                           : "NOT saved; the factory formula stays");
+          },
+          *ppm);
       return;
     }
   }

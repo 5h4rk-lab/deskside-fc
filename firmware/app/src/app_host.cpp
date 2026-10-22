@@ -49,7 +49,8 @@ constexpr int kQueueLength = 8;
 struct Command {
   AppCommand what;
   int arg;
-  void (*fn)();  // AppCommand::Call only
+  void (*fn)();        // AppCommand::Call only
+  void (*fnArg)(int);  // AppCommand::CallArg only: called with arg
 };
 
 // The demo build and a device without a helper: every picture request is
@@ -109,8 +110,14 @@ class BoardPowerHost : public PowerHost {
     app_set_screen_off(app_, off);
     log(off ? "short press: screen off (a touch or the key wakes it)" : "short press: screen on");
   }
-  void screen_on() override {
-    if (app_ && app_screen_off(app_)) app_set_screen_off(app_, false);
+  bool screen_on() override {
+    if (!app_ || !app_screen_off(app_)) return false;
+    app_set_screen_off(app_, false);
+    return true;
+  }
+  void screen_off() override {
+    if (app_) app_set_screen_off(app_, true);
+    log("hold ended early: the screen it lit is off again");
   }
   void show_hold_hint(bool show) override {
     if (app_) app_show_power_hint(app_, show);
@@ -400,6 +407,13 @@ void playSoundCommand(int arg) {
 
 void runCommand(const Command& c) {
   Host& h = *s_host;
+  // Switching off or off: nothing may celebrate or make a sound any more.
+  if (h.powerKey.mode() != PowerController::Mode::On &&
+      (c.what == AppCommand::Goal || c.what == AppCommand::Win || c.what == AppCommand::Sound ||
+       c.what == AppCommand::ReloadDemo)) {
+    Serial.println("[cmd] ignored: the board is switching off or off");
+    return;
+  }
   switch (c.what) {
 #if APP_DEMO_DATA
     case AppCommand::Goal:
@@ -469,6 +483,9 @@ void runCommand(const Command& c) {
       break;
     case AppCommand::Call:
       if (c.fn) c.fn();
+      break;
+    case AppCommand::CallArg:
+      if (c.fnArg) c.fnArg(c.arg);
       break;
 #if APP_DIAG
     case AppCommand::Churn: {
@@ -632,7 +649,7 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, Es
 
 void app_host_post(AppCommand command, int arg) {
   if (!s_queue) return;
-  const Command c{command, arg, nullptr};
+  const Command c{command, arg, nullptr, nullptr};
   if (xQueueSend(s_queue, &c, 0) != pdTRUE) Serial.println("[cmd] queue full, command dropped");
 }
 
@@ -669,7 +686,13 @@ void app_host_diag_key(int ms) {
 
 void app_host_post_call(void (*fn)()) {
   if (!s_queue || !fn) return;
-  const Command c{AppCommand::Call, 0, fn};
+  const Command c{AppCommand::Call, 0, fn, nullptr};
+  if (xQueueSend(s_queue, &c, 0) != pdTRUE) Serial.println("[cmd] queue full, command dropped");
+}
+
+void app_host_post_call_arg(void (*fn)(int), int arg) {
+  if (!s_queue || !fn) return;
+  const Command c{AppCommand::CallArg, arg, nullptr, fn};
   if (xQueueSend(s_queue, &c, 0) != pdTRUE) Serial.println("[cmd] queue full, command dropped");
 }
 

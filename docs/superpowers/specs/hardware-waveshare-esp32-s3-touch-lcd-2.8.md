@@ -285,6 +285,8 @@ Power key and switch-off, exercised with the injected key (`:diag-key`, app_diag
 - 3500 ms: hint at +1.0 s; at +3.0 s speaker stopped, silent after 5 ms (limit 300), "Powering off" shown, 1.52 s later settings saved, Wi-Fi stopped (`esp_wifi_stop` ESP_OK), GPIO7 write SKIPPED (dry run), off state (backlight 0, no refresh, no network). An injected press 23 s later restarted the board, which rejoined Wi-Fi and had live data again ~10 s later.
 - `:diag-batt 3690` (model fed 3.69 V): 15 %, the low-battery banner showed; `:diag-batt off` back to the ADC.
 
+The "off state" on USB is dark, not low power (accepted ruling): the backlight is at 0, the radio is stopped and nothing is redrawn, but the CPU, PSRAM and the LVGL task keep running. The key is read every 10 ms tick; the controller is fed every 10 s, or at once when the key's level changes. A key press restarts the board. On battery the board is really off once GPIO7 is low and the key is up.
+
 UNTESTED on hardware (needs the user):
 
 - The real GPIO7 low (power-off) on battery, and that the board then really goes dark once the key is up.

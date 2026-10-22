@@ -106,6 +106,7 @@ struct AppState {
   // Powering off view, all on lv_layer_sys().
   bool screenOff = false;
   lv_obj_t* shield = nullptr;
+  bool shieldHeld = false;  // the waking touch is still down on the shield
   lv_obj_t* hint = nullptr;
   lv_obj_t* hintBar = nullptr;
   lv_obj_t* poweringOff = nullptr;
@@ -237,6 +238,7 @@ void on_overlay_delete(lv_event_t* e) {
       st->banner = nullptr;
     } else if (link->kind == OverlayKind::Shield && st->shield == obj) {
       st->shield = nullptr;
+      st->shieldHeld = false;
     } else if (link->kind == OverlayKind::Hint && st->hint == obj) {
       st->hint = nullptr;
       st->hintBar = nullptr;
@@ -700,15 +702,33 @@ void on_app_delete(lv_event_t* e) {
 
 void set_screen_off(AppState* st, bool off);
 
+void remove_shield(AppState* st) {
+  if (st->shield == nullptr) return;
+  lv_obj_t* old = st->shield;
+  st->shield = nullptr;
+  lv_obj_add_flag(old, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_delete_async(old);
+}
+
+// The waking touch: the screen comes on at once, but the shield stays (still
+// the indev's pressed object) until the finger lifts, so the rest of that
+// touch (release, click) ends on it and nothing underneath is pressed.
 void on_shield_pressed(lv_event_t* e) {
   auto* st = static_cast<AppState*>(lv_event_get_user_data(e));
+  st->shieldHeld = true;
   set_screen_off(st, false);
+}
+
+void on_shield_released(lv_event_t* e) {
+  auto* st = static_cast<AppState*>(lv_event_get_user_data(e));
+  st->shieldHeld = false;
+  if (!st->screenOff) remove_shield(st);
 }
 
 void set_screen_off(AppState* st, bool off) {
   if (off == st->screenOff) return;
   st->screenOff = off;
-  if (off) {
+  if (off && st->shield == nullptr) {
     st->shield = lv_obj_create(lv_layer_sys());
     lv_obj_remove_style_all(st->shield);
     lv_obj_set_pos(st->shield, 0, 0);
@@ -716,16 +736,16 @@ void set_screen_off(AppState* st, bool off) {
     lv_obj_add_flag(st->shield, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(st->shield, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(st->shield, on_shield_pressed, LV_EVENT_PRESSED, st);
+    lv_obj_add_event_cb(st->shield, on_shield_released, LV_EVENT_RELEASED, st);
+    lv_obj_add_event_cb(st->shield, on_shield_released, LV_EVENT_PRESS_LOST, st);
     // lv_layer_sys() may go first (lv_deinit): forget it then.
     lv_obj_add_event_cb(st->shield, on_overlay_delete, LV_EVENT_DELETE,
                         new OverlayLink{st, st->alive, OverlayKind::Shield});
-  } else if (st->shield != nullptr) {
-    // Possibly from the shield's own event: hidden now, deleted next cycle.
-    // It keeps the rest of the touch (release, click), so nothing below sees it.
-    lv_obj_t* old = st->shield;
-    st->shield = nullptr;
-    lv_obj_add_flag(old, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_delete_async(old);
+    // An invisible object invalidates nothing, so no refresh would lay it out:
+    // give it its area now, or the first touch would miss it.
+    lv_obj_update_layout(st->shield);
+  } else if (!off && !st->shieldHeld) {
+    remove_shield(st);
   }
   // The backlight follows at once (a drag preview ends: the finger is gone).
   st->previewing = false;
@@ -1100,6 +1120,9 @@ void app_matches_changed(lv_obj_t* appRoot, int64_t now) {
       st->detector.update(st->store->matches(), st->store->favourite());
   if (!event) return;
   if (event->favourite) {
+    // The favourite's goal or win is meant to be seen: a screen turned off
+    // with the power key comes back on (at the level the schedule wants).
+    set_screen_off(st, false);
     goal_celebrate(*event, *st->images);
     st->awaitingScorer = *event;
     // Same guard as the celebration: the favourite's goal (or win), never a
@@ -1177,6 +1200,10 @@ lv_obj_t* app_power_hint_bar(lv_obj_t* appRoot) {
 void app_show_powering_off(lv_obj_t* appRoot) {
   AppState* st = app_state(appRoot);
   if (st == nullptr || st->poweringOff != nullptr) return;
+  // Nothing may start or go on playing: no fanfare waiting, no celebration.
+  cancel_fanfare(st);
+  st->awaitingScorer.reset();
+  goal_dismiss();
   app_show_power_hint(appRoot, false);
   set_screen_off(st, false);
   st->poweringOff = powering_off_create(lv_layer_sys());

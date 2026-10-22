@@ -108,27 +108,114 @@ TEST_CASE("screen off: the backlight goes to 0 and stays there through refreshes
   CHECK(h.backlight.last() == 0);
 }
 
-TEST_CASE("screen off: a touch anywhere wakes it and is swallowed") {
+namespace {
+
+// A virtual finger: a pointer input device read by LVGL's own indev timer.
+struct Finger {
+  static Finger*& current() {
+    static Finger* f = nullptr;
+    return f;
+  }
+  lv_indev_t* indev = nullptr;
+  int32_t x = 0, y = 0;
+  bool down = false;
+  Finger() {
+    current() = this;
+    indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, [](lv_indev_t*, lv_indev_data_t* d) {
+      Finger* f = current();
+      d->point.x = f->x;
+      d->point.y = f->y;
+      d->state = f->down ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    });
+  }
+  ~Finger() { current() = nullptr; }
+  // Down for `cycles` indev periods at (x, y), then up for a few more.
+  void tap(int32_t px, int32_t py, int cycles = 6) {
+    x = px;
+    y = py;
+    down = true;
+    for (int i = 0; i < cycles; ++i) test_advance(LV_DEF_REFR_PERIOD + 5);
+    down = false;
+    for (int i = 0; i < 4; ++i) test_advance(LV_DEF_REFR_PERIOD + 5);
+  }
+};
+
+struct Counter {
+  int pressed = 0, clicked = 0, released = 0;
+};
+
+void count_event(lv_event_t* e) {
+  auto* c = static_cast<Counter*>(lv_event_get_user_data(e));
+  switch (lv_event_get_code(e)) {
+    case LV_EVENT_PRESSED: ++c->pressed; break;
+    case LV_EVENT_CLICKED: ++c->clicked; break;
+    case LV_EVENT_RELEASED: ++c->released; break;
+    default: break;
+  }
+}
+
+}  // namespace
+
+TEST_CASE("screen off: the waking touch (a real pointer, held, then lifted) never reaches the button below") {
   AppHost h;
   h.refresh();
+  Finger finger;
+  // A button over everything on the screen, where the finger lands.
+  lv_obj_t* button = lv_button_create(lv_screen_active());
+  lv_obj_set_size(button, 100, 60);
+  lv_obj_set_pos(button, 70, 130);
+  Counter c;
+  lv_obj_add_event_cb(button, count_event, LV_EVENT_ALL, &c);
+  test_advance(40);
+
   app_set_screen_off(h.app, true);
-  lv_obj_t* shield = app_screen_off_shield(h.app);
-  REQUIRE(shield != nullptr);
-  CHECK(lv_obj_get_parent(shield) == lv_layer_sys());
-  CHECK(lv_obj_has_flag(shield, LV_OBJ_FLAG_CLICKABLE));
-  lv_obj_update_layout(lv_layer_sys());
-  const lv_area_t a = coords(shield);
-  CHECK(a.x1 == 0);
-  CHECK(a.y1 == 0);
-  CHECK(a.x2 == 239);
-  CHECK(a.y2 == 319);
-  lv_obj_send_event(shield, LV_EVENT_PRESSED, nullptr);
+  REQUIRE(app_screen_off_shield(h.app) != nullptr);
+  CHECK(lv_obj_get_parent(app_screen_off_shield(h.app)) == lv_layer_sys());
+  finger.x = 120;
+  finger.y = 160;
+  finger.down = true;
+  for (int i = 0; i < 6; ++i) test_advance(LV_DEF_REFR_PERIOD + 5);
+  // Lit at the touch, while the finger is still down.
   CHECK_FALSE(app_screen_off(h.app));
   CHECK(h.backlight.last() == 100);
+  CHECK(c.pressed == 0);
+  finger.down = false;
+  for (int i = 0; i < 4; ++i) test_advance(LV_DEF_REFR_PERIOD + 5);
+  CHECK(c.pressed == 0);
+  CHECK(c.released == 0);
+  CHECK(c.clicked == 0);
   CHECK(app_screen_off_shield(h.app) == nullptr);
-  test_advance(20);  // the shield is deleted on the next cycle
-  h.refresh(kNoon + 1);
-  CHECK(h.backlight.last() == 100);
+  CHECK(lv_obj_get_child_count(lv_layer_sys()) == 0);
+
+  // The next tap is an ordinary tap.
+  finger.tap(120, 160);
+  CHECK(c.pressed == 1);
+  CHECK(c.clicked == 1);
+  CHECK_FALSE(app_screen_off(h.app));
+}
+
+TEST_CASE("screen off: the key turning it off and on during a held touch keeps one shield") {
+  AppHost h;
+  h.refresh();
+  Finger finger;
+  app_set_screen_off(h.app, true);
+  finger.x = 50;
+  finger.y = 50;
+  finger.down = true;
+  for (int i = 0; i < 3; ++i) test_advance(LV_DEF_REFR_PERIOD + 5);
+  CHECK_FALSE(app_screen_off(h.app));
+  app_set_screen_off(h.app, true);  // the key, finger still down
+  CHECK(h.backlight.last() == 0);
+  CHECK(lv_obj_get_child_count(lv_layer_sys()) == 1);
+  finger.down = false;
+  for (int i = 0; i < 4; ++i) test_advance(LV_DEF_REFR_PERIOD + 5);
+  CHECK(app_screen_off(h.app));  // still off: the shield stays for the next touch
+  REQUIRE(app_screen_off_shield(h.app) != nullptr);
+  finger.tap(50, 50);
+  CHECK_FALSE(app_screen_off(h.app));
+  CHECK(app_screen_off_shield(h.app) == nullptr);
 }
 
 TEST_CASE("screen off: the key turns it back on to the level the schedule wants") {

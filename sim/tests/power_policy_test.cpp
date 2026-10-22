@@ -268,8 +268,21 @@ struct FakeHost : PowerHost {
     calls.push_back(s);
     times.push_back(now);
   }
-  void toggle_screen() override { log("toggle_screen"); }
-  void screen_on() override { log("screen_on"); }
+  bool dark = false;  // the screen, as the host would have it
+  void toggle_screen() override {
+    log("toggle_screen");
+    dark = !dark;
+  }
+  bool screen_on() override {
+    log("screen_on");
+    const bool was = dark;
+    dark = false;
+    return was;
+  }
+  void screen_off() override {
+    log("screen_off");
+    dark = true;
+  }
   void show_hold_hint(bool show) override { log(show ? "hint_on" : "hint_off"); }
   void stop_sound() override { log("stop_sound"); }
   void wait_sound_idle(uint32_t ms) override { log("wait_sound_idle(" + std::to_string(ms) + ")"); }
@@ -429,4 +442,23 @@ TEST_CASE("controller: the boot window and the hold-at-boot rule apply to the co
   r.run(Pattern{{{0, kBoot + 8000}}}, kBoot, kBoot + 12000);
   CHECK(r.host.calls.empty());
   CHECK(r.c.mode() == PowerController::Mode::On);
+}
+
+TEST_CASE("controller: a hold that lit a dark screen leaves it dark again when it ends before 3 s") {
+  Rig r;
+  r.run(Pattern{{{kStart, kStart + 200}, {kStart + 1000, kStart + 2500}}}, kBoot, kStart + 4000);
+  CHECK(r.host.calls ==
+        std::vector<std::string>{"toggle_screen", "screen_on", "hint_on", "hint_off", "screen_off"});
+  CHECK(r.host.dark);
+}
+
+TEST_CASE("controller: a hold on a lit screen leaves it lit; a long press from a dark screen does not darken it") {
+  Rig r;
+  r.run(Pattern{{{kStart, kStart + 2000}}}, kBoot, kStart + 3000);
+  CHECK(r.host.count("screen_off") == 0);
+  CHECK_FALSE(r.host.dark);
+  Rig d;
+  d.run(Pattern{{{kStart, kStart + 200}, {kStart + 1000, kStart + 4500}}}, kBoot, kStart + 7000);
+  CHECK(d.host.count("screen_off") == 0);
+  CHECK(d.host.count("show_powering_off") == 1);
 }

@@ -51,6 +51,7 @@ enum class AppCommand : uint8_t {
   Sound,       // play a sound at the saved volume, ignoring the sound settings and the
                // gate (the serial :sound command): arg = kSoundArg* (see below)
   Call,        // run a function in the LVGL task (see app_host_post_call)
+  CallArg,     // run a function with an int argument in the LVGL task (app_host_post_call_arg)
 #if APP_DIAG
   // Measurement commands, only in the diagnostics builds (env app_diag, app_debug).
   Hide,        // toggle one part of the showing goal celebration (0 rays, 1 confetti,
@@ -108,6 +109,10 @@ void app_host_print_power();
 // the LVGL task owns, such as the settings in flash). Same queue and the same
 // drop rule as app_host_post.
 void app_host_post_call(void (*fn)());
+
+// Queues `fn(arg)` to run in the LVGL task: the value travels with the
+// command, so two quick commands each run with their own.
+void app_host_post_call_arg(void (*fn)(int), int arg);
 
 // Queues a command for the LVGL task. Safe from any task; drops it (and says
 // so) when the queue is full.

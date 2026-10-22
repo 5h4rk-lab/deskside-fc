@@ -71,7 +71,14 @@ MatchSummary live_match(int home, int away, MatchState state = MatchState::Live)
   return m;
 }
 
+class FakeBacklight : public Backlight {
+ public:
+  void set_percent(uint8_t p) override { last = p; }
+  int last = -1;
+};
+
 struct Fixture {
+  FakeBacklight backlight;
   Store store;
   NullImages images;
   MockSource source;
@@ -103,6 +110,7 @@ struct Fixture {
     deps.wifi = w;
     deps.power = withPower ? &power : nullptr;
     deps.sound = withSound_ ? &sound : nullptr;
+    deps.backlight = &backlight;
     app = app_create(lv_screen_active(), deps);
     app_refresh(app, now);
     test_advance(20);
@@ -481,4 +489,55 @@ TEST_CASE("sound: after Settings changes the mode, a restart keeps it") {
   lv_obj_send_event(p->soundRows[0], LV_EVENT_CLICKED, nullptr);  // Off
   const Settings reloaded = load_settings(f.prefs);
   CHECK(reloaded.soundMode == SoundMode::Off);
+}
+
+// ------------------------------------------------------------ the power key
+
+TEST_CASE("power: a favourite goal lights a screen turned off with the key; other goals do not") {
+  Fixture f;
+  f.poll(live_match(1, 0));
+  app_set_screen_off(f.app, true);
+  CHECK(f.backlight.last == 0);
+  f.poll(live_match(1, 1));  // the opponent scores
+  CHECK(app_screen_off(f.app));
+  CHECK(f.backlight.last == 0);
+  f.store.set_favourite("999");  // somebody else's match
+  f.poll(live_match(2, 1));
+  f.poll(live_match(3, 1));
+  CHECK(app_screen_off(f.app));
+  f.store.set_favourite("359");
+  f.poll(live_match(3, 1));  // baseline again after the switch
+  f.poll(live_match(4, 1));  // the favourite scores
+  CHECK_FALSE(app_screen_off(f.app));
+  CHECK(f.backlight.last == 100);
+  CHECK(goal_parts() != nullptr);
+}
+
+TEST_CASE("power: the screen a favourite goal lights follows night dimming") {
+  Fixture f(true, false);
+  f.now = kNight;
+  f.prefs.set("snd.night", "0");
+  f.make();
+  f.poll(live_match(1, 0));
+  test_display::fake_ms() += kTouchWakeMs + 1000;  // untouched for a while
+  app_refresh(f.app, f.now + 40);
+  app_set_screen_off(f.app, true);
+  f.poll(live_match(2, 0));
+  CHECK_FALSE(app_screen_off(f.app));
+  CHECK(f.backlight.last == 20);  // the night level
+}
+
+TEST_CASE("power: 'Powering off' ends a celebration and the fanfare waiting for the whistles") {
+  Fixture f(true, false);
+  f.prefs.set("snd.mode", "2");
+  f.make();
+  f.poll(live_match(2, 1));
+  f.poll(live_match(2, 1, MatchState::Post));
+  REQUIRE(f.sound.count() == 1);  // the whistles; the fanfare waits
+  REQUIRE(goal_parts() != nullptr);
+  app_show_powering_off(f.app);
+  CHECK(goal_parts() == nullptr);
+  test_advance(static_cast<uint32_t>(sound_clip(SoundEvent::FullTime).duration_ms()) + 500);
+  CHECK(f.sound.count() == 1);
+  CHECK_FALSE(f.sound.played(SoundEvent::WinFanfare));
 }

@@ -77,8 +77,11 @@ class PowerHost {
   virtual ~PowerHost() = default;
   // A short press: screen off (backlight 0, touch still wakes it) or back on.
   virtual void toggle_screen() = 0;
-  // Before the hint shows: light the screen if it is off (does nothing if on).
-  virtual void screen_on() = 0;
+  // Before the hint shows: light the screen if it is off. True when it was
+  // off (the controller turns it off again if the hold ends early).
+  virtual bool screen_on() = 0;
+  // A hold that lit a dark screen ended before the long press: dark again.
+  virtual void screen_off() = 0;
   virtual void show_hold_hint(bool show) = 0;
   virtual void stop_sound() = 0;
   virtual void wait_sound_idle(uint32_t timeoutMs) = 0;
@@ -121,6 +124,7 @@ class PowerController {
   PowerKeyPolicy key_;
   Mode mode_ = Mode::On;
   bool hintShown_ = false;
+  bool litForHint_ = false;  // the hint lit a screen that was off
   bool shownAtKnown_ = false;  // the Powering off screen's 1.5 s have started
   int64_t shownAt_ = 0;
   // Off state: the key, debounced, and whether it has been up since.

@@ -68,19 +68,23 @@ void PowerController::update(bool pressed, int64_t now) {
       if (e == PowerKeyEvent::ShortPress) {
         host_.toggle_screen();
       } else if (e == PowerKeyEvent::LongPressArmed) {
-        host_.screen_on();
+        litForHint_ = host_.screen_on();
         host_.show_hold_hint(true);
         hintShown_ = true;
       } else if (e == PowerKeyEvent::LongPress) {
         if (hintShown_) host_.show_hold_hint(false);
         hintShown_ = false;
+        litForHint_ = false;
         power_off();
         off_key(pressed, now);
         return;
       }
       if (hintShown_ && !key_.hint_visible()) {
+        // Released before 3 s: the hint goes, and a screen it lit goes dark again.
         host_.show_hold_hint(false);
         hintShown_ = false;
+        if (litForHint_) host_.screen_off();
+        litForHint_ = false;
       }
       return;
     }
