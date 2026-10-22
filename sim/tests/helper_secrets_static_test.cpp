@@ -138,8 +138,11 @@ TEST_CASE("an unknown serial word is never echoed with its value") {
   for (const std::string& st : log_statements(body)) {
     INFO("statement: " << st);
     const std::string code = lower(code_part(st));
+    // Nothing typed is echoed: neither the value nor the word or its name
+    // ("set-tokenXYZ..." without the space would be a token).
     CHECK(code.find("value") == std::string::npos);
-    CHECK(code.find("it.word") == std::string::npos);
+    CHECK(code.find("word") == std::string::npos);
+    CHECK(code.find("name") == std::string::npos);
   }
 }
 

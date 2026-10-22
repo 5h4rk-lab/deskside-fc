@@ -565,10 +565,9 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
   } else if (name == "set-url") {
     setHelperUrl(value);
   } else if (!value.empty()) {
-    // Only the settings words take a value; never print it (it may be a mistyped
-    // secret), and only the start of the name.
-    Serial.printf("[cmd] ':%.24s' with a value is not a command (the value is not shown; :help lists them)\n",
-                  name.c_str());
+    // Only the settings words take a value. Neither the value nor the name is
+    // echoed: "set-tokenXYZ..." typed without its space would be a token.
+    Serial.println("[cmd] not a command that takes a value (nothing is echoed; :help lists them)");
   } else if (name == "show-config") {
     showHelperConfig();
   } else if (name == "net") {
@@ -597,8 +596,8 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     Serial.println("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): :wifi :wipe-wifi :erase-settings :restart "
                    ":set-url <url> :set-token <token> :show-config :net :help");
   } else {
-    // The name only (never a value), cut short: it may be a mistyped secret.
-    Serial.printf("[cmd] unknown command ':%.24s' (:help lists them)\n", name.c_str());
+    // Not echoed: a mistyped word may hold a secret.
+    Serial.println("[cmd] unknown command (not echoed; :help lists them)");
   }
 }
 
