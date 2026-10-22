@@ -336,16 +336,18 @@ void wipeString(std::string& s) {
 HelperConfig loadHelperConfig() {
   HelperConfig c;
   const char* urlFrom = "";
-  const char* tokenFrom = "";
+  const char* keyFrom = "";  // where the token came from
   c.url = readHelperValue(kUrlKey, HELPER_URL, urlFrom);
-  c.token = readHelperValue(kTokenKey, HELPER_TOKEN, tokenFrom);
+  c.token = readHelperValue(kTokenKey, HELPER_TOKEN, keyFrom);
   const bool urlOk = valid_helper_url(c.url);
-  const bool tokenOk = valid_token(c.token);
-  c.valid = urlOk && tokenOk;
-  // The URL is not a secret; of the token only whether it is usable.
+  const bool keyOk = valid_token(c.token);
+  const char* keyState = keyOk ? "ok" : (c.token.empty() ? "missing" : "INVALID");
+  c.valid = urlOk && keyOk;
+  // The URL is not a secret; of the token only whether it is usable (log
+  // statements never name the token itself: sim/tests/helper_secrets_static_test.cpp).
   Serial.printf("[helper] url %s (%s, %s), token %s (%s): %s\n", urlOk ? c.url.c_str() : "-", urlFrom,
-                urlOk ? "ok" : (c.url.empty() ? "missing" : "INVALID"), tokenOk ? "ok" : (c.token.empty() ? "missing" : "INVALID"),
-                tokenFrom, c.valid ? "live data on" : "no requests will be made (:set-url / :set-token, then :restart)");
+                urlOk ? "ok" : (c.url.empty() ? "missing" : "INVALID"), keyState, keyFrom,
+                c.valid ? "live data on" : "no requests will be made (:set-url / :set-token, then :restart)");
   if (!c.valid) {
     c.url.clear();
     wipeString(c.token);
@@ -372,8 +374,10 @@ void setHelperUrl(const std::string& value) {
 
 void setHelperToken(std::string& value) {
   if (!valid_token(value)) {
+    const unsigned minLen = kTokenMinLen;
+    const unsigned maxLen = kTokenMaxLen;
     Serial.printf("[cmd] token refused: it must be %u to %u printable characters without spaces (nothing saved)\n",
-                  (unsigned)kTokenMinLen, (unsigned)kTokenMaxLen);
+                  minLen, maxLen);
     wipeString(value);
     return;
   }
@@ -390,14 +394,13 @@ void setHelperToken(std::string& value) {
 
 void showHelperConfig() {
   const char* urlFrom = "";
-  const char* tokenFrom = "";
+  const char* keyFrom = "";
   std::string url = readHelperValue(kUrlKey, HELPER_URL, urlFrom);
-  std::string token = readHelperValue(kTokenKey, HELPER_TOKEN, tokenFrom);
+  std::string token = readHelperValue(kTokenKey, HELPER_TOKEN, keyFrom);
   const bool urlOk = valid_helper_url(url);
   Serial.printf("[cmd] helper url %s (%s%s), token %s (%s) | in use since start: %s\n",
                 urlOk ? url.c_str() : (url.empty() ? "(none)" : "(invalid)"), urlFrom, urlOk || url.empty() ? "" : ", not used",
-                masked_token(token).c_str(), tokenFrom,
-                s_helperInUse ? s_urlInUse.c_str() : "nothing (no requests)");
+                masked_token(token).c_str(), keyFrom, s_helperInUse ? s_urlInUse.c_str() : "nothing (no requests)");
   wipeString(token);
 }
 
@@ -562,8 +565,10 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
   } else if (name == "set-url") {
     setHelperUrl(value);
   } else if (!value.empty()) {
-    // Only the settings words take a value; never print it (it may be a secret).
-    Serial.printf("[cmd] ':%s' takes no value (:help lists the commands)\n", name.c_str());
+    // Only the settings words take a value; never print it (it may be a mistyped
+    // secret), and only the start of the name.
+    Serial.printf("[cmd] ':%.24s' with a value is not a command (the value is not shown; :help lists them)\n",
+                  name.c_str());
   } else if (name == "show-config") {
     showHelperConfig();
   } else if (name == "net") {
