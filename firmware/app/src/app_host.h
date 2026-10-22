@@ -98,7 +98,7 @@ void app_host_diag_burst(int n);
 // `n` distinct real pictures (team crests at seven sizes), two at a time
 // through the real picture provider, with the cache and heap every 20.
 void app_host_diag_img_churn(int n);
-// The test goal celebration with a scorer, so its 192 px cutout is fetched.
+// The test goal celebration with a scorer, so its 190 px cutout is fetched.
 void app_host_diag_goal_photo();
 void app_host_diag_offline_toggle();
 // One request to a deliberately slow public endpoint (no token): `headers`
