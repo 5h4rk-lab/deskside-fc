@@ -77,7 +77,7 @@ Vendor Arduino init sequence (V2, `Display_ST7789.cpp`, abbreviated; full list a
 - **Battery**: MX1.25 2-pin header, 3.7 V LiPo, charger chip ETA6098 (schematic text), LDO ME6217C33M5G (800 mA max). VERIFIED (page quote) for header and LDO; ETA6098 VERIFIED (vendor schematic text).
   - Voltage measurement: ADC on GPIO8 (`BAT_ADC`). Vendor formula: `analogReadMilliVolts(8) * 3.0 / 1000 / 0.990476` volts (the factor 3.0 implies a 1:3 divider on the pin; INFERRED, check the schematic). VERIFIED (vendor code) `BAT_Driver.cpp`, `Measurement_offset 0.990476`.
   - Power control: PWR key input on GPIO6 (`Key_BAT`, active low), power hold output GPIO7 (`BAT_Control`/`SYS_EN`). Firmware must drive GPIO7 high to stay powered on battery; driving it low shuts the board off. Long-press logic in vendor code: 10 s sleep, 15 s restart, 20 s shutdown. VERIFIED (vendor code) `PWR_Key.cpp`; FAQ: "Pressing it starts the system from battery, and the board should hold SYS_EN high to stay powered." VERIFIED (page quote) https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/FAQ
-  - On USB power the board runs without GPIO7 being held. INFERRED (the FAQ speaks only of the battery case).
+  - On USB power the board runs without GPIO7 being held. INFERRED (the FAQ speaks only of the battery case); the schematic agrees (VCC from VBUS through D3), see "Measured on the board: battery, power key, power hold".
 - **TF (microSD) slot**: up to 16 GB per product page text ("TF card slot, up to 16GB", VERIFIED page quote). Vendor demo uses the Arduino `SD_MMC` driver in **1-bit mode**: CLK = GPIO14, CMD = GPIO17, D0 = GPIO16, D3 = GPIO21 (card CS line, d1/d2 unused). The schematic names the same nets SD_SCLK/SD_MOSI/SD_MISO/SD_CS, and CircuitPython treats the slot as SPI (SCK 14, MOSI 17, MISO 16, CS 21). VERIFIED (vendor code) + VERIFIED (3rd-party code); either SPI or SD_MMC 1-bit works on these pins. Wiki: format FAT32.
 - **Audio**: PCM5101A I2S DAC + amplifier, 8 ohm 2 W 2030 speaker (included), volume knob. I2S: BCLK = GPIO48, LRC/WS = GPIO38, DOUT = GPIO47 (no MCLK). VERIFIED (page quote) for parts; pins VERIFIED (vendor code) `Audio_PCM5101.h` and (3rd-party code) CircuitPython. No buzzer. Amplifier APA2068 (stereo, two bridge-tied outputs), always on, no GPIO control; speaker connector J9 carries left and right separately: see "Measured on the board: audio" below. VERIFIED (vendor schematic, V1 PDF).
 - **Buttons**: BOOT = GPIO0 (also usable as a user button in firmware); RESET (EN); PWR key = GPIO6 (see above). VERIFIED (page quote) for existence; GPIO0 VERIFIED (3rd-party code) CircuitPython `BOOT`/`BUTTON0`. There is no separate user key besides BOOT and PWR (INFERRED from the product page list: "RESET and BOOT buttons, battery power control button, volume knob").
@@ -258,6 +258,41 @@ Task 7a, 2026-10-22, board V2 with two small speakers plugged in and a 3.7 V cel
 
 1. Left/right: `:sound tone l` should sound only in the speaker on pins 1-2 (VOL), `:sound tone r` only in the one on pins 3-4 (VOR). ESP-IDF puts the first sample of each frame in the WS-low slot, which is "left" in I2S Philips format (INFERRED). Answers: left only / right only / both / nothing, for each command. If both commands sound in both speakers, the board mixes to mono after all; if one speaker stays silent for both, it is a spare (or not connected).
 2. Whether any clip clicks or pops at its start or end, whether there is hiss after a clip ends (the I2S clock is stopped then), whether the start of a clip is cut (the DAC needs time to lock on its PLL after the clock starts; the pre-roll is 30 ms), and whether `:sound goal 100` distorts or crackles with the knob turned up.
+
+## Measured on the board: battery, power key, power hold (2026-10-22, Task 8)
+
+Setup: V2 board on USB (PC), the user's 3.7 V 3000 mAh LiPo (protection circuit) connected (polarity checked by the user earlier). Nobody at the bench: no multimeter, no unplugging, no key presses; the key was exercised only through the `app_diag` injection `:diag-key`.
+
+From the schematic (V1 PDF, power part; the V2 pins are the same):
+
+- Battery divider: BAT -> R5 200k -> BAT_ADC (GPIO8) -> R11 100k -> GND, 100 nF on the pin: exactly 1/3. The vendor formula `adc_mV * 3 / 0.990476` (about +0.96 %) is kept as the factory formula; `:cal-battery <mV>` stores a scale in NVS `batt.cal`.
+- PWR key (Key1) pulls `Key_BAT` (GPIO6, 10k pull-up to 3V3) low through D2 and, through D4, pulls the gate of P-MOSFET Q1 (BAT -> system) low: the key itself switches the battery on. GPIO7 (`BAT_Control`) drives NPN T2, which holds the same gate low. So GPIO6 is readable by the MCU (active low) and the board stays on from battery while GPIO7 is high OR the key is down.
+- USB: VCC is fed from VBUS through Schottky D3 unconditionally; Q2 (gate on USB_5V) cuts the battery path while USB is present. So on USB, GPIO7 low cannot switch the board off (INFERRED from the schematic; the real GPIO7 write was not run).
+- Charger ETA6098: its STAT pin only drives the red charge LED (LED1 to BAT through R6); no GPIO. There is no VBUS divider to any GPIO. The only USB signal the MCU has is USB data activity (`usb_serial_jtag_is_connected()`, SOF based): it says "a host talks to us", not "external power" (a wall charger gives power and no data).
+- BOOT = GPIO0 (Key2, 10k pull-up) is a strapping pin; not used (the PWR key is readable, so the BOOT button is not needed for the screen toggle).
+
+Readings (release `app` and `app_diag`, 16-sample average per second, many minutes):
+
+- GPIO8: 1360..1365 mV at the pin -> 4119..4134 mV by the factory formula; smoothed 4122..4131 mV; the model says 90..93 %, not charging (flat). Earlier bring-up reading with the pack on USB: ~4.10 V. Without a battery the bring-up read ~4.18 V (charger float). Not checked against a multimeter (nobody there): accuracy unknown.
+- Charging on USB: the reading stayed flat (+-6 mV over the session), so the voltage inference never reported "charging". Whether the pack is full (ETA6098 terminated) or charging slowly cannot be told without the LED or a meter.
+- `usb_serial_jtag_is_connected()`: true the whole time (PC attached). The "USB removed" state could not be observed (nobody to unplug). Decision: NOT used for `set_external_charging` (not proven, and it does not mean charging); the voltage inference stays.
+- GPIO6 at rest: high (key up) at every [power] line; GPIO7 high.
+
+Power key and switch-off, exercised with the injected key (`:diag-key`, app_diag; dry run):
+
+- 200 ms: screen off (backlight 0) and on again; a scripted touch on the dark screen woke it and was swallowed.
+- 1500 ms: "Hold to power off" at +1.0 s, gone on release. 2500 ms: same, no power-off.
+- 3500 ms: hint at +1.0 s; at +3.0 s speaker stopped, silent after 5 ms (limit 300), "Powering off" shown, 1.52 s later settings saved, Wi-Fi stopped (`esp_wifi_stop` ESP_OK), GPIO7 write SKIPPED (dry run), off state (backlight 0, no refresh, no network). An injected press 23 s later restarted the board, which rejoined Wi-Fi and had live data again ~10 s later.
+- `:diag-batt 3690` (model fed 3.69 V): 15 %, the low-battery banner showed; `:diag-batt off` back to the ADC.
+
+UNTESTED on hardware (needs the user):
+
+- The real GPIO7 low (power-off) on battery, and that the board then really goes dark once the key is up.
+- The same on USB: per the schematic the board stays powered and enters the off state; whether a press of the real key then restarts it (the 10 s / level-change key watch in the off state).
+- The real PWR key presses (short, 1 s hint, 3 s off), its bounce, and that the key that switched the board on from battery is ignored (held at boot).
+- Battery accuracy: measure the pack with a multimeter and run `:cal-battery <mV>` (3000..4400); target within 3 %.
+- Unplugging USB: the board keeps running on the pack; the reading drops (the charger's rise goes away); a real drain to 15 % shows the banner (deferred: hours on battery).
+- Charging detection over a real charge from a low pack (voltage inference only).
 
 ## Physical
 
