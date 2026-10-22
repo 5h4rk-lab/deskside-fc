@@ -10,6 +10,7 @@ and proxies/resizes images. Every endpoint needs the `x-token` header.
 - `GET /api/teams`: team list for the team picker.
 - `GET /api/img?u=<url>&w=48&h=48`: image proxy (allow-listed hosts, resized PNG).
 - `GET /api/cutout?name=<player>&w=40&h=40`: player cutout photo.
+- `GET /api/firmware/version`: the newest published device firmware (see "Firmware updates").
 
 Every team object carries `color` (readable accent for small details, curated in `src/colors.ts` with a luminance floor) and `primary` (the club's real brand colour for large surfaces, may be dark; white-kit clubs use their dark identity colour).
 
@@ -40,3 +41,24 @@ Deploy (production URL https://soccer-display-helper.vercel.app):
 
 Smoke test: `HELPER_TOKEN=... scripts/smoke.sh https://soccer-display-helper.vercel.app` (a token argument is still accepted but shows up in the process list). It also requests the authenticated matches URL without a token right afterwards and expects 401, which catches a CDN serving a cached body to anyone.
 The token lives in `~/.config/soccer-display/helper.env`; never commit it. Unit tests: `npx vitest run`.
+
+## Firmware updates
+
+The device checks `GET /api/firmware/version` (token-gated, `Cache-Control: no-store`) about 2 minutes after
+it starts, then every 6 hours, and when Settings is opened (at most every 10 minutes). It installs only
+when the user taps "Version X available · Install" in Settings.
+
+- Answer: `{"version": "0.1.1", "url": "https://<this host>/firmware/0.1.1.bin", "sha256": "<64 hex>", "size": <bytes>, "notes": "..."}`.
+  The URL is built from the request's host, and the device accepts only an https URL on the helper's own host.
+  While nothing is published (`{"version": null}`) the answer is 404, which the device reads as "up to date".
+  A manifest that fails a check (version, file name, hash, size 100 KB to 5 MB, notes up to 200 characters) gives 500 and is never served.
+- Source: `firmware-manifest.json` (`version`, `file` = `firmware/<version>.bin`, `sha256`, `size`, `notes`).
+- Binaries: `public/firmware/<version>.bin`, served as static files. They are public and contain no secret.
+  Their integrity comes from the SHA-256 in the token-gated manifest, which the device checks before switching,
+  together with the image's project name ("soccer-display") and version. Keep older binaries: a device may be mid-download.
+- Publish (from the repo root): `tools/publish-firmware.sh --notes "One line"`. It builds the release `app`, checks the image,
+  copies it here and rewrites the manifest. It refuses a `secrets.ini` with HELPER_URL/HELPER_TOKEN, a set
+  `PLATFORMIO_BUILD_FLAGS`, uncommitted firmware sources, and a version that is not newer. It deploys nothing:
+  run `npx vitest run` (it checks the manifest against the file), commit both files, then deploy as above.
+  After deploying, `curl -sI https://<helper>/firmware/<version>.bin` should answer 200 with the right Content-Length.
+  The project has no framework preset, so Vercel serves `public/` as static output. Check this once on the first deploy.
