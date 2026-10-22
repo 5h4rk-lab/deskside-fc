@@ -17,6 +17,7 @@
 #include "host_loop.h"
 #include "image_provider.h"
 #include "screens/goal.h"
+#include "format.h"
 #include "settings.h"
 #include "store.h"
 
@@ -25,9 +26,12 @@
 #include "demo_data.h"
 #include "mock_source.h"
 #else
+#include "http_image_provider.h"
 #include "http_source.h"
+#include "lvgl_image_decoder.h"
 #include "platform/esp_http_transport.h"
 #include "platform/time_sync.h"
+#include "platform/timed_image_decoder.h"
 #endif
 
 namespace {
@@ -46,8 +50,8 @@ struct Command {
   void (*fn)();  // AppCommand::Call only
 };
 
-// No pictures yet (Task 7): every request is answered "not available", the UI
-// keeps its placeholders.
+// The demo build and a device without a helper: every picture request is
+// answered "not available", the UI keeps its placeholders.
 class NoImages : public ImageProvider {
  public:
   void request(const std::string&, std::function<void(ImagePtr)> done) override { done(nullptr); }
@@ -87,9 +91,18 @@ struct Host {
         backlight(b),
         wifi(w),
 #if !APP_DEMO_DATA
-        transport("data", EspHttpTransport::kJsonCapBytes, &networkReady),
+        transport("data", EspHttpTransport::kJsonCapBytes, "application/json", &networkReady),
         http(helper.valid ? new (std::nothrow) HttpSource(transport, helper.url, helper.token) : nullptr),
         source(http ? static_cast<DataSource&>(*http) : static_cast<DataSource&>(none)),
+        // Pictures come in bursts (a whole list of crests): one kept connection.
+        imageTransport("images", EspHttpTransport::kImageCapBytes, "image/png, image/jpeg", &networkReady, true),
+        decoder(lvglDecoder),
+        httpImages(helper.valid ? new (std::nothrow) HttpImageProvider(
+                                      imageTransport, decoder, helper.url, helper.token,
+                                      HttpImageProvider::kDefaultCacheBytes, HttpImageProvider::kDeviceMaxNegative,
+                                      HttpImageProvider::kDeviceMaxQueued)
+                                : nullptr),
+        images(httpImages ? static_cast<ImageProvider&>(*httpImages) : static_cast<ImageProvider&>(noImages)),
 #endif
         deps{store, images, source, nullptr, prefs, &backlight, &wifi,
              // A join made on the Wi-Fi pages: fetch everything now (auto-joins are
@@ -102,7 +115,18 @@ struct Host {
   HostLoop::Hooks makeHooks() {
     HostLoop::Hooks h;
 #if !APP_DEMO_DATA
-    h.pollTransports = [this] { transport.poll(); };
+    // Data answers all at once; at most one picture per tick (its decode runs
+    // here, on the LVGL task: a burst of pictures must not stall a frame).
+    h.pollTransports = [this] {
+      transport.poll();
+      imageTransport.poll(1);
+    };
+    h.tickImages = [this](int64_t ms) {
+      if (!httpImages) return;
+      // Offline (no address or no valid clock yet): pictures wait instead of failing.
+      httpImages->set_online(networkReady());
+      httpImages->tick(ms);
+    };
 #endif
     h.openMatchId = [this] { return app ? app_open_match_id(app) : std::string(); };
     h.onMatchesChanged = [this](int64_t now) {
@@ -124,14 +148,20 @@ struct Host {
   Backlight& backlight;
   EspWifiService& wifi;
   Store store;
-  NoImages images;
+  NoImages noImages;
 #if APP_DEMO_DATA
   MockSource source;
+  ImageProvider& images = noImages;
 #else
   EspHttpTransport transport;  // before the source, which holds a reference to it
   std::unique_ptr<HttpSource> http;
   NoHelperSource none;
   DataSource& source;
+  EspHttpTransport imageTransport;  // before the provider, which holds a reference to it
+  LvglImageDecoder lvglDecoder;
+  TimedImageDecoder decoder;
+  std::unique_ptr<HttpImageProvider> httpImages;
+  ImageProvider& images;
   bool linkWasUp = false;
   bool clockWasValid = false;
   int lastUntimedPercent = -1;
@@ -388,6 +418,13 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, co
 #if !APP_DEMO_DATA
   if (helper.valid && !s_host->http) Serial.println("[app] ERROR: out of memory for the data source");
   if (!s_host->transport.start()) Serial.println("[app] the data transport did not start: no live data");
+  if (helper.valid && !s_host->httpImages) Serial.println("[app] ERROR: out of memory for the picture provider");
+  if (s_host->httpImages) {
+    s_host->httpImages->set_entry_overhead_bytes(HttpImageProvider::kDeviceEntryOverheadBytes);
+  }
+  if (s_host->httpImages && !s_host->imageTransport.start()) {
+    Serial.println("[app] the picture transport did not start: placeholders only");
+  }
 #endif
   heapStep("app state allocated");
 #if APP_DEMO_DATA
@@ -458,6 +495,30 @@ void app_host_print_net() {
       s.internalFreeInTls ? (int)(s.internalFreeInTls / 1024) : -1, kb(s.internalFreeInTlsMin),
       kb(s.internalLargestInTlsMin), kb(s.psramFreeInTlsMin), (unsigned)h.transport.worker_stack_free_bytes(),
       h.store.data_status_text().c_str(), epoch > 0 && h.store.stale(epoch) ? " (STALE marker on)" : "");
+  if (!h.httpImages) {
+    Serial.println("[img] pictures off (no helper configured)");
+    return;
+  }
+  const HttpImageProvider& p = *h.httpImages;
+  const EspHttpTransport::Stats is = h.imageTransport.stats();
+  const TimedImageDecoder::Stats& d = h.decoder.stats();
+  const uint32_t decodes = d.ok + d.failed;
+  const uint32_t avgUs = decodes ? (uint32_t)(d.totalUs / decodes) : 0;
+  Serial.printf(
+      "[img] cache %u KB of %u KB, %u pictures | waiting %u, in flight %u, remembered failures %u%s%s | decoded %lu "
+      "(failed %lu), last %lu.%lu ms, avg %lu.%lu ms, max %lu.%lu ms | http ok %lu failed %lu refused %lu, last %d "
+      "%u B in %lu ms (handshake %lu ms), kept connection used %lu times, reopened %lu | internal free in TLS min %d KB "
+      "| worker stack free %u B\n",
+      (unsigned)(p.cached_bytes() / 1024), (unsigned)(HttpImageProvider::kDefaultCacheBytes / 1024),
+      (unsigned)p.cached_images(), (unsigned)(p.pending() - p.in_flight()), (unsigned)p.in_flight(),
+      (unsigned)p.negative_entries(), p.online() ? "" : ", OFFLINE (waiting)",
+      p.auth_rejected() ? ", TOKEN REJECTED" : "", (unsigned long)d.ok, (unsigned long)d.failed,
+      (unsigned long)(d.lastUs / 1000), (unsigned long)(d.lastUs % 1000 / 100), (unsigned long)(avgUs / 1000),
+      (unsigned long)(avgUs % 1000 / 100), (unsigned long)(d.maxUs / 1000), (unsigned long)(d.maxUs % 1000 / 100),
+      (unsigned long)is.ok, (unsigned long)is.failed, (unsigned long)is.refused, is.lastStatus,
+      (unsigned)is.lastBytes, (unsigned long)is.lastMs, (unsigned long)is.lastHandshakeMs,
+      (unsigned long)h.imageTransport.reuses(), (unsigned long)h.imageTransport.reconnects(), kb(is.internalFreeInTlsMin),
+      (unsigned)h.imageTransport.worker_stack_free_bytes());
 #endif
 }
 
@@ -531,6 +592,94 @@ void app_host_diag_slow(bool headers) {
                   (long long)(monotonicMs() - start), r.status, r.transportError ? "yes" : "no",
                   (unsigned)r.body.size());
   });
+}
+
+namespace {
+// :diag-img-churn: distinct real pictures (team crests at several sizes), two
+// at a time through the real provider, heap and cache every 20.
+int s_churnLeft = 0, s_churnDone = 0, s_churnOk = 0, s_churnTotal = 0;
+size_t s_churnNext = 0;
+size_t s_churnInternal0 = 0, s_churnPsram0 = 0;
+int64_t s_churnStartMs = 0;
+
+void churnLine(const char* what) {
+  const HttpImageProvider& p = *s_host->httpImages;
+  Serial.printf("[churn] %-8s %3d/%d ok %3d after %lld ms | cache %u KB, %u pictures | internal free %u (min %u) "
+                "psram free %u (min %u)\n",
+                what, s_churnDone, s_churnTotal, s_churnOk, (long long)(monotonicMs() - s_churnStartMs),
+                (unsigned)(p.cached_bytes() / 1024), (unsigned)p.cached_images(),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+}
+
+// The n-th distinct picture: crest of team n % teams at one of seven sizes the
+// screens never ask for (so every one is a real download, not a cache hit).
+std::string churnPath(size_t n) {
+  static const int kSizes[] = {32, 40, 56, 64, 72, 96, 120};
+  const std::vector<Team>& teams = s_host->store.teams();
+  const Team& t = teams[n % teams.size()];
+  const int size = kSizes[(n / teams.size()) % (sizeof(kSizes) / sizeof(kSizes[0]))];
+  return sized(t.crest, size, size);
+}
+
+void churnNext() {
+  if (s_churnLeft <= 0 || !s_host || !s_host->httpImages) return;
+  --s_churnLeft;
+  const std::string path = churnPath(s_churnNext++);
+  s_host->httpImages->request(path, [](ImagePtr img) {
+    ++s_churnDone;
+    if (img) ++s_churnOk;
+    if (s_churnDone % 20 == 0) churnLine("progress");
+    if (s_churnLeft > 0) {
+      // Not from inside the callback: a picture answered at once (a remembered
+      // failure) would otherwise recurse once per picture.
+      lv_async_call([](void*) { churnNext(); }, nullptr);
+    } else if (s_churnDone == s_churnTotal) {
+      churnLine("end");
+      Serial.printf("[churn] change over %d pictures: internal %+d B, psram %+d B (the cache holds what fits in "
+                    "its budget)\n",
+                    s_churnTotal, (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) - (int)s_churnInternal0,
+                    (int)heap_caps_get_free_size(MALLOC_CAP_SPIRAM) - (int)s_churnPsram0);
+    }
+  });
+}
+}  // namespace
+
+void app_host_diag_img_churn(int n) {
+  if (!s_host || !s_host->httpImages) {
+    Serial.println("[churn] no helper configured");
+    return;
+  }
+  if (s_host->store.teams().empty()) {
+    Serial.println("[churn] no team list yet (wait for the first data)");
+    return;
+  }
+  if (s_churnLeft > 0) {
+    Serial.println("[churn] already running");
+    return;
+  }
+  s_churnLeft = n;
+  s_churnTotal = n;
+  s_churnDone = 0;
+  s_churnOk = 0;
+  s_churnStartMs = monotonicMs();
+  s_churnInternal0 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  s_churnPsram0 = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  churnLine("start");
+  // Two chains, like the provider's two requests in flight.
+  churnNext();
+  churnNext();
+}
+
+void app_host_diag_goal_photo() {
+  if (!s_host) return;
+  testCelebration(false);
+  // A real player's cutout (190 px, the largest picture the UI asks for), to
+  // time its download and decode while the celebration runs.
+  goal_set_scorer("serial-test", "Ollie Watkins", "/api/cutout?name=Ollie%20Watkins&w=96&h=96");
+  Serial.println("[cmd] test goal with a scorer photo (/api/cutout, 190 px)");
 }
 
 void app_host_diag_offline_toggle() {

@@ -12,6 +12,11 @@
 //   once and asks the Poller for everything at once. Without a valid helper
 //   URL and token the app makes no network requests at all ("Waiting for the
 //   first update...").
+//   Pictures: HttpImageProvider (3 MB cache in PSRAM, 1.5 KB charged per
+//   picture, at most 64 remembered failures and 256 waiting requests) over a
+//   second EspHttpTransport ("images", 512 KB cap, one kept connection), decoded
+//   by LvglImageDecoder on the LVGL task, at most one picture per host-loop
+//   tick. While the network or the clock is not ready, picture requests wait.
 // - Demo data (`app_demo`, -DAPP_DEMO_DATA=1): the simulator's MockSource
 //   filled by demo_load() and a fixed demo clock; no network use besides Wi-Fi.
 #pragma once
@@ -80,7 +85,9 @@ void app_host_post(AppCommand command, int arg = 0);
 int64_t app_host_epoch();
 
 // One line about the data path ([net]): Wi-Fi link, clock, HTTP counters,
-// internal RAM during TLS, the data status text. LVGL task (post it).
+// internal RAM during TLS, the data status text; and one about pictures
+// ([img]): cache bytes and count, requests waiting and in flight, remembered
+// failures, decode times, the picture transport's counters. LVGL task (post it).
 void app_host_print_net();
 
 #if APP_DIAG && !APP_DEMO_DATA
@@ -88,6 +95,11 @@ void app_host_print_net();
 // the other through the real source, with internal/PSRAM free every 10; and a
 // switch that refuses every request as if the router were off.
 void app_host_diag_burst(int n);
+// `n` distinct real pictures (team crests at seven sizes), two at a time
+// through the real picture provider, with the cache and heap every 20.
+void app_host_diag_img_churn(int n);
+// The test goal celebration with a scorer, so its 192 px cutout is fetched.
+void app_host_diag_goal_photo();
 void app_host_diag_offline_toggle();
 // One request to a deliberately slow public endpoint (no token): `headers`
 // true holds the headers back, false trickles the body. Prints the time it took.

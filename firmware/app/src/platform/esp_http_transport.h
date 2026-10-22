@@ -1,15 +1,17 @@
 // HttpTransport over the ESP-IDF HTTP client (esp_http_client + esp-tls +
 // mbedTLS, prebuilt in the Arduino core): HTTPS GET with the server
 // certificate checked against the ESP-IDF certificate bundle
-// (esp_crt_bundle_attach), no redirects followed, headers x-token and
-// Accept: application/json.
+// (esp_crt_bundle_attach), no redirects followed, headers x-token and Accept
+// (application/json for data, image/png and image/jpeg for pictures).
+// Two instances run: "data" (JSON, 4 MB cap) and "images" (512 KB cap), each
+// with its own worker, so a picture download never queues ahead of a poll.
 //
 // Threads (contract of ui/src/http_transport.h):
 // - get() and poll() run on the LVGL task only. get() never blocks and never
 //   calls `done`; poll() delivers finished requests, so every `done` runs on
 //   the LVGL task.
-// - One worker task on core 0 (8 KB stack) runs the requests one at a time
-//   from a queue of 8.
+// - One worker task on core 0 (8 KB stack) per instance runs its requests one
+//   at a time from a queue of 8.
 // - Time: the caller's timeout is a TOTAL budget per request, counted from the
 //   moment the worker starts it (ui/src/request_deadline.h). Connect and TLS
 //   handshake get the whole budget as esp-tls's timeout; once connected,
@@ -53,12 +55,17 @@
 #include "http_transport.h"
 #include "request_deadline.h"
 
+// esp_http_client.h's handle type (its header is included by the .cpp only:
+// it does not mix with everything that includes this one).
+typedef struct esp_http_client* esp_http_client_handle_t;
+
 class EspHttpTransport : public HttpTransport {
  public:
   static constexpr size_t kJsonCapBytes = 4u * 1024u * 1024u;
   static constexpr size_t kImageCapBytes = 512u * 1024u;
   static constexpr int kQueueLength = 8;
   static constexpr uint32_t kWorkerStackBytes = 8192;
+  static constexpr int64_t kIdleCloseMs = 15000;
 
   struct Stats {
     uint32_t ok = 0;           // answered with any HTTP status
@@ -76,9 +83,17 @@ class EspHttpTransport : public HttpTransport {
     size_t psramFreeInTlsMin = SIZE_MAX;
   };
 
-  // `name` labels log lines ("data", "images"); `capBytes` bounds a body;
+  // `name` labels log lines and the worker task ("data", "images"); `capBytes`
+  // bounds a body (enforced while it streams); `accept` is the Accept header;
   // `ready` is called from the LVGL task and the worker (must be thread-safe).
-  EspHttpTransport(const char* name, size_t capBytes, bool (*ready)());
+  // `keepConnection`: keep the connection open after a complete answer the
+  // server allows to reuse, and send the next request to the same host on it
+  // (no new TLS handshake); closed after kIdleCloseMs idle, after any error
+  // and when the network is not ready. A request that fails on a kept
+  // connection before any answer is tried once more on a fresh one, within
+  // the same total deadline.
+  EspHttpTransport(const char* name, size_t capBytes, const char* accept, bool (*ready)(),
+                   bool keepConnection = false);
   EspHttpTransport(const EspHttpTransport&) = delete;
   EspHttpTransport& operator=(const EspHttpTransport&) = delete;
 
@@ -89,19 +104,27 @@ class EspHttpTransport : public HttpTransport {
   void get(const std::string& url, const std::string& token, int timeoutMs,
            std::function<void(HttpResult)> done) override;
 
-  // LVGL task: delivers finished and refused requests.
-  void poll();
+  // LVGL task: delivers refused requests and at most `maxResults` finished
+  // ones (the rest wait for the next poll; the images transport passes 1 so
+  // that at most one picture is decoded per host-loop tick).
+  void poll(size_t maxResults = SIZE_MAX);
 
   // Copies of the counters (LVGL task; the worker's fields are atomics or
   // written before the result is queued).
   Stats stats() const;
   size_t worker_stack_free_bytes() const;
   size_t outstanding() const { return pending_.size(); }
+  // Requests sent on a kept connection, and kept connections found closed
+  // (the request then went out again on a fresh one). Worker counters.
+  uint32_t reuses() const { return reuses_.load(); }
+  uint32_t reconnects() const { return reconnects_.load(); }
 
  private:
   struct Job;
   static void task_main(void* arg);
   void run(Job& job);
+  esp_http_client_handle_t new_client(const Job& job, int timeoutMs);
+  void drop_connection();
   void refuse(uint32_t id, const char* why);
   // Deadline watchdog (worker side): watch() arms it for the socket, unwatch()
   // disarms it before the socket is closed and says whether it fired.
@@ -111,6 +134,7 @@ class EspHttpTransport : public HttpTransport {
 
   const char* name_;
   size_t cap_;
+  const char* accept_;
   bool (*ready_)();
   QueueHandle_t todo_ = nullptr;
   QueueHandle_t done_ = nullptr;
@@ -126,6 +150,13 @@ class EspHttpTransport : public HttpTransport {
   SemaphoreHandle_t guard_ = nullptr;  // watchedFd_ / watchdogFired_ between the worker and the timer
   int watchedFd_ = -1;
   bool watchdogFired_ = false;
+  // Worker only: the kept connection (keepConnection_), its "https://host:port"
+  // and when its last answer ended.
+  bool keepConnection_ = false;
+  esp_http_client_handle_t conn_ = nullptr;
+  std::string connOrigin_;
+  int64_t connLastMs_ = 0;
+  std::atomic<uint32_t> reuses_{0}, reconnects_{0};
 };
 
 // Sends mbedTLS's allocations (TLS record buffers, handshake and certificate

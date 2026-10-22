@@ -30,7 +30,7 @@
 //   :set-token <t>   save the helper's token (16 to 128 printable characters, no spaces);
 //                    never echoed; used from the next restart
 //   :show-config     the helper's address and the first 4 characters of its token
-//   :net             one line about the data path (also in the 5 s status)
+//   :net             one line about the data path and one about pictures ([img]; also in the 5 s status)
 //   :help            list the commands
 // The helper's address and token come from NVS (namespace "helper", keys helper.url and
 // helper.token, written by :set-url / :set-token, see tools/provision-helper.sh), else
@@ -49,6 +49,9 @@
 //   :diag-clock-break    stop SNTP and set the clock to 2023-06-01 (not valid): polling pauses
 //   :diag-clock-restore  start SNTP again
 //   :diag-burst [n]      n (default 100, at most 200) matches requests in a row, heap every 10 (leak check)
+//   :diag-img-churn [n]  n (default 100, at most 300) distinct real pictures (team crests at seven sizes)
+//                        through the picture provider, cache and heap every 20 (leak and budget check)
+//   :diag-goal-photo     the test goal celebration with a scorer (fetches a 190 px player cutout)
 //   :diag-slow-body      one GET to a public endpoint that trickles its body (no token): must end at ~8 s
 //   :diag-slow-headers   one GET to a public endpoint that holds its headers 10 s (no token): must end at ~8 s
 //   :diag-offline        toggle: refuse every request as if the router were off (stale marker test)
@@ -573,6 +576,14 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     app_host_post_call([] { app_host_diag_burst(s_burstCount); });
     return;
   }
+  if (name == "diag-img-churn") {
+    // Optional count, 1 to 300 (default 100).
+    static int s_churnCount = 100;
+    const int n = value.empty() ? 100 : atoi(value.c_str());
+    s_churnCount = n >= 1 && n <= 300 ? n : 100;
+    app_host_post_call([] { app_host_diag_img_churn(s_churnCount); });
+    return;
+  }
 #endif
   if (name == "set-token") {
     setHelperToken(value);
@@ -596,6 +607,8 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     app_host_post_call([] { app_host_diag_slow(false); });
   } else if (name == "diag-slow-headers") {
     app_host_post_call([] { app_host_diag_slow(true); });
+  } else if (name == "diag-goal-photo") {
+    app_host_post_call(app_host_diag_goal_photo);
   } else if (name == "diag-offline") {
     app_host_post_call(app_host_diag_offline_toggle);
 #endif
