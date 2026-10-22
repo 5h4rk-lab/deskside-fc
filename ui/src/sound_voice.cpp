@@ -50,6 +50,7 @@ void SoundVoice::start(const int16_t* samples, size_t n, uint16_t gainQ15, Sound
       break;
     case State::Playing:
     case State::Fading:
+      clamp_to_end_ramp();
       pending_ = c;
       hasPending_ = true;
       if (state_ != State::Fading || step_ < step_for(kSwitchFadeFrames)) step_ = step_for(kSwitchFadeFrames);
@@ -69,12 +70,24 @@ void SoundVoice::stop() {
       state_ = State::Idle;
       break;
     case State::Playing:
+      clamp_to_end_ramp();
       state_ = State::Fading;
       step_ = step_for(kStopFadeFrames);
       break;
     case State::Fading:
       if (step_ < step_for(kStopFadeFrames)) step_ = step_for(kStopFadeFrames);
       break;
+  }
+}
+
+void SoundVoice::clamp_to_end_ramp() {
+  // Inside the clip's last kRampFrames the level heard was below env_: fade
+  // from there, not from env_ (that would jump back up).
+  if (state_ != State::Playing) return;
+  const size_t left = cur_.n - pos_;
+  if (left <= static_cast<size_t>(kRampFrames)) {
+    const int32_t cap = static_cast<int32_t>(left) * step_for(kRampFrames);
+    if (env_ > cap) env_ = cap;
   }
 }
 
@@ -118,6 +131,14 @@ void SoundVoice::render(int16_t* out, size_t frames) {
       }
       case State::Fading: {
         env_ -= step_;
+        {
+          // The clip's own end ramp still applies while it fades.
+          const size_t left = cur_.n - pos_;
+          if (left <= static_cast<size_t>(kRampFrames)) {
+            const int32_t cap = static_cast<int32_t>(left - 1) * step_for(kRampFrames);
+            if (env_ > cap) env_ = cap;
+          }
+        }
         const int32_t s = next_sample();
         if (env_ <= 0 || pos_ >= cur_.n) {
           env_ = 0;

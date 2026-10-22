@@ -63,6 +63,7 @@ class SoundVoice {
   };
 
   void begin(const Clip& c);  // starts `c` at its first sample with the ramp
+  void clamp_to_end_ramp();   // env_ = the level last heard, when inside the end ramp
   int32_t next_sample();      // the current clip's next sample after gain, 0 past its end
 
   int tailFrames_;

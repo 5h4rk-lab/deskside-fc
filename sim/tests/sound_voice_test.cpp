@@ -215,3 +215,21 @@ TEST_CASE("sound voice: the real Goal clip played through the voice keeps its sa
   }
   CHECK(v.idle());
 }
+
+TEST_CASE("sound voice: a stop or a replacement inside a clip's end ramp continues from the ramped level (no jump)") {
+  const std::vector<int16_t> clip = flat(1000, 20000);
+  const std::vector<int16_t> next = flat(1000, 20000);
+  for (int replace = 0; replace < 2; ++replace) {
+    SoundVoice v(kTail);
+    v.start(clip.data(), clip.size(), kSoundFullGainQ15, SoundChannels::Both);
+    std::vector<int16_t> f = render(v, SoundVoice::kPreRollFrames + clip.size() - 10);
+    if (replace) {
+      v.start(next.data(), next.size(), kSoundFullGainQ15, SoundChannels::Both);
+    } else {
+      v.stop();
+    }
+    const std::vector<int16_t> g = render(v, 2000);
+    f.insert(f.end(), g.begin(), g.end());
+    CHECK(max_step(f, 0) <= 20000 / SoundVoice::kRampFrames + 2);
+  }
+}
