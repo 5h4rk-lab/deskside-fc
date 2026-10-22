@@ -163,6 +163,7 @@ NvsPrefs* s_prefs = nullptr;
 NvsPrefs* s_helperPrefs = nullptr;  // namespace "helper": helper.url, helper.token
 EspWifiService* s_wifi = nullptr;
 I2sSoundOut* s_speaker = nullptr;
+TaskHandle_t s_prepTask = nullptr;  // "snd_prep": deleted by the loop task once it has suspended itself
 std::string s_urlInUse;             // the helper address the app runs with ("" when none)
 bool s_helperInUse = false;
 
@@ -573,6 +574,10 @@ void soundCommand(const std::string& value) {
     return;
   }
   if (what == "stop") {
+    if (!rest.empty()) {
+      Serial.println(kUsage);
+      return;
+    }
     app_host_post(AppCommand::Sound, kSoundArgStop);
     return;
   }
@@ -605,9 +610,17 @@ void soundCommand(const std::string& value) {
     }
   }
   int volume = 0;  // the saved one
-  if (!rest.empty()) {
-    volume = atoi(rest.c_str());
-    if (volume < 1 || volume > 100 || rest.find_first_not_of("0123456789") != std::string::npos) sel = -1;
+  std::string number;
+  std::string extra;
+  split_word(rest, number, extra);
+  if (!extra.empty()) sel = -1;  // nothing may follow the volume
+  if (!number.empty()) {
+    if (number.size() > 3 || number.find_first_not_of("0123456789") != std::string::npos) {
+      sel = -1;
+    } else {
+      volume = atoi(number.c_str());
+      if (volume < 1 || volume > 100) sel = -1;
+    }
   }
   if (sel < 0) {
     Serial.println(kUsage);
@@ -619,7 +632,10 @@ void soundCommand(const std::string& value) {
 // Makes every clip once, after the first frame, on a low-priority task on the
 // display core (below LVGL: it only takes time the screen does not need), so
 // no goal ever waits for the synthesis. The float work buffers and the clips
-// come from PSRAM (C++ new: platform/psram_new.cpp).
+// come from PSRAM (C++ new: platform/psram_new.cpp), and so does this task's
+// stack. It takes about 1.6 s: a clip the UI needs within that time after the
+// first frame (a Wi-Fi join chime, a battery alert) makes the LVGL task wait
+// until that clip is made.
 void soundPrepareTask(void*) {
   const size_t internal0 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
   const size_t internalMin0 = heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
@@ -639,7 +655,9 @@ void soundPrepareTask(void*) {
       (int)psram0 - (int)heap_caps_get_free_size(MALLOC_CAP_SPIRAM), (unsigned)psramMin0,
       (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
       (unsigned)(uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t)));
-  vTaskDelete(nullptr);
+  // A task with a caps-allocated stack is best deleted by another task: the
+  // loop task (same core) does it once this one is suspended.
+  vTaskSuspend(nullptr);
 }
 
 // Whole-word commands and the one-letter commands share the console; see serial_commands.h.
@@ -819,7 +837,9 @@ void setup() {
   s_firstFrameMs = millis() - s_bootMs;
   if (s_appOk) backlight.open();
   if (s_appOk && !wifi.start()) Serial.println("[main] the Wi-Fi service did not start (see above)");
-  if (xTaskCreatePinnedToCore(soundPrepareTask, "snd_prep", 8192, nullptr, 1, nullptr, 1) != pdPASS) {
+  if (xTaskCreatePinnedToCoreWithCaps(soundPrepareTask, "snd_prep", 8192, nullptr, 1, &s_prepTask, 1,
+                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+    s_prepTask = nullptr;
     Serial.println("[sound] could not start the clip preparation: clips are made on first use");
   }
   Serial.printf(
@@ -837,6 +857,11 @@ void loop() {
   static uint32_t lastStep = millis();
 
   pollSerial();
+  if (s_prepTask && eTaskGetState(s_prepTask) == eSuspended) {
+    vTaskDeleteWithCaps(s_prepTask);
+    s_prepTask = nullptr;
+    Serial.println("[sound] clip preparation task deleted");
+  }
 
   delay(kLoopStepMs);
   const uint32_t now = millis();

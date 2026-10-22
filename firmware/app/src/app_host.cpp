@@ -112,7 +112,8 @@ struct Host {
         loop(store, source, makeHooks()),
         speaker(sp) {
     (void)helper;
-    deps.sound = speaker;
+    // A speaker that failed to start (logged once by begin()) gets no Sound rows.
+    deps.sound = speaker && speaker->ok() ? speaker : nullptr;
   }
 
   HostLoop::Hooks makeHooks() {
