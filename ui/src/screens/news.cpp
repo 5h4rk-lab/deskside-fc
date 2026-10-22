@@ -51,9 +51,11 @@ constexpr int32_t kRowHeight = 58;
 constexpr int32_t kRowPad = 8;
 constexpr int32_t kRowRadius = 12;
 constexpr int32_t kThumbSize = 40;
-// A row asks the helper for a small square crop (48x48, about 9 KB decoded)
-// instead of the lead's 240x135 photo (130 KB): five rows stay cheap.
-constexpr int kThumbRequest = 48;
+// Pictures are asked for at exactly the size of their box, as cover crops, so
+// they are drawn 1:1: a scaled picture goes through LVGL's transform on every
+// redraw (swipes and scrolls of this tab). A row's thumbnail is a 40x40 crop
+// (6.4 KB decoded) instead of the 240x135 photo (130 KB).
+constexpr int kThumbRequest = kThumbSize;
 constexpr int32_t kThumbRadius = 9;
 constexpr int32_t kThumbGap = 10;
 constexpr int32_t kRowTextX = kRowPad + kThumbSize + kThumbGap;
@@ -282,11 +284,15 @@ void picture_load(CoverImage& c, ImageProvider& images, const std::string& path)
   cover_sync(c);
 }
 
-// The row thumbnail's path: the article's photo as a 48x48 cover crop ("" stays "").
-std::string thumb_path(const std::string& image) {
+// `image` as a w x h cover crop ("" stays "").
+std::string cover_path(const std::string& image, int w, int h) {
   if (image.empty()) return image;
-  return sized(with_param(image, "fit", "cover"), kThumbRequest, kThumbRequest);
+  return sized(with_param(image, "fit", "cover"), w, h);
 }
+
+// The row thumbnail: a 40x40 crop. The lead: a crop of the whole lead box.
+std::string thumb_path(const std::string& image) { return cover_path(image, kThumbRequest, kThumbRequest); }
+std::string lead_path(const std::string& image) { return cover_path(image, kScreenWidth, kLeadHeight); }
 
 CoverImage make_cover(lv_obj_t* box, int32_t w, int32_t h) {
   CoverImage c;
@@ -566,7 +572,7 @@ void apply_lead(NewsState* st, const View& v) {
   apply_lead_headline(p, v.lead.headline, first || v.lead.headline != st->shown.lead.headline);
   set_text(p.leadTime, v.lead.time);
   if (first || v.lead.image != st->shown.lead.image || v.lead.id != st->shown.lead.id) {
-    picture_load(st->leadCover, *st->images, v.lead.image);
+    picture_load(st->leadCover, *st->images, lead_path(v.lead.image));
   }
   p.leadId = v.lead.id;
   st->leadApplied = true;
