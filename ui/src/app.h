@@ -16,6 +16,7 @@
 #include "power_service.h"
 #include "prefs.h"
 #include "settings.h"
+#include "sound_out.h"
 #include "store.h"
 #include "wifi_service.h"
 
@@ -49,6 +50,11 @@ struct AppDeps {
   // Battery line, and a banner warns when it runs low. Without it there is no
   // battery anywhere in the UI.
   PowerService* power = nullptr;
+  // Optional: the speaker. The UI plays through it for the favourite's goals
+  // and wins, the low-battery banner and a Wi-Fi join (what, when and how
+  // loud: sound_policy.h and the Sound rows in Settings). Without it there is
+  // no sound and no Sound row in Settings.
+  SoundOut* sound = nullptr;
 };
 
 // Night dimming lifts for this long after the last touch.
@@ -128,7 +134,9 @@ std::string app_open_match_id(lv_obj_t* appRoot);
 // Call after every Store::set_matches(). Runs the goal detector on the new
 // match list; for any goal or full-time event it fetches that match's detail
 // into the Store (the Live strip shows the new event) and, for the favourite's
-// goals and wins, starts the goal celebration and then fills in the scorer
+// goals and wins, starts the goal celebration (with its sound: the goal horn,
+// or at a win the full-time whistles and then the fanfare; opponents' goals
+// and first sightings never make a sound) and then fills in the scorer
 // from the detail, once a detail has as many goals of the scoring side as its
 // score (scorer_for_goal): app_refresh() keeps checking the Store's detail
 // while the overlay shows. The first call never celebrates (first sight of a

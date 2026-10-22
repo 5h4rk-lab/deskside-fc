@@ -2,6 +2,7 @@
 
 #include <stdint.h>
 
+#include <algorithm>
 #include <utility>
 
 #include "fonts.h"
@@ -32,9 +33,11 @@ constexpr int32_t kStepButton = 28;
 constexpr int32_t kStepValueW = 54;
 constexpr int32_t kStepLineH = 30;
 constexpr int32_t kSliderExtraHit = 12;
+constexpr int32_t kSoundRowH = 30;
+constexpr int32_t kTestButtonH = 32;
 constexpr lv_opa_t kVoltageOpa = 160;  // the voltage a step quieter than the status
 
-enum Step { FromMinus, FromPlus, ToMinus, ToPlus, PctMinus, PctPlus };
+enum Step { FromMinus, FromPlus, ToMinus, ToPlus, PctMinus, PctPlus, VolMinus, VolPlus };
 
 struct SettingsState {
   Settings s;
@@ -87,6 +90,10 @@ void on_team(lv_event_t* e) { call(static_cast<SettingsState*>(lv_event_get_user
 void on_zone(lv_event_t* e) { call(static_cast<SettingsState*>(lv_event_get_user_data(e))->cb.onZone); }
 void on_wifi(lv_event_t* e) { call(static_cast<SettingsState*>(lv_event_get_user_data(e))->cb.onWifi); }
 
+void on_test_sound(lv_event_t* e) {
+  call(static_cast<SettingsState*>(lv_event_get_user_data(e))->cb.onTestSound);
+}
+
 void apply(SettingsState* st, int64_t now);
 
 void on_slider(lv_event_t* e) {
@@ -112,11 +119,33 @@ void on_switch(lv_event_t* e) {
     if (on == st->s.nightDim) return;
     st->s.nightDim = on;
     show(st->parts.nightControls, on);
+  } else if (sw == st->parts.soundNightSwitch) {
+    if (on == st->s.soundMuteAtNight) return;
+    st->s.soundMuteAtNight = on;
   } else {
     if (on == st->s.reducedMotion) return;
     st->s.reducedMotion = on;
   }
   notify_changed(st);
+}
+
+void on_sound_mode(lv_event_t* e) {
+  auto* st = static_cast<SettingsState*>(lv_event_get_user_data(e));
+  lv_obj_t* row = static_cast<lv_obj_t*>(lv_event_get_current_target(e));
+  const auto mode = static_cast<SoundMode>(reinterpret_cast<intptr_t>(lv_obj_get_user_data(row)));
+  if (mode == st->s.soundMode) return;
+  st->s.soundMode = mode;
+  for (int i = 0; i < 3; ++i) {
+    widgets::show(st->parts.soundTicks[i], static_cast<int>(mode) == i);
+  }
+  notify_changed(st);
+}
+
+int volume_index(int percent) {
+  for (int i = 0; i < 5; ++i) {
+    if (kSoundVolumes[i] >= percent) return i;
+  }
+  return 4;
 }
 
 int wrap_hour(int h) { return ((h % 24) + 24) % 24; }
@@ -142,11 +171,14 @@ void on_step(lv_event_t* e) {
                            ? kNightPercentMax
                            : s.nightPercent + kNightPercentStep;
       break;
+    case VolMinus: s.soundVolume = kSoundVolumes[std::max(0, volume_index(s.soundVolume) - 1)]; break;
+    case VolPlus: s.soundVolume = kSoundVolumes[std::min(4, volume_index(s.soundVolume) + 1)]; break;
   }
   if (s.nightStartHour == before.nightStartHour && s.nightEndHour == before.nightEndHour &&
-      s.nightPercent == before.nightPercent) {
+      s.nightPercent == before.nightPercent && s.soundVolume == before.soundVolume) {
     return;
   }
+  if (step == VolMinus || step == VolPlus) set_text(st->parts.volumeValue, percent_text(s.soundVolume));
   set_text(st->parts.nightFrom, hour_text(s.nightStartHour));
   set_text(st->parts.nightTo, hour_text(s.nightEndHour));
   set_text(st->parts.nightPercent, percent_text(s.nightPercent));
@@ -354,6 +386,45 @@ void build(SettingsState* st, lv_obj_t* root) {
   p.motionSwitch = make_switch(motionHead, st);
   p.motionHelp = help_text(motion, kMotionHelp);
 
+  // Sound, when the host has a speaker: what plays, how loud, quiet hours.
+  if (st->cb.onTestSound) {
+    lv_obj_t* sound = column_card(p.list, false);
+    lv_obj_set_style_pad_row(sound, 2, 0);
+    text_label(sound, &hanken_14, pal.chalk, "Sound");
+    for (int i = 0; i < 3; ++i) {
+      lv_obj_t* row = line(sound, kSoundRowH);
+      lv_obj_add_flag(row, LV_OBJ_FLAG_CLICKABLE);
+      lv_obj_set_style_radius(row, 8, 0);
+      lv_obj_set_style_bg_color(row, pal.line, LV_STATE_PRESSED);
+      lv_obj_set_style_bg_opa(row, LV_OPA_COVER, LV_STATE_PRESSED);
+      lv_obj_set_user_data(row, reinterpret_cast<void*>(static_cast<intptr_t>(i)));
+      lv_obj_add_event_cb(row, on_sound_mode, LV_EVENT_CLICKED, st);
+      lv_obj_align(text_label(row, &hanken_12, pal.chalk, kSoundModeText[i]), LV_ALIGN_LEFT_MID, 0, 0);
+      p.soundRows[i] = row;
+      p.soundTicks[i] = widgets::tick(row);
+      lv_obj_align(p.soundTicks[i], LV_ALIGN_RIGHT_MID, 0, 0);
+    }
+    p.soundHelp = help_text(sound, kSoundHelp);
+
+    lv_obj_t* volume = column_card(p.list, false);
+    stepper(volume, st, "Volume", VolMinus, VolPlus, p.volumeMinus, p.volumeValue, p.volumePlus);
+    p.testSound = plain(volume);
+    lv_obj_add_flag(p.testSound, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_set_size(p.testSound, LV_PCT(100), kTestButtonH);
+    lv_obj_set_style_radius(p.testSound, 8, 0);
+    lv_obj_set_style_bg_color(p.testSound, pal.line, 0);
+    lv_obj_set_style_bg_opa(p.testSound, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(p.testSound, mix(pal.line, pal.chalk, 50), LV_STATE_PRESSED);
+    lv_obj_add_event_cb(p.testSound, on_test_sound, LV_EVENT_CLICKED, st);
+    lv_obj_center(text_label(p.testSound, &hanken_14, pal.chalk, "Test sound"));
+
+    lv_obj_t* quiet = column_card(p.list, false);
+    lv_obj_t* quietHead = line(quiet, kSwitchH + 2);
+    lv_obj_align(text_label(quietHead, &hanken_14, pal.chalk, "Mute at night"), LV_ALIGN_LEFT_MID, 0, 0);
+    p.soundNightSwitch = make_switch(quietHead, st);
+    p.soundNightHelp = help_text(quiet, kSoundNightHelp);
+  }
+
   // Wi-Fi, when the host supports it.
   if (st->cb.onWifi) {
     // "Wi-Fi" over the connection state, like the time zone row.
@@ -424,6 +495,11 @@ void apply(SettingsState* st, int64_t now) {
   set_text(p.nightTo, hour_text(s.nightEndHour));
   set_text(p.nightPercent, percent_text(s.nightPercent));
   set_checked(p.motionSwitch, s.reducedMotion);
+  if (p.testSound != nullptr) {
+    for (int i = 0; i < 3; ++i) show(p.soundTicks[i], static_cast<int>(s.soundMode) == i);
+    set_text(p.volumeValue, percent_text(s.soundVolume));
+    set_checked(p.soundNightSwitch, s.soundMuteAtNight);
+  }
   st->everApplied = true;
 }
 

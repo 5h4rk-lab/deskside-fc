@@ -111,7 +111,7 @@ add_executable(sim_tests sim_alloc.cpp tests/test_main.cpp tests/smoke_test.cpp 
   tests/curl_transport_test.cpp curl_transport.cpp
   tests/battery_model_test.cpp tests/battery_ui_test.cpp
   tests/mock_power_test.cpp mock_power.cpp tests/host_loop_test.cpp tests/demo_data_test.cpp tests/ray_fan_test.cpp tests/wifi_store_test.cpp tests/wifi_controller_test.cpp tests/serial_commands_test.cpp tests/wifi_secrets_static_test.cpp tests/helper_config_test.cpp tests/helper_secrets_static_test.cpp tests/request_deadline_test.cpp
-  tests/sound_synth_test.cpp tests/sound_policy_test.cpp)
+  tests/sound_synth_test.cpp tests/sound_policy_test.cpp tests/sound_app_test.cpp tests/sound_settings_test.cpp)
 target_include_directories(sim_tests PRIVATE tests "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(sim_tests PRIVATE
   REPO_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/.."

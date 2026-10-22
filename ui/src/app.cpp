@@ -20,6 +20,9 @@
 #include "screens/team_picker.h"
 #include "screens/wifi.h"
 #include "screens/zone_list.h"
+#include "sound_out.h"
+#include "sound_policy.h"
+#include "sound_synth.h"
 #include "theme.h"
 #include "timezone.h"
 
@@ -89,6 +92,14 @@ struct AppState {
   PowerService* power = nullptr;
   BatteryAlert batteryAlert;
   lv_obj_t* banner = nullptr;
+
+  // Sound: the speaker (optional), the gate's memory, LVGL's tick extended to
+  // 64 bits for it, and the fanfare waiting for the whistles to end.
+  SoundOut* sound = nullptr;
+  SoundGate soundGate;
+  uint32_t lastTick = 0;
+  int64_t monoMs = 0;
+  lv_timer_t* fanfareTimer = nullptr;
 
   // Cleared when the tab view is deleted, for callbacks that outlive it.
   std::shared_ptr<bool> alive = std::make_shared<bool>(true);
@@ -364,6 +375,61 @@ void sync_settings_battery(AppState* st) {
   settings_set_battery(st->settingsView, st->store->power());
 }
 
+// ---------------------------------------------------------------- sound
+
+// LVGL's millisecond tick as a 64-bit counter that survives its 49 day wrap.
+int64_t monotonic_ms(AppState* st) {
+  const uint32_t tick = lv_tick_get();
+  st->monoMs += static_cast<uint32_t>(tick - st->lastTick);
+  st->lastTick = tick;
+  return st->monoMs;
+}
+
+// Night dimming is active at `now`: it is switched on and the local hour is
+// inside the night window (touching the screen lifts the dimming, not this).
+bool night_dim_active(const AppState* st, int64_t now) {
+  const Settings& s = st->settings;
+  if (!s.nightDim) return false;
+  const DimSchedule schedule(s.nightStartHour, s.nightEndHour, 0, 100);
+  return schedule.in_night(local_hour(now, st->store->tz_offset()));
+}
+
+// The one place the UI makes a sound: the settings and quiet hours decide
+// whether `event` is wanted, the gate whether it fits with what played
+// lately, then the speaker plays the clip at the chosen volume. False when
+// nothing was started (no speaker, muted, a repeat).
+bool app_sound(AppState* st, SoundEvent event, int64_t now) {
+  if (st->sound == nullptr) return false;
+  if (!sound_should_play(st->settings, event, night_dim_active(st, now))) return false;
+  if (!st->soundGate.allow(event, monotonic_ms(st))) return false;
+  st->sound->play(sound_clip(event), static_cast<uint8_t>(st->settings.soundVolume));
+  return true;
+}
+
+void on_fanfare_due(lv_timer_t* t) {
+  auto* st = static_cast<AppState*>(lv_timer_get_user_data(t));
+  st->fanfareTimer = nullptr;  // a one-shot timer: LVGL deletes it after this call
+  app_sound(st, SoundEvent::WinFanfare, st->now);
+}
+
+void cancel_fanfare(AppState* st) {
+  if (st->fanfareTimer == nullptr) return;
+  lv_timer_delete(st->fanfareTimer);
+  st->fanfareTimer = nullptr;
+}
+
+// The favourite won at full time: the whistles, then the fanfare when they
+// are over (at once when the whistles are not wanted).
+void win_sound(AppState* st, int64_t now) {
+  cancel_fanfare(st);
+  if (app_sound(st, SoundEvent::FullTime, now)) {
+    st->fanfareTimer = lv_timer_create(on_fanfare_due, static_cast<uint32_t>(sound_clip(SoundEvent::FullTime).duration_ms()), st);
+    lv_timer_set_repeat_count(st->fanfareTimer, 1);
+  } else {
+    app_sound(st, SoundEvent::WinFanfare, now);
+  }
+}
+
 // ---------------------------------------------------------------- battery
 
 void show_banner(AppState* st, const Alert& alert) {
@@ -376,6 +442,9 @@ void show_banner(AppState* st, const Alert& alert) {
   st->banner = battery_banner_create(screen, alert);
   lv_obj_add_event_cb(st->banner, on_overlay_delete, LV_EVENT_DELETE,
                       new OverlayLink{st, st->alive, OverlayKind::Banner});
+  // Once for each appearance of the banner (15 percent, then 5 percent).
+  app_sound(st, alert.level == Alert::Level::Critical ? SoundEvent::BatteryCritical : SoundEvent::BatteryLow,
+            st->now);
 }
 
 // Reads the battery once: into the Store (the screens' status rows follow it
@@ -399,7 +468,9 @@ void save(AppState* st) {
 bool same_display(const Settings& a, const Settings& b) {
   return a.dayBrightness == b.dayBrightness && a.nightDim == b.nightDim &&
          a.nightStartHour == b.nightStartHour && a.nightEndHour == b.nightEndHour &&
-         a.nightPercent == b.nightPercent && a.reducedMotion == b.reducedMotion;
+         a.nightPercent == b.nightPercent && a.reducedMotion == b.reducedMotion &&
+         a.soundMode == b.soundMode && a.soundVolume == b.soundVolume &&
+         a.soundMuteAtNight == b.soundMuteAtNight;
 }
 
 // A change made on the Settings screen: take the fields it edits, apply them
@@ -413,6 +484,9 @@ void settings_changed(AppState* st, const Settings& from) {
   s.nightEndHour = from.nightEndHour;
   s.nightPercent = from.nightPercent;
   s.reducedMotion = from.reducedMotion;
+  s.soundMode = from.soundMode;
+  s.soundVolume = from.soundVolume;
+  s.soundMuteAtNight = from.soundMuteAtNight;
   if (!same_display(s, st->saved)) save(st);
   goal_set_reduced_motion(s.reducedMotion);
   st->previewing = false;
@@ -434,6 +508,11 @@ SettingsCallbacks settings_callbacks(AppState* st) {
   if (st->wifi != nullptr) {
     cb.onWifi = [st, alive] {
       if (*alive) open_wifi(st, WifiMode::Normal);
+    };
+  }
+  if (st->sound != nullptr) {
+    cb.onTestSound = [st, alive] {
+      if (*alive) app_sound(st, SoundEvent::Preview, st->now);
     };
   }
   cb.onBrightnessPreview = [st, alive](int percent) {
@@ -480,6 +559,7 @@ void open_wifi(AppState* st, WifiMode mode) {
   // overlay closed, but not once the app is gone.
   cb.onJoinSucceeded = [st, alive] {
     if (!*alive) return;
+    app_sound(st, SoundEvent::WifiOk, st->now);
     const std::function<void()> notify = st->onWifiConnected;  // the host may delete the app
     if (notify) notify();
   };
@@ -581,6 +661,7 @@ void open_picker(AppState* st) {
 void on_app_delete(lv_event_t* e) {
   auto* st = static_cast<AppState*>(lv_event_get_user_data(e));
   *st->alive = false;
+  cancel_fanfare(st);
   delete st;
 }
 
@@ -709,6 +790,8 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
   st->wifi = deps.wifi;
   st->onWifiConnected = deps.onWifiConnected;
   st->power = deps.power;
+  st->sound = deps.sound;
+  st->lastTick = lv_tick_get();
 
   // Saved settings first: the screens capture the accent colour as they are built.
   st->settings = load_settings(deps.prefs);
@@ -951,6 +1034,14 @@ void app_matches_changed(lv_obj_t* appRoot, int64_t now) {
   if (event->favourite) {
     goal_celebrate(*event, *st->images);
     st->awaitingScorer = *event;
+    // Same guard as the celebration: the favourite's goal (or win), never a
+    // first sight, an opponent's goal or another team's match.
+    if (event->fullTime) {
+      win_sound(st, now);
+    } else {
+      cancel_fanfare(st);  // a goal after the final whistle is not expected; the horn wins
+      app_sound(st, SoundEvent::Goal, now);
+    }
   }
 
   // The detail names the scorer and feeds the Live strip, for either team. A

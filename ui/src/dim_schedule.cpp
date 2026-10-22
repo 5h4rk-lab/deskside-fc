@@ -15,9 +15,13 @@ DimSchedule::DimSchedule(int startHour, int endHour, uint8_t dimPercent, uint8_t
       dim_(dimPercent),
       day_(dayPercent) {}
 
-uint8_t DimSchedule::brightness_at(int hour, bool recentlyTouched) const {
-  if (recentlyTouched || start_ == end_) return day_;
+bool DimSchedule::in_night(int hour) const {
+  if (start_ == end_) return false;
   const int h = normalise_hour(hour);
-  const bool night = start_ < end_ ? (h >= start_ && h < end_) : (h >= start_ || h < end_);
-  return night ? dim_ : day_;
+  return start_ < end_ ? (h >= start_ && h < end_) : (h >= start_ || h < end_);
+}
+
+uint8_t DimSchedule::brightness_at(int hour, bool recentlyTouched) const {
+  if (recentlyTouched) return day_;
+  return in_night(hour) ? dim_ : day_;
 }

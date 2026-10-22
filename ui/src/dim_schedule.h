@@ -10,6 +10,9 @@ class DimSchedule {
   // mean no night window. Hours are normalised modulo 24.
   DimSchedule(int startHour, int endHour, uint8_t dimPercent, uint8_t dayPercent = 100);
 
+  // True when `hour` (normalised modulo 24) is inside the night window.
+  bool in_night(int hour) const;
+
   // `dimPercent` inside the night window unless `recentlyTouched`, otherwise
   // `dayPercent`. `hour` is normalised modulo 24.
   uint8_t brightness_at(int hour, bool recentlyTouched) const;
