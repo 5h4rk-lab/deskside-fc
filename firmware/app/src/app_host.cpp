@@ -15,6 +15,7 @@
 #include "app.h"
 #include "goal_detector.h"
 #include "host_loop.h"
+#include "power_policy.h"
 #include "image_provider.h"
 #include "screens/goal.h"
 #include "format.h"
@@ -86,11 +87,96 @@ bool networkReady() {
 }
 #endif
 
+#if APP_DIAG
+bool s_powerDryRun = false;     // the next power-off skips the GPIO7 write (diagnostics only)
+int64_t s_diagKeyUntilMs = -1;  // an injected key press lasts until then
+#endif
+
+// The board side of PowerController (LVGL task). Every step is logged with
+// the time, so the order can be read off the serial console.
+class BoardPowerHost : public PowerHost {
+ public:
+  BoardPowerHost(Backlight& backlight, EspWifiService& wifi) : backlight_(backlight), wifi_(wifi) {}
+  void attach(lv_obj_t* app, I2sSoundOut* speaker) {
+    app_ = app;
+    speaker_ = speaker;
+  }
+  bool off() const { return off_; }
+
+  void toggle_screen() override {
+    if (!app_) return;
+    const bool off = !app_screen_off(app_);
+    app_set_screen_off(app_, off);
+    log(off ? "short press: screen off (a touch or the key wakes it)" : "short press: screen on");
+  }
+  void screen_on() override {
+    if (app_ && app_screen_off(app_)) app_set_screen_off(app_, false);
+  }
+  void show_hold_hint(bool show) override {
+    if (app_) app_show_power_hint(app_, show);
+    log(show ? "held 1 s: 'Hold to power off'" : "hint gone");
+  }
+  void stop_sound() override {
+    if (speaker_ && speaker_->ok()) speaker_->stop();
+    log("power-off 1/7: speaker stopped");
+  }
+  void wait_sound_idle(uint32_t timeoutMs) override {
+    const int64_t t0 = monotonicMs();
+    const bool idle = !(speaker_ && speaker_->ok()) || speaker_->wait_idle(timeoutMs);
+    Serial.printf("[power] %lld ms power-off 2/7: speaker %s after %lld ms (limit %lu ms)\n", (long long)monotonicMs(),
+                  idle ? "silent" : "STILL BUSY", (long long)(monotonicMs() - t0), (unsigned long)timeoutMs);
+  }
+  void show_powering_off() override {
+    if (app_) app_show_powering_off(app_);
+    log("power-off 3/7: 'Powering off' shown (1.5 s)");
+  }
+  void save_prefs() override {
+    if (app_) app_save_settings(app_);
+    log("power-off 4/7: settings saved");
+  }
+  void stop_wifi() override {
+    const bool ok = wifi_.stop_radio(1000);
+    log(ok ? "power-off 5/7: Wi-Fi stopped" : "power-off 5/7: Wi-Fi did NOT confirm the stop within 1 s");
+  }
+  void cut_power() override {
+#if APP_DIAG
+    if (s_powerDryRun) {
+      log("power-off 6/7: DRY RUN, GPIO7 stays HIGH (a real power-off drives it low here)");
+      return;
+    }
+#endif
+    log("power-off 6/7: GPIO7 low (on battery the board goes dark once the key is up)");
+    Serial.flush();
+    power_hold_cut();
+  }
+  void enter_off_state() override {
+    off_ = true;
+    backlight_.set_percent(0);
+    log("power-off 7/7: still powered (USB, or the key still held): off state, backlight 0, a key press restarts");
+  }
+  void wake_from_off() override {
+    log("key pressed in the off state: restarting");
+    Serial.flush();
+    delay(50);
+    esp_restart();
+  }
+
+ private:
+  static void log(const char* what) { Serial.printf("[power] %lld ms %s\n", (long long)monotonicMs(), what); }
+
+  Backlight& backlight_;
+  EspWifiService& wifi_;
+  lv_obj_t* app_ = nullptr;
+  I2sSoundOut* speaker_ = nullptr;
+  bool off_ = false;
+};
+
 struct Host {
-  Host(Prefs& p, Backlight& b, EspWifiService& w, I2sSoundOut* sp, const HelperConfig& helper)
+  Host(Prefs& p, Backlight& b, EspWifiService& w, EspPowerService& pw, I2sSoundOut* sp, const HelperConfig& helper)
       : prefs(p),
         backlight(b),
         wifi(w),
+        power(pw),
 #if !APP_DEMO_DATA
         transport("data", EspHttpTransport::kJsonCapBytes, "application/json", &networkReady),
         http(helper.valid ? new (std::nothrow) HttpSource(transport, helper.url, helper.token) : nullptr),
@@ -110,10 +196,13 @@ struct Host {
              // noticed by the link watch in onTick, which does the same).
              [this] { loop.poller().request_all_now(); }},
         loop(store, source, makeHooks()),
-        speaker(sp) {
+        speaker(sp),
+        powerHost(b, w),
+        powerKey(powerHost, 0) {
     (void)helper;
     // A speaker that failed to start (logged once by begin()) gets no Sound rows.
     deps.sound = speaker && speaker->ok() ? speaker : nullptr;
+    deps.power = &power;
   }
 
   HostLoop::Hooks makeHooks() {
@@ -151,6 +240,7 @@ struct Host {
   Prefs& prefs;
   Backlight& backlight;
   EspWifiService& wifi;
+  EspPowerService& power;
   Store store;
   NoImages noImages;
 #if APP_DEMO_DATA
@@ -176,6 +266,10 @@ struct Host {
   HostLoop loop;
   I2sSoundOut* speaker;
   lv_obj_t* app = nullptr;
+  BoardPowerHost powerHost;
+  PowerController powerKey;
+  int64_t keySampledAt = -1000000;
+  bool keyLevel = false;
 };
 
 Host* s_host = nullptr;
@@ -218,7 +312,11 @@ void testCelebration(bool fullTime) {
 // clock). Once refreshes run, app_refresh() takes over.
 void untimedBacklight() {
   const Settings* s = app_settings(s_host->app);
-  if (!s || s->dayBrightness == s_host->lastUntimedPercent) return;
+  if (!s || app_screen_off(s_host->app)) {
+    s_host->lastUntimedPercent = -1;  // set again when the screen comes back on
+    return;
+  }
+  if (s->dayBrightness == s_host->lastUntimedPercent) return;
   s_host->lastUntimedPercent = s->dayBrightness;
   s_host->backlight.set_percent(static_cast<uint8_t>(s->dayBrightness));
 }
@@ -255,10 +353,11 @@ void watchNetwork(int64_t epoch) {
 void printSettings() {
   const Settings* s = s_host && s_host->app ? app_settings(s_host->app) : nullptr;
   if (!s) return;
-  Serial.printf("[app] settings: favourite %s (id %s), zone %s, brightness %d%%, night dim %s %d-%d h at %d%%, reduced motion %s\n",
+  static const char* const kBattery[] = {"Auto", "Installed", "None"};
+  Serial.printf("[app] settings: favourite %s (id %s), zone %s, brightness %d%%, night dim %s %d-%d h at %d%%, reduced motion %s, battery %s\n",
                 s->favourite.name.c_str(), s->favourite.id.c_str(), s->zoneId.c_str(), s->dayBrightness,
                 s->nightDim ? "on" : "off", s->nightStartHour, s->nightEndHour, s->nightPercent,
-                s->reducedMotion ? "on" : "off");
+                s->reducedMotion ? "on" : "off", kBattery[static_cast<int>(s->battery) % 3]);
 }
 
 // The serial :sound command: one clip (or the test tone) now, at the saved
@@ -422,10 +521,30 @@ void runCommand(const Command& c) {
   }
 }
 
+// The power key, every tick: one pin read; the controller gets a sample when
+// it asked for one (every 10 ms, or every 10 s in the off state) or the level
+// changed.
+void powerKeyTick() {
+  Host& h = *s_host;
+  const int64_t now = monotonicMs();
+  bool level = power_key_down();
+#if APP_DIAG
+  if (now < s_diagKeyUntilMs) level = true;
+#endif
+  if (now - h.keySampledAt >= h.powerKey.poll_interval_ms() || level != h.keyLevel) {
+    h.powerKey.update(level, now);
+    h.keySampledAt = now;
+  }
+  h.keyLevel = level;
+}
+
 // Runs in the LVGL task every kTickMs, inside lv_timer_handler().
 void onTick(lv_timer_t*) {
   Command c;
   while (s_queue && xQueueReceive(s_queue, &c, 0) == pdTRUE) runCommand(c);
+  powerKeyTick();
+  // Switching off or off: no data, no refresh, nothing new to draw.
+  if (s_host->powerKey.mode() != PowerController::Mode::On) return;
   s_host->wifi.pump();  // driver events and timers of the Wi-Fi service; its callbacks run here
   const int64_t epoch = epochNow();
 #if !APP_DEMO_DATA
@@ -446,8 +565,8 @@ static void heapStep(const char* what) {
   last = now;
 }
 
-bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, I2sSoundOut* speaker,
-                    const HelperConfig& helper) {
+bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, EspPowerService& power,
+                    I2sSoundOut* speaker, const HelperConfig& helper) {
   if (s_host) return true;
   heapStep("before the app");
   s_queue = xQueueCreate(kQueueLength, sizeof(Command));
@@ -457,7 +576,7 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, I2
 #if !APP_DEMO_DATA
   s_readyWifi = &wifi;
 #endif
-  s_host = new (std::nothrow) Host(prefs, backlight, wifi, speaker, helper);
+  s_host = new (std::nothrow) Host(prefs, backlight, wifi, power, speaker, helper);
   if (!s_host) {
     Serial.println("[app] ERROR: out of memory for the app state");
     return false;
@@ -485,6 +604,7 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, I2
     return false;
   }
   s_host->app = app;
+  s_host->powerHost.attach(app, s_host->speaker);
   heapStep("app_create done");
   printSettings();
 #if APP_DEMO_DATA
@@ -517,6 +637,29 @@ void app_host_post(AppCommand command, int arg) {
 }
 
 int64_t app_host_epoch() { return epochNow(); }
+
+void app_host_print_power() {
+  if (!s_host) return;
+  const Settings* s = s_host->app ? app_settings(s_host->app) : nullptr;
+  s_host->power.print_status(s ? s->battery : BatteryChoice::Auto);
+}
+
+#if APP_DIAG
+void app_host_diag_power_off() {
+  if (!s_host) return;
+  s_powerDryRun = true;
+  Serial.printf("[diag] %lld ms power-off DRY RUN started (GPIO7 is not touched)\n", (long long)monotonicMs());
+  s_host->powerKey.power_off();
+}
+
+void app_host_diag_key(int ms) {
+  if (!s_host) return;
+  s_powerDryRun = true;  // an injected long press must never cut the power
+  s_diagKeyUntilMs = monotonicMs() + ms;
+  Serial.printf("[diag] %lld ms power key held for %d ms (injected; any power-off is a DRY RUN)\n",
+                (long long)monotonicMs(), ms);
+}
+#endif
 
 void app_host_post_call(void (*fn)()) {
   if (!s_queue || !fn) return;

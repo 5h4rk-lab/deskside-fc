@@ -31,6 +31,7 @@
 #include "app_diag.h"
 
 #include "backlight.h"
+#include "platform/esp_power_service.h"
 #include "platform/esp_wifi_service.h"
 #include "platform/i2s_sound_out.h"
 #include "prefs.h"
@@ -78,15 +79,30 @@ struct HelperConfig {
 };
 
 // Builds the UI. Call once, with the LVGL lock held (lvgl_lock) and after
-// lvgl_port_start(). `prefs`, `backlight`, `wifi` and `speaker` (nullable:
-// then no sound and no Sound rows in Settings) must outlive the app;
+// lvgl_port_start(). `prefs`, `backlight`, `wifi`, `power` (begun) and
+// `speaker` (nullable: then no sound and no Sound rows in Settings) must
+// outlive the app;
 // `wifi` must have load()ed its saved list (the UI opens the first-run setup
 // when it is empty) and is pumped from the app's 10 ms timer. `helper` is
 // copied (the caller wipes its own copy of the token). Returns false (after
 // printing why) when memory is short; the app is then not running and the
 // other calls do nothing.
-bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, I2sSoundOut* speaker,
-                    const HelperConfig& helper);
+//
+// The power key (GPIO6) is sampled in the app's 10 ms timer and runs the shared
+// PowerController (ui/src/power_policy.h): a short press turns the screen off
+// or on (a touch also wakes it), holding it shows "Hold to power off" after
+// 1 s and switches off at 3 s: the speaker is stopped (wait up to 300 ms), the
+// "Powering off" screen shows for 1.5 s, the settings are saved, the radio
+// stops and the power hold (GPIO7) goes low. On battery the board goes dark
+// once the key is up; still powered (USB), it stays in the off state
+// (backlight 0, nothing drawn, no network, the key looked at every 10 s or
+// when its level changes) until a press restarts it.
+bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, EspPowerService& power,
+                    I2sSoundOut* speaker, const HelperConfig& helper);
+
+// The [power] line (battery reading, calibration, model, setting, key, hold
+// pin, USB data). LVGL task (post it).
+void app_host_print_power();
 
 // Queues `fn` to run in the LVGL task (for serial commands that touch state
 // the LVGL task owns, such as the settings in flash). Same queue and the same
@@ -106,6 +122,16 @@ int64_t app_host_epoch();
 // ([img]): cache bytes and count, requests waiting and in flight, remembered
 // failures, decode times, the picture transport's counters. LVGL task (post it).
 void app_host_print_net();
+
+#if APP_DIAG
+// Diagnostics builds (LVGL task, post them). Both make the next power-off a DRY
+// RUN: every step but the GPIO7 write (logged instead), then the off state.
+// The switch-off sequence now, as a long press would start it.
+void app_host_diag_power_off();
+// A power key press of `ms` milliseconds, as if the key were held (OR'ed with
+// the real key).
+void app_host_diag_key(int ms);
+#endif
 
 #if APP_DIAG && !APP_DEMO_DATA
 // Diagnostics builds (LVGL task, post them): `n` matches requests one after

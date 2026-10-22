@@ -190,6 +190,15 @@ class EspRadio : public WifiRadio {
     post(c);
   }
   bool link_up() override { return linkUp_.load(); }
+  // Any task: asks the worker to stop the radio and waits up to `waitMs` for it.
+  bool stop_radio(uint32_t waitMs) {
+    if (!commands_) return true;  // never started
+    Command c = {};
+    c.type = Command::Stop;
+    if (!post(c)) return false;
+    for (uint32_t t = 0; t < waitMs && !stopped_.load(); t += 10) vTaskDelay(pdMS_TO_TICKS(10));
+    return stopped_.load();
+  }
   int rssi() override { return rssi_.load(); }
 
   bool pop_event(DriverEvent& e) { return events_ && xQueueReceive(events_, &e, 0) == pdTRUE; }
@@ -322,6 +331,18 @@ class EspRadio : public WifiRadio {
         esp_wifi_disconnect();
         break;
       case Command::Stop:
+        // Switching off: the radio goes quiet for good (until the restart).
+        if (ready_) {
+          ready_ = false;
+          gen_ = 0;
+          linkUp_ = false;
+          stop_scan();
+          scanPhase_ = Idle;
+          esp_wifi_disconnect();
+          const esp_err_t err = esp_wifi_stop();
+          Serial.printf("[wifi] radio stopped (%s)\n", esp_err_to_name(err));
+        }
+        stopped_ = true;
         break;
     }
   }
@@ -481,6 +502,7 @@ class EspRadio : public WifiRadio {
   TaskHandle_t task_ = nullptr;
   std::atomic<bool> ready_{false};
   std::atomic<bool> linkUp_{false};
+  std::atomic<bool> stopped_{false};
   std::atomic<int> rssi_{0};
   std::atomic<uint32_t> gen_{0};
   std::atomic<int> scanPhase_{Idle};
@@ -586,6 +608,8 @@ void EspWifiService::print_state() {
 }
 
 bool EspWifiService::link_up() const { return impl_ && impl_->radio.link_up(); }
+
+bool EspWifiService::stop_radio(uint32_t waitMs) { return !impl_ || !impl_->started || impl_->radio.stop_radio(waitMs); }
 
 size_t EspWifiService::worker_stack_free_bytes() const { return impl_ ? impl_->radio.stack_free_bytes() : 0; }
 

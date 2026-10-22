@@ -36,6 +36,11 @@
 //   :sound tone l|r|both [v]  1 s of 440 Hz on the left channel only, the right only, or both
 //                    (which speaker sounds tells whether the board drives two speakers)
 //   :sound stop      stop what plays (20 ms fade);  :sound  alone prints the speaker's state
+//   :power           one line: battery ADC and voltage, calibration, model, Battery setting, power key,
+//                    power hold, USB data (also every 5 s with the status report)
+//   :cal-battery <mV>  calibrate the battery reading: <mV> is a multimeter's reading of the pack now
+//                    (3000..4400); stored in NVS batt.cal. :cal-battery clear  back to the factory
+//                    formula;  :cal-battery  alone shows the state
 //   :help            list the commands
 // The helper's address and token come from NVS (namespace "helper", keys helper.url and
 // helper.token, written by :set-url / :set-token, see tools/provision-helper.sh), else
@@ -60,6 +65,11 @@
 //   :diag-slow-body      one GET to a public endpoint that trickles its body (no token): must end at ~8 s
 //   :diag-slow-headers   one GET to a public endpoint that holds its headers 10 s (no token): must end at ~8 s
 //   :diag-offline        toggle: refuse every request as if the router were off (stale marker test)
+//   :diag-power-off      the switch-off sequence now as a DRY RUN: every step but the GPIO7 write
+//                        (logged instead), then the off state; a key press (or :diag-key) restarts
+//   :diag-key <ms>       a power key press of 30..20000 ms (OR'ed with the real key); makes any
+//                        power-off a dry run: 200 toggles the screen, 1500 shows the hint, 3500 switches off
+//   :diag-batt <mV>|off  the battery model gets <mV> (2000..4500) instead of the ADC (low-battery banner test)
 // The commands are read here (the Arduino loop task) and handed to the LVGL
 // task through a queue (the settings erase and the NVS self-test too), so the
 // console never slows the screen and nothing but the LVGL task touches the UI
@@ -82,7 +92,9 @@
 #include <vector>
 
 #include "helper_config.h"
+#include "battery_cal.h"
 #include "platform/esp_http_transport.h"
+#include "platform/esp_power_service.h"
 #include "platform/esp_wifi_service.h"
 #include "platform/i2s_sound_out.h"
 #include "platform/nvs_prefs.h"
@@ -163,6 +175,8 @@ NvsPrefs* s_prefs = nullptr;
 NvsPrefs* s_helperPrefs = nullptr;  // namespace "helper": helper.url, helper.token
 EspWifiService* s_wifi = nullptr;
 I2sSoundOut* s_speaker = nullptr;
+EspPowerService* s_power = nullptr;
+int s_calPpm = 0;  // a calibration on its way from the loop task to the LVGL task
 TaskHandle_t s_prepTask = nullptr;  // "snd_prep": deleted by the loop task once it has suspended itself
 std::string s_urlInUse;             // the helper address the app runs with ("" when none)
 bool s_helperInUse = false;
@@ -221,6 +235,7 @@ void printStatus(uint32_t elapsedMs, bool fast) {
   if (!fast) {
     printMemory();
     app_host_post_call(app_host_print_net);
+    app_host_post_call(app_host_print_power);
   }
 }
 
@@ -660,6 +675,66 @@ void soundPrepareTask(void*) {
   vTaskSuspend(nullptr);
 }
 
+// ---- battery calibration ------------------------------------------------------------
+
+// :cal-battery [mV|clear] (loop task, the ADC's only user). The NVS write runs in
+// the LVGL task, which owns the settings namespace.
+void calBatteryCommand(const std::string& value) {
+  if (!s_power) return;
+  const CalCommand c = parse_cal_command(value);
+  switch (c.kind) {
+    case CalCommand::Kind::Invalid:
+      Serial.printf("[cmd] cal-battery: :cal-battery <mV> (a multimeter's reading of the pack, %d to %d), "
+                    ":cal-battery clear, :cal-battery (state)\n",
+                    battery_cal::kMinMv, battery_cal::kMaxMv);
+      return;
+    case CalCommand::Kind::Show: {
+      const int factory = s_power->read_factory_mv();
+      const std::optional<int> ppm = s_power->calibration();
+      Serial.printf("[cmd] cal-battery: factory reading %d mV now; %s", factory,
+                    ppm ? "calibrated, scale " : "not calibrated (factory formula)\n");
+      if (ppm) Serial.printf("%d ppm -> %d mV\n", *ppm, apply_battery_cal(factory, *ppm));
+      return;
+    }
+    case CalCommand::Kind::Clear:
+      app_host_post_call([] {
+        clear_battery_cal(*s_prefs);
+        s_power->set_calibration(std::nullopt);
+        Serial.println("[cmd] cal-battery: cleared, the factory formula applies again");
+      });
+      return;
+    case CalCommand::Kind::Set: {
+      const int factory = s_power->read_factory_mv();
+      const std::optional<int> ppm = battery_cal_ppm(c.mv, factory);
+      if (!ppm) {
+        Serial.printf("[cmd] cal-battery: refused, %d mV is more than 20 %% away from the reading (%d mV); "
+                      "nothing saved\n", c.mv, factory);
+        return;
+      }
+      s_calPpm = *ppm;
+      Serial.printf("[cmd] cal-battery: reading %d mV, multimeter %d mV -> scale %d ppm\n", factory, c.mv, *ppm);
+      app_host_post_call([] {
+        save_battery_cal(*s_prefs, s_calPpm);
+        const std::optional<int> back = load_battery_cal(*s_prefs);
+        s_power->set_calibration(back);
+        Serial.printf("[cmd] cal-battery: %s\n", back && *back == s_calPpm ? "saved (batt.cal), in use now"
+                                                                          : "NOT saved; the factory formula stays");
+      });
+      return;
+    }
+  }
+}
+
+#if APP_DIAG
+// Digits only, inside [lo, hi]; -1 otherwise.
+int diagNumber(const std::string& v, int lo, int hi) {
+  if (v.empty() || v.size() > 5 || v.find_first_not_of("0123456789") != std::string::npos) return -1;
+  const int n = atoi(v.c_str());
+  return n >= lo && n <= hi ? n : -1;
+}
+int s_diagKeyMs = 0;
+#endif
+
 // Whole-word commands and the one-letter commands share the console; see serial_commands.h.
 SerialCommandSplitter s_splitter;
 
@@ -697,8 +772,32 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     return;
   }
 #endif
+#if APP_DIAG
+  if (name == "diag-key") {
+    s_diagKeyMs = diagNumber(value, 30, 20000);
+    if (s_diagKeyMs < 0) {
+      Serial.println("[cmd] diag-key: :diag-key <ms>, 30 to 20000");
+    } else {
+      app_host_post_call([] { app_host_diag_key(s_diagKeyMs); });
+    }
+    return;
+  }
+  if (name == "diag-batt") {
+    const int mv = value == "off" ? 0 : diagNumber(value, 2000, 4500);
+    if (mv < 0 || !s_power) {
+      Serial.println("[cmd] diag-batt: :diag-batt <mV> (2000 to 4500) or :diag-batt off");
+    } else {
+      s_power->diag_inject_mv(mv);
+      Serial.printf("[cmd] diag-batt: %s (the model restarts)\n", mv ? "battery model fed the injected value" : "the ADC again");
+      if (mv) Serial.printf("[cmd] diag-batt: %d mV\n", mv);
+    }
+    return;
+  }
+#endif
   if (name == "set-token") {
     setHelperToken(value);
+  } else if (name == "cal-battery") {
+    calBatteryCommand(value);
   } else if (name == "set-url") {
     setHelperUrl(value);
   } else if (name == "sound") {
@@ -711,6 +810,12 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     showHelperConfig();
   } else if (name == "net") {
     app_host_post_call(app_host_print_net);
+  } else if (name == "power") {
+    app_host_post_call(app_host_print_power);
+#if APP_DIAG
+  } else if (name == "diag-power-off") {
+    app_host_post_call(app_host_diag_power_off);
+#endif
 #if APP_DIAG
   } else if (name == "diag-clock-break") {
     time_sync_diag_break();
@@ -738,7 +843,7 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
   } else if (name == "help") {
     Serial.println("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): :wifi :wipe-wifi :erase-settings :restart "
                    ":set-url <url> :set-token <token> :show-config :net :sound [goal|win|kickoff|fulltime|low|critical|"
-                   "wifi|tone l|tone r|tone both|stop] [volume] :help | a word unfinished for 5 s is dropped with the "
+                   "wifi|tone l|tone r|tone both|stop] [volume] :power :cal-battery [<mV>|clear] :help | a word unfinished for 5 s is dropped with the "
                    "rest of its line");
   } else {
     // Not echoed: a mistyped word may hold a secret.
@@ -804,6 +909,11 @@ void setup() {
   static I2sSoundOut speaker;
   speaker.begin();
   s_speaker = &speaker;
+
+  // The battery reading and the power key, before the UI asks for them.
+  static EspPowerService power;
+  power.begin(prefs);
+  s_power = &power;
   Serial.printf("[heap] %-22s internal free %6u\n", "after the speaker", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
 
   if (!lvgl_lock(1000)) {
@@ -814,7 +924,7 @@ void setup() {
     HelperConfig helper = loadHelperConfig();
     s_helperInUse = helper.valid;
     s_urlInUse = helper.url;
-    s_appOk = app_host_start(prefs, backlight, wifi, &speaker, helper);
+    s_appOk = app_host_start(prefs, backlight, wifi, power, &speaker, helper);
     wipeString(helper.token);
   }
   lvgl_unlock();
@@ -875,6 +985,13 @@ void loop() {
     s_dumpLabel = nullptr;
   }
 #endif
+
+  // The battery, once a second (16 ADC readings, about 1 ms).
+  static uint32_t lastPowerSample = millis();
+  if (s_power && now - lastPowerSample >= EspPowerService::kSampleMs) {
+    lastPowerSample = now;
+    s_power->sample();
+  }
 
   const uint32_t period = s_fast ? kFastStatusMs : kStatusMs;
   if (now - lastReport >= period) {

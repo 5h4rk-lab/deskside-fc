@@ -68,6 +68,11 @@ class EspWifiService : public WifiService {
   // Any task: true while the board has an IP address.
   bool link_up() const;
 
+  // Switching off (LVGL task): the worker leaves the network and stops the
+  // radio; waits up to `waitMs` for it. Joins and scans fail from then on
+  // (until the restart). True when the radio is stopped (or never started).
+  bool stop_radio(uint32_t waitMs);
+
   // Worker stack headroom in bytes (0 before start()).
   size_t worker_stack_free_bytes() const;
 
