@@ -828,3 +828,42 @@ TEST_CASE("http images: the entry overhead is charged to the budget, so small pi
   CHECK(plain.provider.cached_images() == 25);
   CHECK(plain.provider.cached_bytes() == 25 * 64);
 }
+
+TEST_CASE("http images: a 5xx for a cutout is remembered for 5 minutes, a 5xx for another picture for 30 s") {
+  Rig rig;
+  rig.provider.request(kCutout, [](ImagePtr) {});
+  rig.provider.request(kCrest57, [](ImagePtr) {});
+  rig.transport.deliver_at(0, 502, "upstream error");
+  rig.transport.deliver_at(0, 502, "upstream error");
+  REQUIRE(rig.transport.requests.size() == 2);
+
+  // After the short window the crest is asked again, the cutout is not.
+  rig.provider.tick(HttpImageProvider::kNegativeShortMs);
+  rig.provider.request(kCutout, [](ImagePtr) {});
+  rig.provider.request(kCrest57, [](ImagePtr) {});
+  REQUIRE(rig.transport.requests.size() == 3);
+  CHECK(rig.transport.requests[2].url == std::string(kBase) + kCrest57);
+  rig.transport.deliver_at(0, 200, "OK");
+
+  CHECK(HttpImageProvider::kNegativeLongMs == 5 * 60 * 1000);
+  rig.provider.tick(HttpImageProvider::kNegativeLongMs - 1);
+  rig.provider.request(kCutout, [](ImagePtr) {});
+  CHECK(rig.transport.requests.size() == 3);
+  rig.provider.tick(HttpImageProvider::kNegativeLongMs);
+  rig.provider.request(kCutout, [](ImagePtr) {});
+  REQUIRE(rig.transport.requests.size() == 4);
+  CHECK(rig.transport.requests[3].url == std::string(kBase) + kCutout);
+}
+
+TEST_CASE("http images: a cutout 429 or transport error keeps the short window") {
+  Rig rig;
+  rig.provider.request(kCutout, [](ImagePtr) {});
+  rig.transport.deliver_at(0, 429, "");
+  rig.provider.tick(HttpImageProvider::kNegativeShortMs);
+  rig.provider.request(kCutout, [](ImagePtr) {});
+  REQUIRE(rig.transport.requests.size() == 2);
+  rig.transport.deliver_error_at(0);
+  rig.provider.tick(2 * HttpImageProvider::kNegativeShortMs);
+  rig.provider.request(kCutout, [](ImagePtr) {});
+  CHECK(rig.transport.requests.size() == 3);
+}

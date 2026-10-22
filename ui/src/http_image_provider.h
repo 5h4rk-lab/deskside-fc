@@ -19,9 +19,10 @@
 //   never tried, so it is not remembered as failed).
 // - A 200 whose body decodes is cached (LRU by data_size) and answered. Any
 //   other outcome answers nullptr and is remembered, so the path is not
-//   requested again for a while: 5 minutes for 400, 404, other client errors
-//   and undecodable bodies; 30 seconds for transport errors, 5xx, 408, 429 and
-//   lost requests; 60 seconds for a 401, which also sets auth_rejected() until
+//   requested again for a while: 5 minutes for 400, 404, other client errors,
+//   undecodable bodies and 5xx answers to /api/cutout (a failing player
+//   lookup); 30 seconds for transport errors, other 5xx, 408, 429 and lost
+//   requests; 60 seconds for a 401, which also sets auth_rejected() until
 //   the next success.
 // - While the host says it is offline (set_online(false): no network or no
 //   valid clock yet), nothing new is sent: requests wait in the queue (same
@@ -79,7 +80,7 @@ class HttpImageProvider : public ImageProvider {
   static constexpr size_t kDeviceEntryOverheadBytes = 1536;
   static constexpr int kTimeoutMs = 10000;
   static constexpr int64_t kLostMs = 30000;
-  static constexpr int64_t kNegativeLongMs = 5 * 60 * 1000;  // 400, 404, decode failures
+  static constexpr int64_t kNegativeLongMs = 5 * 60 * 1000;  // 400, 404, decode failures, cutout 5xx
   static constexpr int64_t kNegativeShortMs = 30 * 1000;     // transport errors, 5xx, lost
   static constexpr int64_t kNegativeAuthMs = 60 * 1000;      // 401
 

@@ -162,6 +162,10 @@ void HttpImageProvider::finish(const std::string& path, uint32_t id, HttpResult 
   } else if (result.status == 401) {
     authRejected_ = true;
     remember_failure(path, kNegativeAuthMs);
+  } else if (result.status >= 500 && starts_with(path, kCutoutPrefix)) {
+    // The helper answers 5xx when its player lookup fails (rate limits of the
+    // free lookup service): a lineup of 22 retried every 30 s keeps it failing.
+    remember_failure(path, kNegativeLongMs);
   } else if (result.status >= 500 || result.status == 408 || result.status == 429) {
     remember_failure(path, kNegativeShortMs);
   } else {
