@@ -1,5 +1,7 @@
 #include "settings.h"
 
+#include <cstdlib>
+
 #include "timezone.h"
 
 namespace {
@@ -51,6 +53,17 @@ std::string color_text(uint32_t color) {
   return s;
 }
 
+// A stored volume: the nearest step of kSoundVolumes (ties go to the lower),
+// the default when it is further than half a step outside the range.
+int sound_volume_from(int v) {
+  if (v < kSoundVolumes[0] - 10 || v > kSoundVolumes[4] + 10) return kDefaultSoundVolume;
+  int best = kSoundVolumes[0];
+  for (int step : kSoundVolumes) {
+    if (std::abs(step - v) < std::abs(best - v)) best = step;
+  }
+  return best;
+}
+
 }  // namespace
 
 Settings::Settings() : favourite(default_favourite()) {}
@@ -85,6 +98,10 @@ Settings load_settings(const Prefs& prefs) {
   s.nightEndHour = clamp(pref_int(prefs, "night.end", s.nightEndHour), 0, 23);
   s.nightPercent = clamp(pref_int(prefs, "night.pct", s.nightPercent), 5, 100);
   s.reducedMotion = pref_bool(prefs, "reduced", s.reducedMotion);
+  const int mode = pref_int(prefs, "snd.mode", static_cast<int>(s.soundMode));
+  if (mode >= 0 && mode <= 2) s.soundMode = static_cast<SoundMode>(mode);
+  s.soundVolume = sound_volume_from(pref_int(prefs, "snd.vol", s.soundVolume));
+  s.soundMuteAtNight = pref_bool(prefs, "snd.night", s.soundMuteAtNight);
   return s;
 }
 
@@ -103,4 +120,7 @@ void save_settings(Prefs& prefs, const Settings& s) {
   set_pref_int(prefs, "night.end", s.nightEndHour);
   set_pref_int(prefs, "night.pct", s.nightPercent);
   set_pref_bool(prefs, "reduced", s.reducedMotion);
+  set_pref_int(prefs, "snd.mode", static_cast<int>(s.soundMode));
+  set_pref_int(prefs, "snd.vol", s.soundVolume);
+  set_pref_bool(prefs, "snd.night", s.soundMuteAtNight);
 }

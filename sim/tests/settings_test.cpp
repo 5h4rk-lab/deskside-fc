@@ -184,3 +184,81 @@ TEST_CASE("fav.primary: saved, absent or malformed falls back to the favourite's
   r.set("fav.color", "nope");
   CHECK(load_settings(r).favourite.primary == 0xEF0107u);
 }
+
+TEST_CASE("sound settings: defaults are Goals only, volume 40, mute at night") {
+  MemoryPrefs p;
+  const Settings s = load_settings(p);
+  CHECK(s.soundMode == SoundMode::GoalsOnly);
+  CHECK(s.soundVolume == 40);
+  CHECK(s.soundMuteAtNight == true);
+}
+
+TEST_CASE("sound settings: round trip under the keys snd.mode, snd.vol and snd.night") {
+  Settings s;
+  s.soundMode = SoundMode::GoalsAndAlerts;
+  s.soundVolume = 80;
+  s.soundMuteAtNight = false;
+  MemoryPrefs p;
+  save_settings(p, s);
+  std::string v;
+  REQUIRE(p.get("snd.mode", v));
+  CHECK(v == "2");
+  REQUIRE(p.get("snd.vol", v));
+  CHECK(v == "80");
+  REQUIRE(p.get("snd.night", v));
+  CHECK(v == "0");
+  const Settings r = load_settings(p);
+  CHECK(r.soundMode == SoundMode::GoalsAndAlerts);
+  CHECK(r.soundVolume == 80);
+  CHECK(r.soundMuteAtNight == false);
+  for (const char* key : {"snd.mode", "snd.vol", "snd.night"}) CHECK(prefs_key_valid(key));
+}
+
+TEST_CASE("sound settings: every volume step and mode survives a round trip") {
+  for (int vol : {20, 40, 60, 80, 100}) {
+    for (SoundMode m : {SoundMode::Off, SoundMode::GoalsOnly, SoundMode::GoalsAndAlerts}) {
+      Settings s;
+      s.soundVolume = vol;
+      s.soundMode = m;
+      MemoryPrefs p;
+      save_settings(p, s);
+      const Settings r = load_settings(p);
+      CHECK(r.soundVolume == vol);
+      CHECK(r.soundMode == m);
+    }
+  }
+}
+
+TEST_CASE("sound settings: an unknown mode is the default") {
+  for (const char* bad : {"3", "-1", "99", "loud", "", "1.5"}) {
+    MemoryPrefs p;
+    p.set("snd.mode", bad);
+    CHECK(load_settings(p).soundMode == SoundMode::GoalsOnly);
+  }
+  MemoryPrefs off;
+  off.set("snd.mode", "0");
+  CHECK(load_settings(off).soundMode == SoundMode::Off);
+}
+
+TEST_CASE("sound settings: a stored volume snaps to the nearest step, or the default when out of range") {
+  const struct {
+    const char* stored;
+    int expected;
+  } cases[] = {{"20", 20},  {"25", 20},  {"31", 40},  {"50", 40},  {"51", 60}, {"70", 60}, {"71", 80},
+               {"90", 80},  {"91", 100}, {"100", 100}, {"110", 100}, {"10", 20}, {"9", 40},  {"111", 40},
+               {"0", 40},   {"-40", 40}, {"5000", 40}, {"loud", 40}, {"", 40}};
+  for (const auto& c : cases) {
+    MemoryPrefs p;
+    p.set("snd.vol", c.stored);
+    INFO("stored '" << c.stored << "'");
+    CHECK(load_settings(p).soundVolume == c.expected);
+  }
+}
+
+TEST_CASE("sound settings: a malformed night mute flag is the default (on)") {
+  MemoryPrefs p;
+  p.set("snd.night", "maybe");
+  CHECK(load_settings(p).soundMuteAtNight == true);
+  p.set("snd.night", "0");
+  CHECK(load_settings(p).soundMuteAtNight == false);
+}

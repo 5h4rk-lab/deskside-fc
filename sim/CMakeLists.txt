@@ -64,6 +64,7 @@ add_library(ui STATIC "${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp"
   "${UI_DIR}/src/refresh_policy.cpp" "${UI_DIR}/src/http_source.cpp" "${UI_DIR}/src/poller.cpp"
   "${UI_DIR}/src/host_loop.cpp" "${UI_DIR}/src/demo_data.cpp" "${UI_DIR}/src/mock_source.cpp"
   "${UI_DIR}/src/http_image_provider.cpp" "${UI_DIR}/src/lvgl_image_decoder.cpp" "${UI_DIR}/src/battery_model.cpp" "${UI_DIR}/src/screens/battery_banner.cpp"
+  "${UI_DIR}/src/sound_synth.cpp" "${UI_DIR}/src/sound_policy.cpp"
   ${UI_FONT_SOURCES})
 target_include_directories(ui PUBLIC "${UI_DIR}/src" "${UI_DIR}/fonts")
 target_link_libraries(ui PUBLIC lvgl ArduinoJson)
@@ -78,6 +79,7 @@ set_source_files_properties("${UI_DIR}/src/app.cpp" "${UI_DIR}/src/theme.cpp" "$
   "${UI_DIR}/src/refresh_policy.cpp" "${UI_DIR}/src/http_source.cpp" "${UI_DIR}/src/poller.cpp"
   "${UI_DIR}/src/host_loop.cpp" "${UI_DIR}/src/demo_data.cpp" "${UI_DIR}/src/mock_source.cpp"
   "${UI_DIR}/src/http_image_provider.cpp" "${UI_DIR}/src/lvgl_image_decoder.cpp" "${UI_DIR}/src/battery_model.cpp" "${UI_DIR}/src/screens/battery_banner.cpp"
+  "${UI_DIR}/src/sound_synth.cpp" "${UI_DIR}/src/sound_policy.cpp"
   PROPERTIES COMPILE_OPTIONS "-Wall;-Wextra")
 
 # --- Simulator executable ----------------------------------------------------
@@ -89,6 +91,11 @@ target_compile_definitions(sim PRIVATE
   CONTRACT_FIXTURES_DIR="${CMAKE_CURRENT_SOURCE_DIR}/../contract/fixtures")
 target_link_libraries(sim PRIVATE ui lvgl SDL2::SDL2 CURL::libcurl Threads::Threads)
 target_compile_options(sim PRIVATE -Wall -Wextra)
+
+# Writes the sounds to WAV files for checking off the board: dump_wav OUTDIR.
+add_executable(dump_wav dump_wav.cpp)
+target_link_libraries(dump_wav PRIVATE ui)
+target_compile_options(dump_wav PRIVATE -Wall -Wextra)
 
 # --- Tests (headless: never opens an SDL window) -----------------------------
 enable_testing()
@@ -103,7 +110,8 @@ add_executable(sim_tests sim_alloc.cpp tests/test_main.cpp tests/smoke_test.cpp 
   tests/refresh_test.cpp tests/http_source_test.cpp tests/poller_test.cpp tests/offline_test.cpp
   tests/curl_transport_test.cpp curl_transport.cpp
   tests/battery_model_test.cpp tests/battery_ui_test.cpp
-  tests/mock_power_test.cpp mock_power.cpp tests/host_loop_test.cpp tests/demo_data_test.cpp tests/ray_fan_test.cpp tests/wifi_store_test.cpp tests/wifi_controller_test.cpp tests/serial_commands_test.cpp tests/wifi_secrets_static_test.cpp tests/helper_config_test.cpp tests/helper_secrets_static_test.cpp tests/request_deadline_test.cpp)
+  tests/mock_power_test.cpp mock_power.cpp tests/host_loop_test.cpp tests/demo_data_test.cpp tests/ray_fan_test.cpp tests/wifi_store_test.cpp tests/wifi_controller_test.cpp tests/serial_commands_test.cpp tests/wifi_secrets_static_test.cpp tests/helper_config_test.cpp tests/helper_secrets_static_test.cpp tests/request_deadline_test.cpp
+  tests/sound_synth_test.cpp tests/sound_policy_test.cpp)
 target_include_directories(sim_tests PRIVATE tests "${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(sim_tests PRIVATE
   REPO_ROOT_DIR="${CMAKE_CURRENT_SOURCE_DIR}/.."
