@@ -428,7 +428,7 @@ TEST_CASE("goal overlay: goal_set_scorer fills the name and cutout in place") {
   CHECK(goal_parts()->name == name);
   CHECK(text(name) == "KAI HAVERTZ");
   REQUIRE(f.images.requested.size() == 1);
-  CHECK(f.images.requested[0] == "/api/cutout?name=Kai%20Havertz&w=192&h=192");
+  CHECK(f.images.requested[0] == "/api/cutout?name=Kai%20Havertz&w=190&h=190");
   CHECK(lv_obj_get_child_count(lv_layer_top()) == 1);
   // The stamp keeps going rather than starting over.
   test_advance(10);
@@ -1097,7 +1097,7 @@ TEST_CASE("app goal path: first sight is silent, a favourite goal celebrates and
   CHECK(f.store.detail_for("m1") != nullptr);
   bool askedCutout = false;
   for (const std::string& r : f.images.requested) {
-    if (r == "/api/cutout?name=Kai%20Havertz&w=192&h=192") askedCutout = true;
+    if (r == "/api/cutout?name=Kai%20Havertz&w=190&h=190") askedCutout = true;
   }
   CHECK(askedCutout);
 
@@ -1158,7 +1158,7 @@ TEST_CASE("app goal path: a detail that lags behind the score leaves the scorer 
   REQUIRE(goal_parts() != nullptr);
   CHECK(text(goal_parts()->name) == "ARS scored");
   for (const std::string& r : f.images.requested) {
-    CHECK(r.find("Kai%20Havertz&w=192") == std::string::npos);  // not the previous scorer
+    CHECK(r.find("Kai%20Havertz&w=190") == std::string::npos);  // not the previous scorer
   }
 
   // A stale detail on refresh changes nothing.
@@ -1171,7 +1171,7 @@ TEST_CASE("app goal path: a detail that lags behind the score leaves the scorer 
   CHECK(text(goal_parts()->name) == "GABRIEL MARTINELLI");
   bool asked = false;
   for (const std::string& r : f.images.requested) {
-    if (r == "/api/cutout?name=Gabriel%20Martinelli&w=192&h=192") asked = true;
+    if (r == "/api/cutout?name=Gabriel%20Martinelli&w=190&h=190") asked = true;
   }
   CHECK(asked);
 }
@@ -1192,6 +1192,6 @@ TEST_CASE("app goal path: once the overlay is gone a late detail does nothing") 
   CHECK_FALSE(goal_active());
   CHECK(lv_obj_get_child_count(lv_layer_top()) == 0);
   for (size_t i = requests; i < f.images.requested.size(); ++i) {
-    CHECK(f.images.requested[i].find("w=192") == std::string::npos);  // no celebration cutout
+    CHECK(f.images.requested[i].find("w=190") == std::string::npos);  // no celebration cutout
   }
 }

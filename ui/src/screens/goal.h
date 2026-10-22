@@ -41,7 +41,11 @@ constexpr int kRayCount = 24;             // wedges of 7.5 degrees with equal ga
 constexpr lv_opa_t kRayOpa = 31;          // about 12 percent white
 constexpr int kConfettiCount = 14;
 constexpr int32_t kCutoutSize = 190;      // shown size (px), bottom aligned
-constexpr int kCutoutRequest = 192;       // requested size of the cutout picture
+// Requested at exactly the shown size: a 192 px picture stretched into the
+// 190 px box went through LVGL's transform on every frame of the animation
+// and halved the frame rate on the board (11 fps; at 190 px it runs at 22 to
+// 24 fps, against 24 to 25 without a picture).
+constexpr int kCutoutRequest = kCutoutSize;
 constexpr float kLightAccent = 0.6f;      // relative luminance above which the background darkens
 constexpr uint8_t kLightDarken = 40;      // darken() amount for a light brand colour
 
