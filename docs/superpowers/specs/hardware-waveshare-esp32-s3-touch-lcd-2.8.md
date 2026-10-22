@@ -79,7 +79,7 @@ Vendor Arduino init sequence (V2, `Display_ST7789.cpp`, abbreviated; full list a
   - Power control: PWR key input on GPIO6 (`Key_BAT`, active low), power hold output GPIO7 (`BAT_Control`/`SYS_EN`). Firmware must drive GPIO7 high to stay powered on battery; driving it low shuts the board off. Long-press logic in vendor code: 10 s sleep, 15 s restart, 20 s shutdown. VERIFIED (vendor code) `PWR_Key.cpp`; FAQ: "Pressing it starts the system from battery, and the board should hold SYS_EN high to stay powered." VERIFIED (page quote) https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8/FAQ
   - On USB power the board runs without GPIO7 being held. INFERRED (the FAQ speaks only of the battery case).
 - **TF (microSD) slot**: up to 16 GB per product page text ("TF card slot, up to 16GB", VERIFIED page quote). Vendor demo uses the Arduino `SD_MMC` driver in **1-bit mode**: CLK = GPIO14, CMD = GPIO17, D0 = GPIO16, D3 = GPIO21 (card CS line, d1/d2 unused). The schematic names the same nets SD_SCLK/SD_MOSI/SD_MISO/SD_CS, and CircuitPython treats the slot as SPI (SCK 14, MOSI 17, MISO 16, CS 21). VERIFIED (vendor code) + VERIFIED (3rd-party code); either SPI or SD_MMC 1-bit works on these pins. Wiki: format FAT32.
-- **Audio**: PCM5101A I2S DAC + amplifier, 8 ohm 2 W 2030 speaker (included), volume knob. I2S: BCLK = GPIO48, LRC/WS = GPIO38, DOUT = GPIO47 (no MCLK). VERIFIED (page quote) for parts; pins VERIFIED (vendor code) `Audio_PCM5101.h` and (3rd-party code) CircuitPython. No buzzer.
+- **Audio**: PCM5101A I2S DAC + amplifier, 8 ohm 2 W 2030 speaker (included), volume knob. I2S: BCLK = GPIO48, LRC/WS = GPIO38, DOUT = GPIO47 (no MCLK). VERIFIED (page quote) for parts; pins VERIFIED (vendor code) `Audio_PCM5101.h` and (3rd-party code) CircuitPython. No buzzer. Amplifier APA2068 (stereo, two bridge-tied outputs), always on, no GPIO control; speaker connector J9 carries left and right separately: see "Measured on the board: audio" below. VERIFIED (vendor schematic, V1 PDF).
 - **Buttons**: BOOT = GPIO0 (also usable as a user button in firmware); RESET (EN); PWR key = GPIO6 (see above). VERIFIED (page quote) for existence; GPIO0 VERIFIED (3rd-party code) CircuitPython `BOOT`/`BUTTON0`. There is no separate user key besides BOOT and PWR (INFERRED from the product page list: "RESET and BOOT buttons, battery power control button, volume knob").
 - **LEDs**: power and charge indicators (hardware, not GPIO controlled as far as the sources show). VERIFIED (page quote) for existence.
 - **Headers**: 12-pin multifunction header (VBUS, D-/D+ = GPIO19/20, 3V3, SCL/SDA = GPIO10/11, TXD/RXD = GPIO43/44, IO18, IO15, GND), I2C header, UART header, speaker header, RTC battery header. VERIFIED (page quote) https://docs.waveshare.com/ESP32-S3-Touch-LCD-2.8
@@ -235,6 +235,29 @@ Not found (searched, nothing located):
 - Wi-Fi vs SPI/DMA contention: NOT FOUND in any source. The vendor demo runs a Wi-Fi scan in a core-0 task while LVGL runs on the Arduino loop core (core 1), with 80 MHz SPI; no problems are reported.
 - Battery connector polarity: NOT FOUND (wiki and product page say only "MX1.25 2-pin, 3.7 V"). Check the silkscreen and schematic before connecting a cell; many third-party LiPo packs use the opposite polarity.
 - Boot-loop behaviour: NOT FOUND.
+
+## Measured on the board: audio
+
+Task 7a, 2026-10-22, board V2 with two small speakers plugged in and a 3.7 V cell connected. Three kinds of statement below; do not mix them up.
+
+**Docs say** (V1 schematic PDF `ESP32-S3-Touch-LCD-2.8.pdf`, read from a 400 dpi render; no V2 schematic was found, so the V2 board is assumed to match):
+
+- DAC U8 PCM5101APWR: XSMT (pin 17) tied to 3V3, so the DAC is never soft-muted by a pin; FMT (16) to GND = I2S format; FLT and DEMP to GND; **SCK (12) to GND**, so the DAC makes its system clock from BCK with its PLL (no MCLK needed). OUTL/OUTR go through 470 ohm + 2.2 nF to the nets PCM_AUDIO_L and PCM_AUDIO_R. The PCM510x PLL wants BCK of about 1 MHz or more (INFERRED from TI's PCM510x clocking table, not re-read here): the firmware sends 16-bit samples in 32-bit slots, BCK = 64 x 16 kHz = 1.024 MHz.
+- Amplifier U7 **APA2068KAI-TRG** (stereo, 2 x BTL, analog volume input), supply 5V_PCM (from VCC through a 0 ohm link). INLN <- PCM_AUDIO_L and INRN <- PCM_AUDIO_R through 100 nF each. MUTE pulled to ground (1 k), /SD pulled up to 5V_PCM (10 k), HP-IN pulled to ground (10 k, speaker mode), VOLUME from the knob (R53, 10 k pot with R55 2 k). **No ESP32 pin controls the amplifier or the DAC mute**: the firmware can stop the I2S clock (the DAC then goes quiet), but cannot switch the amplifier off; any hiss the amplifier makes on its own is outside firmware control (the knob affects it).
+- Speaker connector **J9, 1.25 mm 4-pin**: pin 1 VOLN, pin 2 VOLP, pin 3 VORP, pin 4 VORN. That is **two separate speaker outputs: left on pins 1-2, right on pins 3-4**. So the docs say the board is **stereo** and drives two speakers, one per channel. Whether the V2 board has this one 4-pin J9 or two 2-pin sockets was not checked (look at the board).
+- The volume knob acts in the amplifier, after the DAC: it is independent of the software volume and multiplies with it.
+
+**Measured over the serial console** (no ear involved; release `app` and `app_diag`, 2026-10-22):
+
+- I2S starts: `[sound] ready: I2S 16000 Hz, 16-bit in 32-bit slots (BCK 1024000 Hz), 6 x 240 frames DMA (5760 B)`.
+- Every clip ran for exactly its length plus 30 ms pre-roll and 105 ms tail (Goal 2385 ms, fanfare 1545, kick-off 645, full time 1185, low 465, critical 585, Wi-Fi 345, test tone 1139/1140 ms); no write errors, **0 DMA underruns** (send-queue overflows) in all runs, including during a Wi-Fi scan, a 20-request HTTPS burst and a 30-picture download churn; no watchdog, no panic.
+- A Goal sent 0.25 s after a KickOff replaced it (`replacing the clip that plays`); `:sound stop` ended the channel 135 ms later (20 ms fade + the 105 ms of queued silence).
+- These say the driver ran. They say nothing about how it sounds.
+
+**To be confirmed by listening** (open):
+
+1. Left/right: `:sound tone l` should sound only in the speaker on pins 1-2 (VOL), `:sound tone r` only in the one on pins 3-4 (VOR). ESP-IDF puts the first sample of each frame in the WS-low slot, which is "left" in I2S Philips format (INFERRED). Answers: left only / right only / both / nothing, for each command. If both commands sound in both speakers, the board mixes to mono after all; if one speaker stays silent for both, it is a spare (or not connected).
+2. Whether any clip clicks or pops at its start or end, whether there is hiss after a clip ends (the I2S clock is stopped then), whether the start of a clip is cut (the DAC needs time to lock on its PLL after the clock starts; the pre-roll is 30 ms), and whether `:sound goal 100` distorts or crackles with the knob turned up.
 
 ## Physical
 
