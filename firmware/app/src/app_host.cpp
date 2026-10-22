@@ -642,6 +642,12 @@ void app_host_print_power() {
   if (!s_host) return;
   const Settings* s = s_host->app ? app_settings(s_host->app) : nullptr;
   s_host->power.print_status(s ? s->battery : BatteryChoice::Auto);
+  const bool dark = s_host->powerHost.off() || (s_host->app && app_screen_off(s_host->app));
+  Serial.printf("[power] screen %s, mode %s, %s\n", dark ? "OFF" : "on",
+                s_host->powerKey.mode() == PowerController::Mode::On
+                    ? "on"
+                    : (s_host->powerKey.mode() == PowerController::Mode::PoweringOff ? "powering off" : "OFF STATE"),
+                s_host->app && app_battery_banner(s_host->app) ? "low-battery banner SHOWING" : "no banner");
 }
 
 #if APP_DIAG

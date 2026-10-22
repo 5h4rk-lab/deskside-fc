@@ -279,3 +279,21 @@ TEST_CASE("the power UI is safe after the app is gone") {
   CHECK(app_power_hint(nullptr) == nullptr);
   deinit_test_display();
 }
+
+TEST_CASE("the power widgets are freed once whether the app or the display goes first") {
+  {
+    AppHost h;  // lv_deinit() at the end deletes lv_layer_sys() before the app
+    app_set_screen_off(h.app, true);
+    app_show_power_hint(h.app, true);
+    app_show_powering_off(h.app);
+    app_set_screen_off(h.app, true);
+  }
+  {
+    AppHost h;
+    app_set_screen_off(h.app, true);
+    app_show_power_hint(h.app, true);
+    lv_obj_delete(h.app);  // the app first
+    CHECK(lv_obj_get_child_count(lv_layer_sys()) == 0);
+    h.app = nullptr;
+  }
+}

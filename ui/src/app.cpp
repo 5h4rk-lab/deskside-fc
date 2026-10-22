@@ -30,7 +30,7 @@
 namespace {
 
 enum class Shown { None, Loading, Error, Detail };
-enum class OverlayKind { Detail, Settings, Picker, Wifi, Banner };
+enum class OverlayKind { Detail, Settings, Picker, Wifi, Banner, Shield, Hint, PoweringOff };
 enum class TeamsLoad { Idle, Loading, Failed };
 
 constexpr uint32_t kOpponentHex = 0x034694;  // Chelsea blue, the default opponent colour
@@ -235,6 +235,13 @@ void on_overlay_delete(lv_event_t* e) {
       st->wifiView = nullptr;
     } else if (link->kind == OverlayKind::Banner && st->banner == obj) {
       st->banner = nullptr;
+    } else if (link->kind == OverlayKind::Shield && st->shield == obj) {
+      st->shield = nullptr;
+    } else if (link->kind == OverlayKind::Hint && st->hint == obj) {
+      st->hint = nullptr;
+      st->hintBar = nullptr;
+    } else if (link->kind == OverlayKind::PoweringOff && st->poweringOff == obj) {
+      st->poweringOff = nullptr;
     }
   }
   delete link;
@@ -678,8 +685,12 @@ void on_app_delete(lv_event_t* e) {
   auto* st = static_cast<AppState*>(lv_event_get_user_data(e));
   *st->alive = false;
   cancel_fanfare(st);
-  // The power widgets live on lv_layer_sys(), outside the app.
-  for (lv_obj_t* o : {st->shield, st->hint, st->poweringOff}) {
+  // The power widgets live on lv_layer_sys(), outside the app (their delete
+  // links clear the pointers when the layer went first). Taken out first, since
+  // *alive is false now and the links no longer touch the state.
+  lv_obj_t* const power[] = {st->shield, st->hint, st->poweringOff};
+  st->shield = st->hint = st->poweringOff = nullptr;
+  for (lv_obj_t* o : power) {
     if (o != nullptr) lv_obj_delete(o);
   }
   delete st;
@@ -705,12 +716,14 @@ void set_screen_off(AppState* st, bool off) {
     lv_obj_add_flag(st->shield, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_remove_flag(st->shield, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(st->shield, on_shield_pressed, LV_EVENT_PRESSED, st);
+    // lv_layer_sys() may go first (lv_deinit): forget it then.
+    lv_obj_add_event_cb(st->shield, on_overlay_delete, LV_EVENT_DELETE,
+                        new OverlayLink{st, st->alive, OverlayKind::Shield});
   } else if (st->shield != nullptr) {
     // Possibly from the shield's own event: hidden now, deleted next cycle.
     // It keeps the rest of the touch (release, click), so nothing below sees it.
     lv_obj_t* old = st->shield;
     st->shield = nullptr;
-    lv_obj_remove_event_cb(old, on_shield_pressed);
     lv_obj_add_flag(old, LV_OBJ_FLAG_HIDDEN);
     lv_obj_delete_async(old);
   }
@@ -1143,6 +1156,7 @@ void app_show_power_hint(lv_obj_t* appRoot, bool show) {
   if (st == nullptr || show == (st->hint != nullptr)) return;
   if (show) {
     st->hint = power_hint_create(lv_layer_sys(), &st->hintBar);
+    lv_obj_add_event_cb(st->hint, on_overlay_delete, LV_EVENT_DELETE, new OverlayLink{st, st->alive, OverlayKind::Hint});
   } else {
     lv_obj_delete(st->hint);
     st->hint = nullptr;
@@ -1166,6 +1180,8 @@ void app_show_powering_off(lv_obj_t* appRoot) {
   app_show_power_hint(appRoot, false);
   set_screen_off(st, false);
   st->poweringOff = powering_off_create(lv_layer_sys());
+  lv_obj_add_event_cb(st->poweringOff, on_overlay_delete, LV_EVENT_DELETE,
+                      new OverlayLink{st, st->alive, OverlayKind::PoweringOff});
 }
 
 lv_obj_t* app_powering_off_view(lv_obj_t* appRoot) {
