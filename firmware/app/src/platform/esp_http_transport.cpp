@@ -112,7 +112,11 @@ void EspHttpTransport::get(const std::string& url, const std::string& token, int
   const uint32_t id = ++nextId_;
   pending_[id] = std::move(done);
   if (task_ == nullptr) return refuse(id, "worker not running");
-  const bool plainOk = allowHttp_ && url.compare(0, 7, "http://") == 0;
+#if APP_DIAG
+  const bool plainOk = allowHttp_.load() && url.compare(0, 7, "http://") == 0;
+#else
+  constexpr bool plainOk = false;  // the release build accepts https only
+#endif
   if (url.compare(0, 8, "https://") != 0 && !plainOk) return refuse(id, "not an https URL");
   if (ready_ != nullptr && !ready_()) return refuse(id, "no network or no valid clock yet");
   Job* job = new (std::nothrow) Job();

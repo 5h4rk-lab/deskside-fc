@@ -40,6 +40,7 @@
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
 
+#include "../app_diag.h"
 #include "update_check.h"
 #include "update_flow.h"
 
@@ -100,7 +101,12 @@ class EspOta {
 
   UpdateInfo info_;
   Version running_;
+#if APP_DIAG
   bool allowHttp_ = false;
+#else
+  static constexpr bool allowHttp_ = false;
+#endif
+  bool inTask_ = false;  // fail() runs in the download task (set there before run())
   std::atomic<State> state_{State::Idle};
   std::atomic<int> percent_{0};
   std::atomic<UpdateError> error_{UpdateError::None};

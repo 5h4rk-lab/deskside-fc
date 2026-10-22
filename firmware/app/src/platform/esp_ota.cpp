@@ -164,8 +164,13 @@ bool EspOta::start(const UpdateInfo& info, const Version& running, bool allowHtt
   if (state_.load() == State::Running) return false;
   info_ = info;
   running_ = running;
+#if APP_DIAG
   allowHttp_ = allowHttp;
+#else
+  (void)allowHttp;  // the release build downloads over https only (allowHttp_ is constexpr false)
+#endif
   stats_ = Stats();
+  inTask_ = false;
   percent_.store(0);
   error_.store(UpdateError::None);
   if (heap_caps_get_free_size(MALLOC_CAP_INTERNAL) < kMinInternalFree + kStackBytes + kChunkBytes) {
@@ -182,7 +187,10 @@ bool EspOta::start(const UpdateInfo& info, const Version& running, bool allowHtt
   return true;
 }
 
+// Every Stats field is written before the final state store (release): the
+// LVGL task reads stats() only after it saw Done or Failed.
 void EspOta::fail(UpdateError e, const char* why, int err) {
+  if (inTask_) stats_.stackFree = uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t);
   stats_.why = why;
   stats_.espErr = err;
   error_.store(e);
@@ -191,8 +199,9 @@ void EspOta::fail(UpdateError e, const char* why, int err) {
 
 void EspOta::task_main(void* arg) {
   auto* self = static_cast<EspOta*>(arg);
+  self->inTask_ = true;
   self->run();
-  self->stats_.stackFree = uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t);
+  // Nothing of stats_ is written after run(): the state is final already.
   self->task_ = nullptr;
   vTaskDelete(nullptr);
 }
@@ -371,6 +380,7 @@ void EspOta::run() {
     return fail(UpdateError::SaveFailed, "cannot switch the boot slot", err);
   }
   finish(true);
+  stats_.stackFree = uxTaskGetStackHighWaterMark(nullptr) * sizeof(StackType_t);
   percent_.store(100);
   state_.store(State::Done);
 }

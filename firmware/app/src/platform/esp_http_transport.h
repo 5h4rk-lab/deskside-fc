@@ -47,6 +47,7 @@
 #include <vector>
 
 #include <esp_timer.h>
+#include "../app_diag.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -141,9 +142,11 @@ class EspHttpTransport : public HttpTransport {
   void drop_kept_connection();
   bool has_kept_connection() const { return connOpen_.load(); }
 
+#if APP_DIAG
   // Diagnostics builds only (a local update test server): also accept plain
-  // http:// URLs. Never set in the release build.
+  // http:// URLs. The release build does not have it (no symbol, no flag).
   void set_allow_plain_http(bool allow) { allowHttp_ = allow; }
+#endif
 
  private:
   struct Job;
@@ -184,7 +187,9 @@ class EspHttpTransport : public HttpTransport {
   int64_t connLastMs_ = 0;
   std::atomic<uint32_t> reuses_{0}, reconnects_{0}, heapWaits_{0}, heapRefusals_{0};
   std::atomic<bool> connOpen_{false};  // conn_ != nullptr, readable from any task
-  bool allowHttp_ = false;
+#if APP_DIAG
+  std::atomic<bool> allowHttp_{false};
+#endif
   size_t minInternalFree_ = 0;
 };
 
