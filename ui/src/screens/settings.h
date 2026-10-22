@@ -136,7 +136,7 @@ struct SettingsParts {
 
   lv_obj_t* wifiRow = nullptr;     // nullptr when there is no Wi-Fi row
   lv_obj_t* wifiStatus = nullptr;  // "Connected to <ssid>" / "Not connected", one line
-  lv_obj_t* about = nullptr;    // "Soccer display 0.1"
+  lv_obj_t* about = nullptr;    // "Soccer display 0.1.0"
   lv_obj_t* batteryLine = nullptr;     // under about: status and voltage, hidden until set
   lv_obj_t* batteryStatus = nullptr;   // "78% · On battery"
   lv_obj_t* batteryVoltage = nullptr;  // "3.92 V", hidden without a battery

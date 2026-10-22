@@ -111,7 +111,7 @@ TEST_CASE("settings: rows and texts for the given settings and time") {
   CHECK_FALSE(lv_obj_has_state(p->motionSwitch, LV_STATE_CHECKED));
   CHECK(text(p->motionHelp) == kMotionHelp);
   CHECK(text(p->about) == std::string(kAppName) + " " + kAppVersion);
-  CHECK(text(p->about) == "Soccer display 0.1");
+  CHECK(text(p->about) == "Soccer display 0.1.0");
   // The crest of the favourite is requested.
   REQUIRE_FALSE(s.images.requested.empty());
   CHECK(s.images.requested[0].find("359.png") != std::string::npos);
