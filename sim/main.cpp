@@ -77,6 +77,8 @@
 //                    downloading (an install at 42 %), none (no Software update row). In the window
 //                    the row checks for real against a pretend helper that offers the next version.
 //   --screen settings-update  Settings scrolled to the Software update row
+//   --safe-mode      the board's safe mode: the banner "Safe mode: updates paused", no
+//                    Software update row (the simulator still shows its data)
 //   --stale-min N    with a snapshot: render N minutes after the last update,
 //                    as if the helper had gone quiet (the stale marker shows)
 // Data is fetched by the Poller (ui/src/poller.h) in every mode: every 25 s
@@ -173,6 +175,7 @@ struct Options {
   std::string banner;  // --banner: "", low, critical or none
   int staleMin = 0;    // --stale-min
   std::string update;  // --update: "", none, uptodate, available, downloading
+  bool safeMode = false;  // --safe-mode
 };
 
 bool goal_screen(const std::string& screen) { return screen == "goal" || screen == "goal-win"; }
@@ -212,7 +215,7 @@ void load_demo_wifi(MockWifi& wifi, bool saved) {
       "           [--screen wifi|wifi-first|wifi-password|wifi-failed|wifi-connecting]\n"
       "           [--helper URL --token T] [--offline-test]\n"
       "           [--battery P[,charging]|none] [--battery-mv MV] [--banner low|critical|none]\n"
-      "           [--stale-min N] [--update none|uptodate|available|downloading]\n"
+      "           [--stale-min N] [--update none|uptodate|available|downloading] [--safe-mode]\n"
       "env: HELPER_URL, HELPER_TOKEN (when the flags are absent)\n"
       "keys: g = favourite scores, w = favourite wins at full time (demo data),\n"
       "      b = next demo battery state, + / - = 50 mV up / down (--battery-mv)\n");
@@ -336,6 +339,8 @@ Options parse_args(int argc, char** argv) {
         std::fprintf(stderr, "invalid --banner '%s' (low, critical or none)\n", o.banner.c_str());
         std::exit(2);
       }
+    } else if (std::strcmp(argv[i], "--safe-mode") == 0) {
+      o.safeMode = true;
     } else if (std::strcmp(argv[i], "--update") == 0 && hasValue) {
       o.update = argv[++i];
       if (o.update != "none" && o.update != "uptodate" && o.update != "available" && o.update != "downloading") {
@@ -750,7 +755,8 @@ int main(int argc, char** argv) {
                *prefs, &backlight, opt.wifi ? &wifi : nullptr,
                // Connected at last: fetch everything now, not at the next due time.
                [&poller] { poller.request_all_now(); }, power, &simSound};
-  if (opt.update != "none") deps.updater = &updater;
+  if (opt.update != "none" && !opt.safeMode) deps.updater = &updater;
+  deps.safeMode = opt.safeMode;
   app = app_create(lv_screen_active(), deps);
   // A session-only override of the saved setting.
   if (opt.reducedMotion) goal_set_reduced_motion(true);

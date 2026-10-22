@@ -64,6 +64,10 @@ struct AppDeps {
   // an install runs. Nothing installs without that tap. Without it there is
   // no Software update row.
   Updater* updater = nullptr;
+  // Safe mode (the host restarted abnormally too often, crash_counter.h): a
+  // permanent banner "Safe mode: updates paused" at the top of the tabs. The
+  // host passes no updater and fetches nothing; Settings and Wi-Fi work as usual.
+  bool safeMode = false;
 };
 
 // Night dimming lifts for this long after the last touch.
@@ -157,6 +161,9 @@ void app_matches_changed(lv_obj_t* appRoot, int64_t now);
 // overlay), or nullptr. It goes by itself after the alert's duration or when
 // tapped.
 lv_obj_t* app_battery_banner(lv_obj_t* appRoot);
+
+// The safe-mode banner (AppDeps::safeMode), or nullptr.
+lv_obj_t* app_safe_banner(lv_obj_t* appRoot);
 
 // Shows the banner for `alert` now, replacing one that shows (screenshots
 // and tests; app_refresh() decides by itself otherwise).

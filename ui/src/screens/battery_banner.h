@@ -23,3 +23,14 @@ struct BatteryBannerParts {
 };
 // Parts of a banner made by battery_banner_create(), or nullptr for any other object.
 const BatteryBannerParts* battery_banner_parts(lv_obj_t* banner);
+
+// The safe-mode banner (the device restarted abnormally too often: no data,
+// no pictures, no update checks): the same slim amber strip at the top left,
+// permanent, saying kSafeModeText. It leaves the top right kSafeModeGearRoom
+// pixels free so the Settings gear stays visible, and it takes no touches
+// (they reach what lies below).
+constexpr const char* kSafeModeText = "Safe mode: updates paused";
+constexpr int32_t kSafeModeGearRoom = 32;
+lv_obj_t* safe_mode_banner_create(lv_obj_t* parent);
+// The text label of a banner made by safe_mode_banner_create(), or nullptr.
+lv_obj_t* safe_mode_banner_text(lv_obj_t* banner);

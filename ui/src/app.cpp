@@ -93,6 +93,7 @@ struct AppState {
   PowerService* power = nullptr;
   BatteryAlert batteryAlert;
   lv_obj_t* banner = nullptr;
+  lv_obj_t* safeBanner = nullptr;  // safe mode: permanent, under the overlays
 
   // Sound: the speaker (optional), the gate's memory, LVGL's tick extended to
   // 64 bits for it, and the fanfare waiting for the whistles to end.
@@ -971,6 +972,8 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps) {
 
   lv_tabview_set_active(tabview, 0, LV_ANIM_OFF);
   refresh_icons(tabview);
+  // Above the tabs, below every overlay made later (Settings, Wi-Fi, a match).
+  if (deps.safeMode) st->safeBanner = safe_mode_banner_create(root);
 
   // First start (nothing saved, not connected): the guided Wi-Fi setup.
   if (st->wifi != nullptr && st->wifi->saved().empty() && !st->wifi->status().connected) {
@@ -1179,6 +1182,11 @@ void app_matches_changed(lv_obj_t* appRoot, int64_t now) {
     st->store->set_detail(std::move(detail));
     app_refresh(st->tabview, now);  // names the scorer when this detail has the goal
   });
+}
+
+lv_obj_t* app_safe_banner(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->safeBanner : nullptr;
 }
 
 lv_obj_t* app_battery_banner(lv_obj_t* appRoot) {

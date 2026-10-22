@@ -81,3 +81,41 @@ const BatteryBannerParts* battery_banner_parts(lv_obj_t* banner) {
   }
   return nullptr;
 }
+
+namespace {
+void on_safe_delete(lv_event_t*) {}  // a marker: safe_mode_banner_text() finds banners by it
+}  // namespace
+
+lv_obj_t* safe_mode_banner_create(lv_obj_t* parent) {
+  const Palette& pal = theme();
+  lv_obj_t* b = widgets::plain(parent);
+  lv_obj_set_pos(b, 0, 0);
+  lv_obj_update_layout(parent);
+  lv_obj_set_size(b, lv_obj_get_width(parent) - kSafeModeGearRoom, kBatteryBannerHeight);
+  lv_obj_set_style_bg_color(b, pal.tabBar, 0);
+  lv_obj_set_style_bg_opa(b, LV_OPA_COVER, 0);
+  lv_obj_set_style_border_side(b, LV_BORDER_SIDE_BOTTOM, 0);
+  lv_obj_set_style_border_width(b, 1, 0);
+  lv_obj_set_style_border_color(b, pal.amber, 0);
+  lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_add_event_cb(b, on_safe_delete, LV_EVENT_DELETE, nullptr);
+  lv_obj_set_flex_flow(b, LV_FLEX_FLOW_ROW);
+  lv_obj_set_flex_align(b, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+  lv_obj_set_style_pad_column(b, 6, 0);
+  lv_obj_set_style_pad_bottom(b, 1, 0);
+  lv_obj_t* icon = widgets::label(b, &lv_font_montserrat_14, pal.amber);
+  lv_label_set_text(icon, LV_SYMBOL_WARNING);
+  lv_obj_t* text = widgets::label(b, &hanken_10, pal.amber);
+  lv_label_set_text(text, kSafeModeText);
+  return b;
+}
+
+lv_obj_t* safe_mode_banner_text(lv_obj_t* banner) {
+  if (banner == nullptr) return nullptr;
+  for (uint32_t i = 0; i < lv_obj_get_event_count(banner); ++i) {
+    if (lv_event_dsc_get_cb(lv_obj_get_event_dsc(banner, i)) == on_safe_delete) {
+      return lv_obj_get_child(banner, 1);
+    }
+  }
+  return nullptr;
+}
