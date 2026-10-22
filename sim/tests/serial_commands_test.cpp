@@ -192,3 +192,60 @@ TEST_CASE("serial commands: words in a row") {
   CHECK(run(":wifi\n:wifi\n") == "<wifi><wifi>");
   CHECK(run(":wifi\n:restart\n") == "<wifi><restart>");
 }
+
+TEST_CASE("console words: names, aliases and values") {
+  CHECK(parse_console_word("status", "") == ConsoleWord::Status);
+  CHECK(parse_console_word("heap", "") == ConsoleWord::Heap);
+  CHECK(parse_console_word("wifi", "") == ConsoleWord::Wifi);
+  CHECK(parse_console_word("reboot", "") == ConsoleWord::Reboot);
+  CHECK(parse_console_word("restart", "") == ConsoleWord::Reboot);
+  CHECK(parse_console_word("wipe-wifi", "") == ConsoleWord::WipeWifi);
+  CHECK(parse_console_word("wipe-settings", "") == ConsoleWord::WipeSettings);
+  CHECK(parse_console_word("erase-settings", "") == ConsoleWord::WipeSettings);
+  CHECK(parse_console_word("safe-mode", "") == ConsoleWord::SafeModeShow);
+  CHECK(parse_console_word("safe-mode", "off") == ConsoleWord::SafeModeOff);
+  CHECK(parse_console_word("safe-mode", "on") == ConsoleWord::BadValue);
+  CHECK(parse_console_word("safe-mode", "off now") == ConsoleWord::BadValue);
+  CHECK(parse_console_word("help", "") == ConsoleWord::Help);
+  CHECK(parse_console_word("ota", "") == ConsoleWord::Ota);
+  CHECK(parse_console_word("net", "") == ConsoleWord::Net);
+  CHECK(parse_console_word("power", "") == ConsoleWord::Power);
+  CHECK(parse_console_word("show-config", "") == ConsoleWord::ShowConfig);
+}
+
+TEST_CASE("console words: words without a value refuse one (a destructive word never runs with junk after it)") {
+  for (const char* w : {"status", "heap", "wifi", "reboot", "restart", "wipe-wifi", "wipe-settings", "erase-settings",
+                        "help", "ota", "net", "power", "show-config"}) {
+    CAPTURE(w);
+    CHECK(parse_console_word(w, "x") == ConsoleWord::BadValue);
+  }
+  // The value words take anything (their own parsers check it), also nothing.
+  CHECK(parse_console_word("set-url", "https://example.com") == ConsoleWord::SetUrl);
+  CHECK(parse_console_word("set-token", "abcdefghijklmnop") == ConsoleWord::SetToken);
+  CHECK(parse_console_word("set-token", "") == ConsoleWord::SetToken);
+  CHECK(parse_console_word("sound", "goal 40") == ConsoleWord::Sound);
+  CHECK(parse_console_word("cal-battery", "3900") == ConsoleWord::CalBattery);
+}
+
+TEST_CASE("console words: unknown names, case and near misses") {
+  for (const char* w : {"", "STATUS", "Status", "statu", "status2", "wipe", "wipewifi", "reset", "safe", "diag-burst",
+                        "ota-url", "set-tokenabcdefghijklmnop"}) {
+    CAPTURE(w);
+    CHECK(parse_console_word(w, "") == ConsoleWord::Unknown);
+  }
+}
+
+TEST_CASE("console words: every word :help names parses") {
+  const std::string help = console_help_text();
+  size_t i = 0;
+  int words = 0;
+  while ((i = help.find(':', i)) != std::string::npos) {
+    const size_t end = help.find_first_of(" )", i);
+    const std::string name = help.substr(i + 1, end == std::string::npos ? std::string::npos : end - i - 1);
+    CAPTURE(name);
+    CHECK(parse_console_word(name, "") != ConsoleWord::Unknown);
+    ++words;
+    i = end == std::string::npos ? help.size() : end;
+  }
+  CHECK(words >= 17);
+}

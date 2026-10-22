@@ -53,3 +53,32 @@ class SerialCommandSplitter {
 // Callers print only the name of a word they do not know: the value may be a
 // secret.
 void split_word(const std::string& word, std::string& name, std::string& value);
+
+// The release console's words (a diagnostics build checks its own diag-* and
+// ota-* words first). Pure: the caller acts on the result. Two names may mean
+// one command: `:restart` and `:reboot`, `:erase-settings` and `:wipe-settings`.
+enum class ConsoleWord : uint8_t {
+  Unknown,       // not a word of this console (the caller says so without echoing it)
+  BadValue,      // a known word with a value it does not take (never echoed: it may be a secret)
+  Help,
+  Status,        // uptime, reset reason, crash counter, safe mode, version, Wi-Fi, heap, stacks, battery, update trial
+  Heap,          // the memory report
+  Wifi,
+  WipeWifi,      // forget every saved network, restart
+  WipeSettings,  // erase the saved settings (not Wi-Fi, not the helper), restart
+  Reboot,        // restart (a software restart: never counted as a crash)
+  SafeModeShow,  // :safe-mode
+  SafeModeOff,   // :safe-mode off: clear the crash counter, restart in normal mode
+  SetUrl,
+  SetToken,
+  ShowConfig,
+  Net,
+  Power,
+  Ota,
+  Sound,         // takes any value (checked by its own parser)
+  CalBattery,    // takes any value (parse_cal_command)
+};
+ConsoleWord parse_console_word(const std::string& name, const std::string& value);
+
+// One line naming every release word, for :help (each word in it parses).
+const char* console_help_text();

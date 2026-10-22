@@ -63,3 +63,50 @@ void split_word(const std::string& word, std::string& name, std::string& value) 
   const size_t start = word.find_first_not_of(' ', space);
   if (start != std::string::npos) value = word.substr(start);
 }
+
+namespace {
+struct WordName {
+  const char* name;
+  ConsoleWord word;
+  bool anyValue;  // takes a value (checked by the command itself)
+};
+constexpr WordName kWords[] = {
+    {"help", ConsoleWord::Help, false},
+    {"status", ConsoleWord::Status, false},
+    {"heap", ConsoleWord::Heap, false},
+    {"wifi", ConsoleWord::Wifi, false},
+    {"wipe-wifi", ConsoleWord::WipeWifi, false},
+    {"wipe-settings", ConsoleWord::WipeSettings, false},
+    {"erase-settings", ConsoleWord::WipeSettings, false},
+    {"reboot", ConsoleWord::Reboot, false},
+    {"restart", ConsoleWord::Reboot, false},
+    {"show-config", ConsoleWord::ShowConfig, false},
+    {"net", ConsoleWord::Net, false},
+    {"power", ConsoleWord::Power, false},
+    {"ota", ConsoleWord::Ota, false},
+    {"set-url", ConsoleWord::SetUrl, true},
+    {"set-token", ConsoleWord::SetToken, true},
+    {"sound", ConsoleWord::Sound, true},
+    {"cal-battery", ConsoleWord::CalBattery, true},
+};
+}  // namespace
+
+ConsoleWord parse_console_word(const std::string& name, const std::string& value) {
+  if (name == "safe-mode") {
+    if (value.empty()) return ConsoleWord::SafeModeShow;
+    return value == "off" ? ConsoleWord::SafeModeOff : ConsoleWord::BadValue;
+  }
+  for (const WordName& w : kWords) {
+    if (name != w.name) continue;
+    if (!w.anyValue && !value.empty()) return ConsoleWord::BadValue;
+    return w.word;
+  }
+  return ConsoleWord::Unknown;
+}
+
+const char* console_help_text() {
+  return ":status :heap :wifi :reboot (or :restart) :wipe-wifi :wipe-settings (or :erase-settings) "
+         ":safe-mode [off] :set-url <url> :set-token <token> :show-config :net :power :ota "
+         ":sound [goal|win|kickoff|fulltime|low|critical|wifi|tone l|tone r|tone both|stop] [volume] "
+         ":cal-battery [<mV>|clear] :help";
+}
