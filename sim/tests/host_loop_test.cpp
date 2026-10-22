@@ -210,3 +210,25 @@ TEST_CASE("host loop: works with no optional hooks") {
   loop.tick(1000, kEpoch + 1);
   CHECK(store.matches().size() == 1);
 }
+
+TEST_CASE("host loop: paused fetches (a software update) still refresh and deliver") {
+  Fixture f;
+  f.source.matches = {match("m1", MatchState::Live)};
+  f.loop.tick(0, kEpoch);
+  REQUIRE(f.count("fetch matches") == 1);
+  f.loop.set_fetches_paused(true);
+  CHECK(f.loop.fetches_paused());
+  f.loop.poller().request_all_now();
+  for (int i = 1; i <= 10; ++i) f.loop.tick(i * 60000, kEpoch + i * 60);
+  // No new fetch of any kind while paused; the screens still refresh every
+  // second and requests in flight are still delivered.
+  CHECK(f.count("fetch matches") == 1);
+  CHECK(f.count("fetch news") == 1);
+  CHECK(f.count("fetch teams") == 1);
+  CHECK(f.count("refresh") == 11);
+  CHECK(f.count("poll") == 11);
+  // Resumed: the request made while paused runs at the next tick.
+  f.loop.set_fetches_paused(false);
+  f.loop.tick(11 * 60000, kEpoch + 11 * 60);
+  CHECK(f.count("fetch matches") == 2);
+}

@@ -65,6 +65,13 @@ class HostLoop {
 
   Poller& poller() { return poller_; }
 
+  // While paused (a software update downloads) the Poller is not ticked: no
+  // new fetch starts; requests already in flight are still delivered and the
+  // screens still refresh every second. Requests made meanwhile
+  // (request_all_now) run at the first tick after the pause ends.
+  void set_fetches_paused(bool paused) { fetchesPaused_ = paused; }
+  bool fetches_paused() const { return fetchesPaused_; }
+
  private:
   // The open detail, else the favourite's live match (its latest event feeds
   // the Live tab's strip).
@@ -74,6 +81,7 @@ class HostLoop {
   Hooks hooks_;
   Poller poller_;
   bool matchesChanged_ = false;
+  bool fetchesPaused_ = false;
   bool refreshed_ = false;
   int64_t lastRefresh_ = 0;
 };

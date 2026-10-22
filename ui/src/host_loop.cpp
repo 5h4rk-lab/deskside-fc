@@ -21,7 +21,7 @@ std::string HostLoop::detail_watch() const {
 void HostLoop::pump(int64_t monotonicMs, int64_t epochSeconds) {
   if (hooks_.pollTransports) hooks_.pollTransports();
   if (hooks_.tickImages) hooks_.tickImages(monotonicMs);
-  if (epochSeconds <= 0) return;
+  if (epochSeconds <= 0 || fetchesPaused_) return;
   poller_.set_detail_watch(detail_watch());
   poller_.tick(monotonicMs, epochSeconds);
 }
