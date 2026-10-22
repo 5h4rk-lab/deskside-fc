@@ -3,6 +3,7 @@
 #include <math.h>
 
 #include <algorithm>
+#include <atomic>
 
 // Everything is built in float at 16 kHz, then faded, scaled to its target
 // peak and rounded. Only sinf/expf/cosf and integer noise: the same code
@@ -14,12 +15,14 @@ constexpr float kRate = static_cast<float>(PcmClip::kRate);
 constexpr float kPi = 3.14159265f;
 constexpr float kTwoPi = 6.28318531f;
 
-// Clip lengths, chosen so that the whole set stays under 100000 samples
-// (200 KB): 36000 + 22400 + 8000 + 16800 + 5280 + 7040 + 3200 = 98720.
-constexpr int kGoalMs = 2250;
-constexpr int kFanfareMs = 1400;
-constexpr int kKickOffMs = 500;
-constexpr int kFullTimeMs = 1050;
+// Clip lengths: sound_synth.h.
+constexpr int kGoalMs = kSoundGoalMs;
+constexpr int kFanfareMs = kSoundFanfareMs;
+constexpr int kKickOffMs = kSoundKickOffMs;
+constexpr int kFullTimeMs = kSoundFullTimeMs;
+
+std::atomic<int> s_lookups{0};
+std::atomic<int> s_generated{0};
 
 using Buf = std::vector<float>;
 
@@ -284,21 +287,21 @@ void beep(Buf& b, float startMs, float ms, float hz, float level) {
 }
 
 PcmClip make_battery_low() {
-  Buf b(samples_for(330.0f), 0.0f);
+  Buf b(samples_for(static_cast<float>(kSoundBatteryLowMs)), 0.0f);
   beep(b, 0.0f, 120.0f, 740.0f, 1.0f);
   beep(b, 210.0f, 120.0f, 740.0f, 1.0f);
   return finish(b, 10000);
 }
 
 PcmClip make_battery_critical() {
-  Buf b(samples_for(440.0f), 0.0f);
+  Buf b(samples_for(static_cast<float>(kSoundBatteryCriticalMs)), 0.0f);
   for (int k = 0; k < 3; ++k) beep(b, 170.0f * static_cast<float>(k), 100.0f, 880.0f, 1.0f);
   return finish(b, 11000);
 }
 
 // Two bell-like notes, G5 then D6: rising, short, friendly.
 PcmClip make_wifi_ok() {
-  Buf b(samples_for(200.0f), 0.0f);
+  Buf b(samples_for(static_cast<float>(kSoundWifiOkMs)), 0.0f);
   const float hz[2] = {783.99f, 1174.66f};
   for (int k = 0; k < 2; ++k) {
     const size_t from = samples_for(100.0f * static_cast<float>(k));
@@ -321,6 +324,7 @@ const PcmClip& cached() {
 }  // namespace
 
 PcmClip sound_generate(SoundEvent event) {
+  s_generated.fetch_add(1, std::memory_order_relaxed);
   switch (event) {
     case SoundEvent::Goal:
     case SoundEvent::Preview: return make_goal();
@@ -335,6 +339,7 @@ PcmClip sound_generate(SoundEvent event) {
 }
 
 const PcmClip& sound_clip(SoundEvent event) {
+  s_lookups.fetch_add(1, std::memory_order_relaxed);
   switch (event) {
     case SoundEvent::Goal:
     case SoundEvent::Preview: return cached<SoundEvent::Goal>();
@@ -351,3 +356,14 @@ const PcmClip& sound_clip(SoundEvent event) {
 void sound_prepare_all() {
   for (int e = 0; e < kSoundEventCount; ++e) sound_clip(static_cast<SoundEvent>(e));
 }
+
+PcmClip sound_test_tone(int hz, int ms, int peak) {
+  Buf b(samples_for(static_cast<float>(ms)), 0.0f);
+  const float w = kTwoPi * static_cast<float>(hz) / kRate;
+  for (size_t i = 0; i < b.size(); ++i) b[i] = sinf(w * static_cast<float>(i));
+  // finish() adds the clip fades (10 ms in, 30 ms out) and scales to `peak`.
+  return finish(b, peak);
+}
+
+int sound_clip_lookups() { return s_lookups.load(std::memory_order_relaxed); }
+int sound_generate_calls() { return s_generated.load(std::memory_order_relaxed); }

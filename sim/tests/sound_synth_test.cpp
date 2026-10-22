@@ -184,3 +184,24 @@ TEST_CASE("sound clips: whistles sit around 2.7 kHz with a fast trill") {
   CHECK(hz > 2300);
   CHECK(hz < 3300);
 }
+
+TEST_CASE("sound clips: the duration table matches the clips (the gate and timers use the table)") {
+  for (SoundEvent e : kAll) CHECK(sound_clip_duration_ms(e) == sound_generate(e).duration_ms());
+  static_assert(sound_clip_duration_ms(SoundEvent::Goal) == 2250, "compile-time");
+  CHECK(sound_clip_duration_ms(SoundEvent::Preview) == sound_clip_duration_ms(SoundEvent::Goal));
+}
+
+TEST_CASE("sound clips: the speaker test tone is a clean 440 Hz sine of the asked length with soft edges") {
+  const PcmClip t = sound_test_tone(440, 1000, 12000);
+  CHECK(t.samples.size() == 16000u);
+  CHECK(peak_of(t) <= 12000);
+  CHECK(peak_of(t) >= 11900);
+  CHECK(std::abs(t.samples.front()) <= 50);
+  CHECK(std::abs(t.samples.back()) <= 50);
+  int crossings = 0;
+  for (size_t i = 1; i < t.samples.size(); ++i) {
+    if ((t.samples[i - 1] < 0) != (t.samples[i] < 0)) ++crossings;
+  }
+  CHECK(crossings >= 870);  // 440 Hz: 880 sign changes per second
+  CHECK(crossings <= 890);
+}

@@ -28,6 +28,6 @@ bool SoundGate::allow(SoundEvent event, int64_t nowMs) {
   seen_[i] = true;
   at_[i] = nowMs;
   playingLoud_ = loud(event);
-  playingUntil_ = nowMs + sound_clip(event).duration_ms();
+  playingUntil_ = nowMs + sound_clip_duration_ms(event);  // never synthesizes
   return true;
 }

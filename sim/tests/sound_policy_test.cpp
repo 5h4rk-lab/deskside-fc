@@ -155,3 +155,18 @@ TEST_CASE("sound gate: a Preview in progress is not cut short by a low priority 
   CHECK(g.allow(SoundEvent::Preview, 0));
   CHECK_FALSE(g.allow(SoundEvent::KickOff, 100));
 }
+
+TEST_CASE("sound gate: allow() never touches the clips (no synthesis in the middle of a goal)") {
+  const int lookups = sound_clip_lookups();
+  const int made = sound_generate_calls();
+  SoundGate gate;
+  int64_t t = 0;
+  for (int round = 0; round < 3; ++round) {
+    for (SoundEvent e : kAll) {
+      gate.allow(e, t);
+      t += 700;
+    }
+  }
+  CHECK(sound_clip_lookups() == lookups);
+  CHECK(sound_generate_calls() == made);
+}

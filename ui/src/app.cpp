@@ -423,7 +423,7 @@ void cancel_fanfare(AppState* st) {
 void win_sound(AppState* st, int64_t now) {
   cancel_fanfare(st);
   if (app_sound(st, SoundEvent::FullTime, now)) {
-    st->fanfareTimer = lv_timer_create(on_fanfare_due, static_cast<uint32_t>(sound_clip(SoundEvent::FullTime).duration_ms()), st);
+    st->fanfareTimer = lv_timer_create(on_fanfare_due, static_cast<uint32_t>(sound_clip_duration_ms(SoundEvent::FullTime)), st);
     lv_timer_set_repeat_count(st->fanfareTimer, 1);
   } else {
     app_sound(st, SoundEvent::WinFanfare, now);
