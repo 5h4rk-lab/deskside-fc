@@ -30,7 +30,7 @@
 namespace {
 
 enum class Shown { None, Loading, Error, Detail };
-enum class OverlayKind { Detail, Settings, Picker, Wifi, Banner, Shield, Hint, PoweringOff };
+enum class OverlayKind { Detail, Settings, Picker, Wifi, Banner, Shield, DimShield, Hint, PoweringOff };
 enum class TeamsLoad { Idle, Loading, Failed };
 
 constexpr uint32_t kOpponentHex = 0x034694;  // Chelsea blue, the default opponent colour
@@ -111,6 +111,11 @@ struct AppState {
   bool screenOff = false;
   lv_obj_t* shield = nullptr;
   bool shieldHeld = false;  // the waking touch is still down on the shield
+  // Night dimming: while the panel is at the night level (untouched for
+  // kTouchWakeMs) the first touch only lifts it; this shield takes that touch.
+  lv_obj_t* dimShield = nullptr;
+  bool dimShieldHeld = false;
+  bool dimmed = false;  // the backlight is at the night level
   lv_obj_t* hint = nullptr;
   lv_obj_t* hintBar = nullptr;
   lv_obj_t* poweringOff = nullptr;
@@ -243,6 +248,9 @@ void on_overlay_delete(lv_event_t* e) {
     } else if (link->kind == OverlayKind::Shield && st->shield == obj) {
       st->shield = nullptr;
       st->shieldHeld = false;
+    } else if (link->kind == OverlayKind::DimShield && st->dimShield == obj) {
+      st->dimShield = nullptr;
+      st->dimShieldHeld = false;
     } else if (link->kind == OverlayKind::Hint && st->hint == obj) {
       st->hint = nullptr;
       st->hintBar = nullptr;
@@ -345,6 +353,8 @@ void close_wifi(AppState* st, bool fromInside) {
 
 // Day brightness, or the night level inside the night window unless the
 // screen was touched recently. Only changes reach the backlight.
+void sync_dim_shield(AppState* st, bool dimmed);
+
 void drive_backlight(AppState* st, int64_t now) {
   if (st->backlight == nullptr || st->previewing) return;
   const Settings& s = st->settings;
@@ -358,6 +368,7 @@ void drive_backlight(AppState* st, int64_t now) {
                                static_cast<uint8_t>(s.dayBrightness));
     percent = schedule.brightness_at(local_hour(now, st->store->tz_offset()), touched);
   }
+  sync_dim_shield(st, !st->screenOff && percent < s.dayBrightness);
   if (percent == st->lastPercent) return;
   st->lastPercent = percent;
   st->backlight->set_percent(static_cast<uint8_t>(percent));
@@ -722,8 +733,8 @@ void on_app_delete(lv_event_t* e) {
   // The power widgets live on lv_layer_sys(), outside the app (their delete
   // links clear the pointers when the layer went first). Taken out first, since
   // *alive is false now and the links no longer touch the state.
-  lv_obj_t* const power[] = {st->shield, st->hint, st->poweringOff};
-  st->shield = st->hint = st->poweringOff = nullptr;
+  lv_obj_t* const power[] = {st->shield, st->dimShield, st->hint, st->poweringOff};
+  st->shield = st->dimShield = st->hint = st->poweringOff = nullptr;
   for (lv_obj_t* o : power) {
     if (o != nullptr) lv_obj_delete(o);
   }
@@ -740,6 +751,59 @@ void remove_shield(AppState* st) {
   st->shield = nullptr;
   lv_obj_add_flag(old, LV_OBJ_FLAG_HIDDEN);
   lv_obj_delete_async(old);
+}
+
+// Night dimming's shield: the first touch on a panel at the night level only
+// brings the day brightness back (at the press, like the screen-off shield);
+// the shield stays until that finger lifts, so its release, click or swipe
+// ends on it, then goes. The next touch is an ordinary one.
+void on_dim_shield_pressed(lv_event_t* e) {
+  auto* st = static_cast<AppState*>(lv_event_get_user_data(e));
+  st->dimShieldHeld = true;
+  // The press itself is activity: the schedule now gives the day level.
+  drive_backlight(st, st->now);
+}
+
+void remove_dim_shield(AppState* st) {
+  if (st->dimShield == nullptr) return;
+  lv_obj_t* old = st->dimShield;
+  st->dimShield = nullptr;
+  st->dimShieldHeld = false;
+  lv_obj_add_flag(old, LV_OBJ_FLAG_HIDDEN);
+  lv_obj_delete_async(old);
+}
+
+void on_dim_shield_released(lv_event_t* e) {
+  auto* st = static_cast<AppState*>(lv_event_get_user_data(e));
+  st->dimShieldHeld = false;
+  if (!st->dimmed) remove_dim_shield(st);
+}
+
+lv_obj_t* make_touch_shield(AppState* st, OverlayKind kind, lv_event_cb_t pressed, lv_event_cb_t released) {
+  lv_obj_t* shield = lv_obj_create(lv_layer_sys());
+  lv_obj_remove_style_all(shield);
+  lv_obj_set_pos(shield, 0, 0);
+  lv_obj_set_size(shield, LV_PCT(100), LV_PCT(100));
+  lv_obj_add_flag(shield, LV_OBJ_FLAG_CLICKABLE);
+  lv_obj_remove_flag(shield, LV_OBJ_FLAG_SCROLLABLE);
+  lv_obj_add_event_cb(shield, pressed, LV_EVENT_PRESSED, st);
+  lv_obj_add_event_cb(shield, released, LV_EVENT_RELEASED, st);
+  lv_obj_add_event_cb(shield, released, LV_EVENT_PRESS_LOST, st);
+  // lv_layer_sys() may go first (lv_deinit): forget it then.
+  lv_obj_add_event_cb(shield, on_overlay_delete, LV_EVENT_DELETE, new OverlayLink{st, st->alive, kind});
+  // An invisible object invalidates nothing, so no refresh would lay it out:
+  // give it its area now, or the first touch would miss it.
+  lv_obj_update_layout(shield);
+  return shield;
+}
+
+void sync_dim_shield(AppState* st, bool dimmed) {
+  st->dimmed = dimmed;
+  if (dimmed && st->dimShield == nullptr) {
+    st->dimShield = make_touch_shield(st, OverlayKind::DimShield, on_dim_shield_pressed, on_dim_shield_released);
+  } else if (!dimmed && !st->dimShieldHeld) {
+    remove_dim_shield(st);
+  }
 }
 
 // The waking touch: the screen comes on at once, but the shield stays (still
@@ -761,21 +825,7 @@ void set_screen_off(AppState* st, bool off) {
   if (off == st->screenOff) return;
   st->screenOff = off;
   if (off && st->shield == nullptr) {
-    st->shield = lv_obj_create(lv_layer_sys());
-    lv_obj_remove_style_all(st->shield);
-    lv_obj_set_pos(st->shield, 0, 0);
-    lv_obj_set_size(st->shield, LV_PCT(100), LV_PCT(100));
-    lv_obj_add_flag(st->shield, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_remove_flag(st->shield, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_add_event_cb(st->shield, on_shield_pressed, LV_EVENT_PRESSED, st);
-    lv_obj_add_event_cb(st->shield, on_shield_released, LV_EVENT_RELEASED, st);
-    lv_obj_add_event_cb(st->shield, on_shield_released, LV_EVENT_PRESS_LOST, st);
-    // lv_layer_sys() may go first (lv_deinit): forget it then.
-    lv_obj_add_event_cb(st->shield, on_overlay_delete, LV_EVENT_DELETE,
-                        new OverlayLink{st, st->alive, OverlayKind::Shield});
-    // An invisible object invalidates nothing, so no refresh would lay it out:
-    // give it its area now, or the first touch would miss it.
-    lv_obj_update_layout(st->shield);
+    st->shield = make_touch_shield(st, OverlayKind::Shield, on_shield_pressed, on_shield_released);
   } else if (!off && !st->shieldHeld) {
     remove_shield(st);
   }
@@ -1215,6 +1265,11 @@ bool app_screen_off(lv_obj_t* appRoot) {
 lv_obj_t* app_screen_off_shield(lv_obj_t* appRoot) {
   AppState* st = app_state(appRoot);
   return st != nullptr ? st->shield : nullptr;
+}
+
+lv_obj_t* app_dim_shield(lv_obj_t* appRoot) {
+  AppState* st = app_state(appRoot);
+  return st != nullptr ? st->dimShield : nullptr;
 }
 
 void app_show_power_hint(lv_obj_t* appRoot, bool show) {

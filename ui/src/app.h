@@ -184,6 +184,13 @@ bool app_screen_off(lv_obj_t* appRoot);
 // The touch shield while the screen is off, else nullptr (tests).
 lv_obj_t* app_screen_off_shield(lv_obj_t* appRoot);
 
+// Night dimming: while app_refresh() keeps the panel at the night level (night
+// window, untouched for kTouchWakeMs) a full-screen shield on lv_layer_sys()
+// takes the first touch: its press brings the day brightness back at once and
+// nothing underneath is pressed, clicked or swiped by it; the shield goes when
+// that finger lifts. Returns the shield while it is there (tests).
+lv_obj_t* app_dim_shield(lv_obj_t* appRoot);
+
 // The "Hold to power off" card (with its filling bar) above everything while
 // the key is held; showing it twice keeps one.
 void app_show_power_hint(lv_obj_t* appRoot, bool show);

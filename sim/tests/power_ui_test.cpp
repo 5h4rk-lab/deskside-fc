@@ -400,3 +400,115 @@ TEST_CASE("no clock: no night dimming (the day brightness), and the schedule aga
   h.refresh(kMidnight + 41);
   CHECK(h.backlight.last() == 20);
 }
+
+// ------------------------------------------------------------ night-dimmed first touch
+
+namespace {
+
+// Night (inside the default 23-7 window, 20 %), untouched for longer than kTouchWakeMs.
+void dim_at_night(AppHost& h) {
+  h.refresh(kMidnight);
+  test_display::fake_ms() += kTouchWakeMs + 1000;
+  h.refresh(kMidnight + 40);
+}
+
+}  // namespace
+
+TEST_CASE("night dimmed: the first tap only brings the day brightness back; the next one is a tap") {
+  AppHost h;
+  Finger finger;
+  lv_obj_t* button = lv_button_create(lv_screen_active());
+  lv_obj_set_size(button, 100, 60);
+  lv_obj_set_pos(button, 70, 130);
+  Counter c;
+  lv_obj_add_event_cb(button, count_event, LV_EVENT_ALL, &c);
+  dim_at_night(h);
+  REQUIRE(h.backlight.last() == 20);
+  REQUIRE(app_dim_shield(h.app) != nullptr);
+  CHECK(lv_obj_get_parent(app_dim_shield(h.app)) == lv_layer_sys());
+
+  finger.x = 120;
+  finger.y = 160;
+  finger.down = true;
+  for (int i = 0; i < 6; ++i) test_advance(LV_DEF_REFR_PERIOD + 5);
+  CHECK(h.backlight.last() == 100);  // at the press, finger still down
+  CHECK(app_dim_shield(h.app) != nullptr);
+  finger.down = false;
+  for (int i = 0; i < 4; ++i) test_advance(LV_DEF_REFR_PERIOD + 5);
+  CHECK(c.pressed == 0);
+  CHECK(c.clicked == 0);
+  CHECK(app_dim_shield(h.app) == nullptr);
+  h.refresh(kMidnight + 41);  // the touch keeps the day level for kTouchWakeMs
+  CHECK(h.backlight.last() == 100);
+  CHECK(app_dim_shield(h.app) == nullptr);
+
+  finger.tap(120, 160);
+  CHECK(c.pressed == 1);
+  CHECK(c.clicked == 1);
+
+  // Untouched again for a while: dimmed, and the shield is back.
+  test_display::fake_ms() += kTouchWakeMs + 1000;
+  h.refresh(kMidnight + 80);
+  CHECK(h.backlight.last() == 20);
+  CHECK(app_dim_shield(h.app) != nullptr);
+}
+
+TEST_CASE("night dimmed: the first swipe only wakes; the next swipe changes the tab") {
+  AppHost h;
+  Finger finger;
+  dim_at_night(h);
+  REQUIRE(app_dim_shield(h.app) != nullptr);
+  REQUIRE(lv_tabview_get_tab_active(h.app) == 0);
+  auto swipe = [&] {
+    finger.x = 200;
+    finger.y = 150;
+    finger.down = true;
+    for (int i = 0; i < 8; ++i) {
+      test_advance(LV_DEF_REFR_PERIOD + 5);
+      finger.x -= 20;
+    }
+    finger.down = false;
+    for (int i = 0; i < 40; ++i) test_advance(LV_DEF_REFR_PERIOD + 5);  // the slide settles
+  };
+  swipe();
+  CHECK(lv_tabview_get_tab_active(h.app) == 0);
+  CHECK(h.backlight.last() == 100);
+  CHECK(app_dim_shield(h.app) == nullptr);
+  swipe();
+  CHECK(lv_tabview_get_tab_active(h.app) == 1);
+}
+
+TEST_CASE("night dimming: no shield by day (night dimming off and a night level at the day's: app_settings_test)") {
+  AppHost h;
+  h.refresh(kNoon);
+  test_display::fake_ms() += kTouchWakeMs + 1000;
+  h.refresh(kNoon + 40);
+  CHECK(h.backlight.last() == 100);
+  CHECK(app_dim_shield(h.app) == nullptr);
+}
+
+TEST_CASE("night dimmed: the screen-off shield and the dim shield never stack") {
+  AppHost h;
+  Finger finger;
+  dim_at_night(h);
+  REQUIRE(app_dim_shield(h.app) != nullptr);
+  app_set_screen_off(h.app, true);
+  CHECK(h.backlight.last() == 0);
+  CHECK(app_screen_off_shield(h.app) != nullptr);
+  test_advance(LV_DEF_REFR_PERIOD + 5);  // the dim shield's async delete
+  CHECK(app_dim_shield(h.app) == nullptr);
+  CHECK(lv_obj_get_child_count(lv_layer_sys()) == 1);
+  // The key back on, still untouched at night: the night level, and its shield.
+  app_set_screen_off(h.app, false);
+  CHECK(h.backlight.last() == 20);
+  CHECK(app_dim_shield(h.app) != nullptr);
+  test_advance(LV_DEF_REFR_PERIOD + 5);
+  CHECK(lv_obj_get_child_count(lv_layer_sys()) == 1);
+  // A waking touch on a screen that is off lights it to the day level and leaves no dim shield.
+  app_set_screen_off(h.app, true);
+  finger.tap(60, 60);
+  CHECK_FALSE(app_screen_off(h.app));
+  CHECK(h.backlight.last() == 100);
+  CHECK(app_dim_shield(h.app) == nullptr);
+  CHECK(app_screen_off_shield(h.app) == nullptr);
+}

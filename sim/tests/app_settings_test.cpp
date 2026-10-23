@@ -522,6 +522,7 @@ TEST_CASE("app: the night level never exceeds the day brightness") {
   test_advance(kTouchWakeMs + 1000);
   app_refresh(h.app, kNight);
   CHECK(h.backlight.values == std::vector<int>{50});
+  CHECK(app_dim_shield(h.app) == nullptr);  // not dimmed: no touch is swallowed
 }
 
 TEST_CASE("app: with night dimming off the day level applies all night") {
@@ -534,6 +535,7 @@ TEST_CASE("app: with night dimming off the day level applies all night") {
   test_advance(kTouchWakeMs + 1000);
   app_refresh(h2.app, kNight);
   CHECK(h2.backlight.values == std::vector<int>{70});
+  CHECK(app_dim_shield(h2.app) == nullptr);
 }
 
 TEST_CASE("app: the night window follows the chosen zone") {
