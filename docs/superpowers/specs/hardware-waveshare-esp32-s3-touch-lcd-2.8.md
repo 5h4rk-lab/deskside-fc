@@ -329,6 +329,7 @@ Measured over the serial console with the diagnostics build (`app_diag`, -O2 lik
 | Live pulse (demo live match) | | 28 to 31 frames/s of the dot, 1.6 ms each, LVGL task 9.3 % of one core (both cores busy 11.4 % of 200 %) | |
 | Idle, Live tab, no live match | 8.2 % LVGL core, one 20 to 23 ms call every second (Matches recomputed 62 rows: 17 ms) | 6.7 %, longest call 3.2 ms | fix: Matches caches its rows |
 | Team picker, 96 rows | 1006 ms to build (one frame held 1.07 s); LVGL +149 KB, PSRAM -205 KB | opens in 104 ms (first frame 168 ms) with 12 rows; the rest 3 rows per 30 ms (21 to 27 ms steps), complete after about 0.9 s; same memory when complete | fixes: no layout per crest (560 ms), then progressive build |
+| First data on screen (62 matches arrive: Live, Matches, News built) | one LVGL call of 1070 ms (release; the loop task lagged 991 ms) | first call 327 ms (Live 78 ms, 8 Matches items, News 80 ms), then the Matches list fills 3 items per step (44 to 91 ms steps) for about 1.5 s | a Matches row costs about 15 to 18 ms to create on the board |
 | Matches list scroll (`n`) | 39 to 47 ms per frame (21 to 26 fps) | same | render bound |
 | News list scroll | 42 to 55 ms per frame | 38 to 54 ms | lead picture 240 x 158 drawn 1:1 |
 | Swipe Live <-> Matches | 45 to 51 ms frames, first 50 to 60 ms | 47 to 62 ms | render bound, see "swipes" below |
