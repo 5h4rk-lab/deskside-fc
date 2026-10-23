@@ -392,3 +392,24 @@ TEST_CASE("clock_minute reads the minutes of a match clock") {
   CHECK(clock_minute("12") == -1);
   CHECK(clock_minute("1234'") == -1);
 }
+
+TEST_CASE("recency guard: one failed poll at the idle cadence still whistles (two idle polls apart)") {
+  CHECK(GoalDetector::kRecentSeconds == 420);
+  // Pre seen; the next poll (180 s later) failed; the one after (360 s plus a
+  // slow request) shows the match live: still a kick-off.
+  GoalDetector k;
+  k.update({fav_home(MatchState::Pre, std::nullopt, std::nullopt)}, kFav, kT);
+  auto e = k.update({at(fav_home(MatchState::Live, 0, 0), "5'")}, kFav, kT + 2 * 180 + 8);
+  REQUIRE(e.has_value());
+  CHECK(e->kickOff);
+  // The same for the end of a match.
+  GoalDetector f;
+  f.update({fav_home(MatchState::Live, 1, 1)}, kFav, kT);
+  auto ft = f.update({fav_home(MatchState::Post, 1, 1)}, kFav, kT + 2 * 180 + 8);
+  REQUIRE(ft.has_value());
+  CHECK(ft->fullTime);
+  // Beyond the limit: silent.
+  GoalDetector g;
+  g.update({fav_home(MatchState::Live, 1, 1)}, kFav, kT);
+  CHECK_FALSE(g.update({fav_home(MatchState::Post, 1, 1)}, kFav, kT + GoalDetector::kRecentSeconds + 1).has_value());
+}

@@ -22,6 +22,7 @@
 #include <vector>
 
 #include "model.h"
+#include "refresh_policy.h"
 
 // The favourite's result at full time.
 enum class Outcome { None, Win, Draw, Defeat };
@@ -46,7 +47,9 @@ struct GoalEvent {
 
 class GoalDetector {
  public:
-  static constexpr int64_t kRecentSeconds = 360;  // the 300 s back-off cap plus a request
+  // Two idle polls (one may fail: the next success comes another kIdleMs
+  // later) plus a minute for request times and tick jitter: 420 s.
+  static constexpr int64_t kRecentSeconds = 2 * (RefreshPolicy::kIdleMs / 1000) + 60;
   static constexpr int kKickOffMaxMinute = 10;
 
   // Feed each poll's full match list with the poll's epoch seconds. Returns
