@@ -28,7 +28,24 @@ void HostLoop::pump(int64_t monotonicMs, int64_t epochSeconds) {
 
 void HostLoop::tick(int64_t monotonicMs, int64_t epochSeconds) {
   pump(monotonicMs, epochSeconds);
-  if (epochSeconds <= 0) return;
+  if (epochSeconds <= 0) {
+    if (store_.clock_valid()) {
+      store_.set_clock_valid(false);
+      clocklessRefreshed_ = false;
+    }
+    if (!clocklessRefreshed_ || monotonicMs - lastClocklessMs_ >= kClocklessRefreshMs ||
+        monotonicMs < lastClocklessMs_) {
+      clocklessRefreshed_ = true;
+      lastClocklessMs_ = monotonicMs;
+      if (hooks_.refreshWithoutClock) hooks_.refreshWithoutClock(lastValidEpoch_);
+    }
+    return;
+  }
+  lastValidEpoch_ = epochSeconds;
+  if (!store_.clock_valid()) {
+    store_.set_clock_valid(true);
+    refreshed_ = false;  // refresh at once
+  }
   const bool newSecond = !refreshed_ || epochSeconds != lastRefresh_;
   if (!newSecond && !matchesChanged_) return;
   if (newSecond && hooks_.everySecond) hooks_.everySecond(epochSeconds);

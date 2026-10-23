@@ -232,3 +232,46 @@ TEST_CASE("host loop: paused fetches (a software update) still refresh and deliv
   f.loop.tick(11 * 60000, kEpoch + 11 * 60);
   CHECK(f.count("fetch matches") == 2);
 }
+
+TEST_CASE("host loop: losing the clock tells the Store and refreshes without it every second; it comes back at once") {
+  Fixture f;
+  std::vector<int64_t> clockless;
+  HostLoop::Hooks h = f.hooks();
+  h.refreshWithoutClock = [&](int64_t last) { clockless.push_back(last); };
+  HostLoop loop(f.store, f.source, h);
+  f.source.matches = {match("m1", MatchState::Pre)};
+
+  // Never a clock: at once, then once a second (monotonic), with 0.
+  loop.tick(100, 0);
+  CHECK_FALSE(f.store.clock_valid());
+  CHECK(clockless == std::vector<int64_t>{0});
+  loop.tick(500, 0);
+  CHECK(clockless.size() == 1);
+  loop.tick(1100, 0);
+  CHECK(clockless == std::vector<int64_t>{0, 0});
+  CHECK(f.count("refresh") == 0);
+  CHECK(f.count("fetch matches") == 0);
+
+  // The clock arrives: valid again, a fetch and an ordinary refresh at once.
+  loop.tick(1200, kEpoch);
+  CHECK(f.store.clock_valid());
+  CHECK(f.count("refresh") == 1);
+  CHECK(f.count("fetch matches") == 1);
+  loop.tick(1300, kEpoch);
+  CHECK(f.count("refresh") == 1);
+
+  // Lost again (a resync to a wrong time): the last valid epoch is passed.
+  loop.tick(5000, 0);
+  CHECK_FALSE(f.store.clock_valid());
+  CHECK(clockless.back() == kEpoch);
+  CHECK(clockless.size() == 3);
+  loop.tick(5999, -1);
+  CHECK(clockless.size() == 3);
+  loop.tick(6000, -1);
+  CHECK(clockless.size() == 4);
+
+  // Back within the same epoch second as the last refresh: still refreshed at once.
+  loop.tick(6100, kEpoch);
+  CHECK(f.store.clock_valid());
+  CHECK(f.count("refresh") == 2);
+}

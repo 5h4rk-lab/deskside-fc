@@ -384,3 +384,19 @@ TEST_CASE("the power widgets are freed once whether the app or the display goes 
     h.app = nullptr;
   }
 }
+
+TEST_CASE("no clock: no night dimming (the day brightness), and the schedule again once the clock is back") {
+  AppHost h;
+  h.refresh(kMidnight);
+  test_display::fake_ms() += kTouchWakeMs + 1000;
+  h.refresh(kMidnight + 40);
+  REQUIRE(h.backlight.last() == 20);
+  // The clock is lost (HostLoop): app_refresh gets the last valid epoch, which
+  // must not keep the panel at the night level for ever.
+  h.store.set_clock_valid(false);
+  h.refresh(kMidnight + 40);
+  CHECK(h.backlight.last() == 100);
+  h.store.set_clock_valid(true);
+  h.refresh(kMidnight + 41);
+  CHECK(h.backlight.last() == 20);
+}

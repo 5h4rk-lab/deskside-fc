@@ -222,11 +222,18 @@ void style_keyboard(lv_obj_t* kb) {
 
 StatusInfo status_info(const Store& store, int64_t now) {
   StatusInfo s;
-  s.clock = hh_mm(now + store.tz_offset());
   s.connecting = !store.has_data();
-  if (!s.connecting) {
-    s.stale = store.stale(now);
-    if (s.stale) s.staleText = stale_text(now - store.last_success());
+  if (!store.clock_valid()) {
+    // No clock: no time to show, and no way to tell how old the data is.
+    s.clock = "--:--";
+    s.stale = true;
+    s.staleText = kWaitingForClock;
+  } else {
+    s.clock = hh_mm(now + store.tz_offset());
+    if (!s.connecting) {
+      s.stale = store.stale(now);
+      if (s.stale) s.staleText = stale_text(now - store.last_success());
+    }
   }
   const PowerStatus& power = store.power();
   s.battery = power.present;

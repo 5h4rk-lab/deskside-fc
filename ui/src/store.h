@@ -14,6 +14,9 @@
 #include "model.h"
 #include "power_service.h"
 
+// The status rows' and Settings' text while the clock is not valid.
+constexpr const char* kWaitingForClock = "Waiting for the clock";
+
 class Store {
  public:
   // Replaces the match list and records `now` as the last success time. A
@@ -31,10 +34,17 @@ class Store {
   // Plain-English state of the data for Settings: "Live data is up to date",
   // "Waiting for the first update...", or what is wrong ("Cannot reach the
   // helper", "Helper rejected the token", "Helper returned an error", "Helper
-  // sent unreadable data"). An error wins over old data.
+  // sent unreadable data"). An error wins over old data, and a missing clock
+  // (kWaitingForClock: nothing is fetched without one) wins over both.
   std::string data_status_text() const;
 
   const std::vector<MatchSummary>& matches() const { return matches_; }
+  // False while the host has no valid clock (HostLoop sets it): the status
+  // rows read "Waiting for the clock" and data_status_text() says so. True
+  // until told otherwise.
+  void set_clock_valid(bool valid) { clockValid_ = valid; }
+  bool clock_valid() const { return clockValid_; }
+
   // Grows by one at every set_matches(): screens that derive views from the
   // list compare it to know whether the list changed since they last looked.
   uint32_t matches_version() const { return matchesVersion_; }
@@ -96,6 +106,7 @@ class Store {
   std::string favourite_;
   int64_t lastSuccess_ = 0;
   uint32_t matchesVersion_ = 0;
+  bool clockValid_ = true;
   bool hasData_ = false;
   int failures_ = 0;
   FetchError error_ = FetchError::None;

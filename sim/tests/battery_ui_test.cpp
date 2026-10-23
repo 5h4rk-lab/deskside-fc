@@ -742,3 +742,47 @@ TEST_CASE("banner: forced for screenshots, and safe when the app goes first") {
   test_advance(11000);  // the banner's timer runs out with no app around
   test_advance(20);
 }
+
+// ------------------------------------------------------------ waiting for the clock
+
+TEST_CASE("no clock: every status row reads --:-- and 'Waiting for the clock', without collisions") {
+  for (auto kind : {ScreenHost::Live, ScreenHost::Matches, ScreenHost::News}) {
+    for (bool withData : {false, true}) {
+      CAPTURE(kind);
+      CAPTURE(withData);
+      ScreenHost h(kind);
+      if (withData) h.store.set_matches({live_match()}, kNow - 30);
+      h.store.set_power(charging(12));
+      h.store.set_clock_valid(false);
+      h.refresh(withData ? kNow - 30 : 0);  // the last valid epoch (0: never had one)
+      const widgets::StatusRow& r = h.row();
+      CHECK(text(r.clock) == "--:--");
+      REQUIRE(visible(r.staleLabel));
+      CHECK(text(r.staleLabel) == kWaitingForClock);
+      CHECK(visible(r.staleDot));
+      CHECK_FALSE(visible(r.freshDot));
+      lv_obj_t* gearIcon = kind == ScreenHost::Live ? lv_obj_get_child(live_parts(h.screen)->gear, 0) : nullptr;
+      check_no_collisions(r, gearIcon);
+
+      // The clock back: the ordinary row again.
+      h.store.set_clock_valid(true);
+      h.refresh(kNow);
+      CHECK(text(r.clock) != "--:--");
+      CHECK(text(r.staleLabel) != kWaitingForClock);
+    }
+  }
+}
+
+TEST_CASE("no clock: Settings' data line says so, whatever the last fetch did") {
+  AppHost h;
+  h.refresh();
+  app_open_settings(h.app);
+  h.store.set_error(FetchError::Offline);
+  h.store.set_clock_valid(false);
+  h.refresh(kNow);
+  CHECK(h.store.data_status_text() == kWaitingForClock);
+  CHECK(text(h.settings()->dataStatus) == kWaitingForClock);
+  h.store.set_clock_valid(true);
+  h.refresh(kNow);
+  CHECK(text(h.settings()->dataStatus) == "Cannot reach the helper");
+}

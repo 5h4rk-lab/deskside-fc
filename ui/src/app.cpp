@@ -351,7 +351,7 @@ void drive_backlight(AppState* st, int64_t now) {
   int percent = s.dayBrightness;
   if (st->screenOff) {
     percent = 0;
-  } else if (s.nightDim) {
+  } else if (s.nightDim && st->store->clock_valid()) {  // night dimming needs a clock
     const bool touched = lv_display_get_inactive_time(nullptr) < kTouchWakeMs;
     const int night = std::min(s.nightPercent, s.dayBrightness);
     const DimSchedule schedule(s.nightStartHour, s.nightEndHour, static_cast<uint8_t>(night),
@@ -432,7 +432,7 @@ int64_t monotonic_ms(AppState* st) {
 // inside the night window (touching the screen lifts the dimming, not this).
 bool night_dim_active(const AppState* st, int64_t now) {
   const Settings& s = st->settings;
-  if (!s.nightDim) return false;
+  if (!s.nightDim || !st->store->clock_valid()) return false;  // no clock, no night
   const DimSchedule schedule(s.nightStartHour, s.nightEndHour, 0, 100);
   return schedule.in_night(local_hour(now, st->store->tz_offset()));
 }
@@ -989,8 +989,9 @@ void app_refresh(lv_obj_t* appRoot, int64_t now) {
   if (st == nullptr) return;
   st->now = now;
   sync_favourite_from_teams(st);
-  // Every screen's local times follow the zone, daylight saving included.
-  st->store->set_tz_offset(offset_seconds(st->settings.zoneId, now));
+  // Every screen's local times follow the zone, daylight saving included
+  // (without a valid clock `now` is the last valid one: the offset stays).
+  if (st->store->clock_valid()) st->store->set_tz_offset(offset_seconds(st->settings.zoneId, now));
   drive_backlight(st, now);
   sync_power(st, now);
   check_scorer(st);

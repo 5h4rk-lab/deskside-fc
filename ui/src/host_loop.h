@@ -6,10 +6,15 @@
 // (the one that owns LVGL).
 //
 // Time: the host gives a 64-bit monotonic millisecond count and the epoch in
-// seconds. An epoch <= 0 means "the clock is not set yet" (no SNTP): then the
-// Poller is not ticked, the detail watch is not updated and nothing is
-// refreshed (no fetch may run on a wrong clock); the transport hooks still run
-// so requests already in flight finish.
+// seconds. An epoch <= 0 means "the clock is not set yet" (no SNTP, or a sync
+// the host refused): then the Poller is not ticked, the detail watch is not
+// updated and `refresh` is not called (no fetch may run on a wrong clock); the
+// transport hooks still run so requests already in flight finish. The Store
+// is told (Store::set_clock_valid(false): the status rows read "Waiting for
+// the clock") and `refreshWithoutClock` runs at once and then every
+// kClocklessRefreshMs, so the screens say so instead of freezing silently.
+// The first valid epoch after that sets the Store's clock valid again and
+// refreshes at once.
 #pragma once
 
 #include <stdint.h>
@@ -39,7 +44,14 @@ class HostLoop {
     std::function<void(int64_t epochSeconds)> everySecond;
     // The host passes app_refresh.
     std::function<void(int64_t epochSeconds)> refresh;
+    // While the epoch is invalid (see above), with the last valid epoch seen
+    // (0 when there never was one). The host passes app_refresh, which
+    // leaves the backlight and other clock-driven work alone while
+    // Store::clock_valid() is false. May be empty.
+    std::function<void(int64_t lastValidEpoch)> refreshWithoutClock;
   };
+
+  static constexpr int64_t kClocklessRefreshMs = 1000;
 
   // `store` and `source` must outlive the loop.
   HostLoop(Store& store, DataSource& source, Hooks hooks);
@@ -84,4 +96,7 @@ class HostLoop {
   bool fetchesPaused_ = false;
   bool refreshed_ = false;
   int64_t lastRefresh_ = 0;
+  int64_t lastValidEpoch_ = 0;
+  bool clocklessRefreshed_ = false;  // refreshWithoutClock ran in this clockless spell
+  int64_t lastClocklessMs_ = 0;
 };

@@ -88,6 +88,10 @@ lv_obj_t* app_create(lv_obj_t* root, const AppDeps& deps);
 // battery once (into the Store; widgets change only when it does) and drives
 // the low-battery banner (BatteryAlert: at most once per level and discharge
 // cycle, held back while the goal celebration shows).
+// While the Store's clock is not valid (Store::clock_valid(), set by HostLoop)
+// `now` is the last valid epoch (0 for none): the status rows read "Waiting
+// for the clock" with "--:--", the zone offset stays, and night dimming and
+// night mute are off (the day brightness applies: no clock, no night).
 void app_refresh(lv_obj_t* appRoot, int64_t now);
 
 // The settings in use.
