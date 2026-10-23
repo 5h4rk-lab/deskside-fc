@@ -10,6 +10,7 @@
 # Usage: tools/publish-firmware.sh [--notes "One line for the release"] [--skip-build]
 #
 # Refuses to run when:
+#  - --skip-build is given but the existing image is older than the last commit;
 #  - firmware/app/secrets.ini defines HELPER_URL or HELPER_TOKEN (that image
 #    would carry a token: such images are never published);
 #  - PLATFORMIO_BUILD_FLAGS is set (it could override the version, or anything);
@@ -68,6 +69,13 @@ if [ "$build" = 1 ]; then
 fi
 bin="$app/.pio/build/app/firmware.bin"
 [ -f "$bin" ] || die "no $bin (build failed?)"
+if [ "$build" = 0 ]; then
+  # --skip-build: the image must have been built after the last commit (the
+  # tree is clean, checked above), or it may be an older commit's.
+  head_time="$(git -C "$repo" log -1 --format=%ct HEAD)"
+  bin_time="$(stat -L -c %Y "$bin")"
+  [ "$bin_time" -gt "$head_time" ] || die "--skip-build: $bin is older than the last commit ($(git -C "$repo" log -1 --format=%h HEAD)): build again (run without --skip-build)"
+fi
 
 # Size, app descriptor (project and version) and, when HELPER_TOKEN is set, no token inside.
 python3 - "$bin" "$version" <<'EOF' || die "the image failed its checks (see above); nothing was published"

@@ -54,6 +54,9 @@ class UpdateFlow {
   void check_started(int64_t nowMs, bool userAsked);
   // The host could not ask (no network or no valid clock).
   void check_offline(int64_t nowMs, bool userAsked);
+  // No helper is set up, so there is nobody to ask: a tap reads "Up to date"
+  // (the running version), never an error.
+  void check_unconfigured(int64_t nowMs, bool userAsked);
   // The answer: any HTTP status, or a transport error. 200 with a manifest
   // decides (decide()); 404 means nothing is published (up to date); anything
   // else fails the check.
@@ -140,8 +143,14 @@ struct BootDecision {
 };
 
 // At start: `stored` is the record's text ("" when there is none), the
-// running slot's label and the running version.
-BootDecision decide_boot(const std::string& stored, const std::string& runningSlot, const Version& running);
+// running slot's label and the running version. `trialSlotRejected`: the
+// bootloader marked the record's slot aborted or invalid (it was booted and
+// failed). A record for another slot that never counted a start (boots 0)
+// and was not rejected means the power went between writing the record and
+// switching the boot slot: the update simply did not happen (erased quietly,
+// no "did not start" notice; the next check offers it again).
+BootDecision decide_boot(const std::string& stored, const std::string& runningSlot, const Version& running,
+                         bool trialSlotRejected);
 
 // "Updated to 0.1.1": the notice once a trial image is confirmed.
 std::string updated_notice(const Version& v);

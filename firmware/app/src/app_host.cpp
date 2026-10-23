@@ -479,9 +479,8 @@ void EspUpdater::check(bool userAsked) {
   const int64_t now = monotonicMs();
   if (checkInFlight_ || flow_.busy() || flow_.status().phase == UpdatePhase::Checking) return;
   if (userAsked && !flow_.can_check()) return;  // a tap on an offer installs instead
-  if (manifestUrl_.empty()) {  // no helper configured: nothing to ask
-    flow_.check_started(now, userAsked);
-    flow_.check_answered(now, true, 0, "");
+  if (manifestUrl_.empty()) {  // no helper configured: nothing to ask, "Up to date"
+    flow_.check_unconfigured(now, userAsked);
     return;
   }
   if (!networkReady()) {

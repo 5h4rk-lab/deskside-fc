@@ -98,6 +98,15 @@ TEST_CASE("flow: a newer manifest offers it; same or older is up to date; 404 is
   CHECK(g.status().phase == UpdatePhase::UpToDate);
 }
 
+TEST_CASE("flow: no helper set up: a tap reads up to date, never an error") {
+  UpdateFlow f(V(0, 1, 0), ManifestRules());
+  f.check_unconfigured(1000, true);
+  const UpdateStatus s = f.status();
+  CHECK(s.phase == UpdatePhase::UpToDate);
+  CHECK_FALSE(update_status_problem(s));
+  CHECK(update_status_text(s) == "Up to date (0.1.0)");
+}
+
 TEST_CASE("flow: failures of a check the user asked for show in the row") {
   UpdateFlow f(V(0, 1, 0), ManifestRules());
   f.check_started(0, true);
@@ -222,11 +231,11 @@ TEST_CASE("trial record: round trip and refusal of garbage") {
 }
 
 TEST_CASE("boot: no record is a normal start; a broken record is erased") {
-  BootDecision d = decide_boot("", "app0", V(0, 1, 0));
+  BootDecision d = decide_boot("", "app0", V(0, 1, 0), false);
   CHECK(d.action == BootAction::Normal);
   CHECK_FALSE(d.write);
   CHECK_FALSE(d.erase);
-  d = decide_boot("nonsense", "app0", V(0, 1, 0));
+  d = decide_boot("nonsense", "app0", V(0, 1, 0), false);
   CHECK(d.action == BootAction::Normal);
   CHECK(d.erase);
 }
@@ -237,16 +246,16 @@ TEST_CASE("boot: a trial image is counted, and rolled back on its third start") 
   r.boots = 0;
   r.version = V(0, 1, 1);
   r.from = V(0, 1, 0);
-  BootDecision d = decide_boot(encode_trial(r), "app1", V(0, 1, 1));
+  BootDecision d = decide_boot(encode_trial(r), "app1", V(0, 1, 1), false);
   CHECK(d.action == BootAction::Trial);
   CHECK(d.write);
   CHECK(d.record.boots == 1);
 
-  d = decide_boot(encode_trial(d.record), "app1", V(0, 1, 1));
+  d = decide_boot(encode_trial(d.record), "app1", V(0, 1, 1), false);
   CHECK(d.action == BootAction::Trial);
   CHECK(d.record.boots == 2);
 
-  d = decide_boot(encode_trial(d.record), "app1", V(0, 1, 1));
+  d = decide_boot(encode_trial(d.record), "app1", V(0, 1, 1), false);
   CHECK(d.action == BootAction::RollBack);
   CHECK(d.write);
   CHECK(d.record.boots == 3);
@@ -258,14 +267,32 @@ TEST_CASE("boot: back on the old slot after a failed trial: erase and tell the u
   r.boots = 3;
   r.version = V(0, 1, 2);
   r.from = V(0, 1, 1);
-  BootDecision d = decide_boot(encode_trial(r), "app0", V(0, 1, 1));
+  BootDecision d = decide_boot(encode_trial(r), "app0", V(0, 1, 1), false);
   CHECK(d.action == BootAction::RolledBack);
   CHECK(d.erase);
   CHECK(d.notice == "Update to 0.1.2 did not start. Kept 0.1.1.");
   // Rolled back by the bootloader after one start: same outcome.
   r.boots = 1;
-  d = decide_boot(encode_trial(r), "app0", V(0, 1, 1));
+  d = decide_boot(encode_trial(r), "app0", V(0, 1, 1), false);
   CHECK(d.action == BootAction::RolledBack);
+  // Rejected by the bootloader before our code ever counted a start: same.
+  r.boots = 0;
+  d = decide_boot(encode_trial(r), "app0", V(0, 1, 1), true);
+  CHECK(d.action == BootAction::RolledBack);
+  CHECK(d.notice == "Update to 0.1.2 did not start. Kept 0.1.1.");
+}
+
+TEST_CASE("boot: power cut between the trial record and the slot switch: quietly forgotten, no notice") {
+  TrialRecord r;
+  r.slot = "app1";
+  r.boots = 0;
+  r.version = V(0, 1, 2);
+  r.from = V(0, 1, 1);
+  const BootDecision d = decide_boot(encode_trial(r), "app0", V(0, 1, 1), false);
+  CHECK(d.action == BootAction::Normal);
+  CHECK(d.erase);
+  CHECK_FALSE(d.write);
+  CHECK(d.notice.empty());
 }
 
 TEST_CASE("boot: a record for the running slot but another version (a USB flash) is dropped") {
@@ -274,7 +301,7 @@ TEST_CASE("boot: a record for the running slot but another version (a USB flash)
   r.boots = 0;
   r.version = V(0, 1, 1);
   r.from = V(0, 1, 0);
-  BootDecision d = decide_boot(encode_trial(r), "app0", V(0, 1, 0));
+  BootDecision d = decide_boot(encode_trial(r), "app0", V(0, 1, 0), false);
   CHECK(d.action == BootAction::Normal);
   CHECK(d.erase);
 }

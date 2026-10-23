@@ -96,7 +96,16 @@ OtaBoot ota_boot() {
   b.running = running_version();
   b.imageState = image_state(running);
   const std::string stored = read_trial();
-  const BootDecision d = decide_boot(stored, b.runningSlot, b.running);
+  // The record's slot, when the bootloader booted it and gave up on it.
+  bool rejected = false;
+  TrialRecord rec;
+  if (decode_trial(stored, rec)) {
+    const esp_partition_t* p = esp_partition_find_first(ESP_PARTITION_TYPE_APP, ESP_PARTITION_SUBTYPE_ANY,
+                                                        rec.slot.c_str());
+    const int st = image_state(p);
+    rejected = st == static_cast<int>(ESP_OTA_IMG_ABORTED) || st == static_cast<int>(ESP_OTA_IMG_INVALID);
+  }
+  const BootDecision d = decide_boot(stored, b.runningSlot, b.running, rejected);
   b.action = d.action;
   b.boots = d.record.boots;
   if (d.erase) erase_trial();

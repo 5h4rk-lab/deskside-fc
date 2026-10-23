@@ -53,6 +53,11 @@ void UpdateFlow::check_offline(int64_t nowMs, bool userAsked) {
   }
 }
 
+void UpdateFlow::check_unconfigured(int64_t nowMs, bool userAsked) {
+  check_started(nowMs, userAsked);
+  check_answered(nowMs, false, 404, "");  // as "nothing published"
+}
+
 void UpdateFlow::check_answered(int64_t nowMs, bool transportError, int status, const std::string& body) {
   (void)nowMs;
   if (phase_ != UpdatePhase::Checking) return;
@@ -174,12 +179,17 @@ bool decode_trial(const std::string& text, TrialRecord& out) {
   return true;
 }
 
-BootDecision decide_boot(const std::string& stored, const std::string& runningSlot, const Version& running) {
+BootDecision decide_boot(const std::string& stored, const std::string& runningSlot, const Version& running,
+                         bool trialSlotRejected) {
   BootDecision d;
   if (stored.empty()) return d;
   TrialRecord r;
   if (!decode_trial(stored, r)) {
     d.erase = true;
+    return d;
+  }
+  if (r.slot != runningSlot && r.boots == 0 && !trialSlotRejected) {
+    d.erase = true;  // never switched to: nothing was tried, nothing to report
     return d;
   }
   if (r.slot != runningSlot) {
