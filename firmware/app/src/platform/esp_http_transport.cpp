@@ -20,6 +20,7 @@ constexpr BaseType_t kWorkerCore = 0;
 constexpr size_t kScratchBytes = 1024;
 constexpr int kChunkBytes = 1024;   // body read size: the deadline is checked between reads
 constexpr int kReadStepMs = 1000;   // client timeout of one read (at most the time left)
+constexpr int64_t kSlowDeliveryUs = 10000;  // poll() logs an answer whose handling took this long
 
 int64_t nowMs() { return esp_timer_get_time() / 1000; }
 
@@ -179,8 +180,18 @@ void EspHttpTransport::poll(size_t maxResults) {
       pending_.erase(it);
     }
     HttpResult res = std::move(job->result);
+    const std::string path = path_of(job->url);
     delete job;  // the token was wiped by the worker
+    const size_t bytes = res.body.size();
+    const int64_t t0 = esp_timer_get_time();
     if (done) done(std::move(res));
+    // The answer's handling on the LVGL task (parse, store, detector): a frame
+    // cannot be drawn meanwhile, so a slow one is worth a line.
+    const int64_t us = esp_timer_get_time() - t0;
+    if (us >= kSlowDeliveryUs) {
+      Serial.printf("[http] %s GET %s: %u B handled on the LVGL task in %lld.%lld ms\n", name_, path.c_str(),
+                    (unsigned)bytes, (long long)(us / 1000), (long long)(us % 1000 / 100));
+    }
   }
 }
 

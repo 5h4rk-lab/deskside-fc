@@ -86,6 +86,8 @@
 //   :diag-wdt-stall      start a task that subscribes to the task watchdog and never feeds it: the board
 //                        resets with reason "task watchdog" after 15 s (counted as a crash)
 //   :diag-panic          abort() now: a panic reset (counted as a crash; three within 10 min = safe mode)
+//   :diag-cpu [s]        each task's share of the CPU over s seconds (default 5; FreeRTOS run-time counters)
+//   :diag-picker         open (or close) the team picker, timed: build time, rows, memory; starts a trace (v)
 //   :diag-img-fail [n]   the next n (default 20) picture decodes run with every LVGL allocation of 1 KB
 //                        or more failing, as with PSRAM full: placeholders, no crash
 // A diagnostics image built with -DAPP_DIAG_CRASH_AT_BOOT=1 aborts 2 s after every start (the
@@ -760,6 +762,63 @@ int diagNumber(const std::string& v, int lo, int hi) {
   return n >= lo && n <= hi ? n : -1;
 }
 int s_diagKeyMs = 0;
+
+// :diag-cpu: each task's share of the CPU time over a window (FreeRTOS run-time
+// counters, CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS), both cores together (200 %
+// is both cores busy). Non-blocking: the second sample is taken by loop().
+constexpr int kCpuMaxTasks = 40;
+struct CpuSample {
+  TaskStatus_t tasks[kCpuMaxTasks];
+  UBaseType_t count = 0;
+  uint32_t total = 0;
+};
+CpuSample* s_cpu0 = nullptr;
+uint32_t s_cpuDueMs = 0;
+
+void cpuTake(CpuSample& s) {
+  s.count = uxTaskGetSystemState(s.tasks, kCpuMaxTasks, &s.total);
+}
+
+void cpuSampleStart(uint32_t seconds) {
+  if (!s_cpu0) s_cpu0 = static_cast<CpuSample*>(heap_caps_calloc(1, sizeof(CpuSample), MALLOC_CAP_SPIRAM));
+  if (!s_cpu0) return;
+  cpuTake(*s_cpu0);
+  s_cpuDueMs = millis() + seconds * 1000;
+  if (s_cpuDueMs == 0) s_cpuDueMs = 1;
+  Serial.printf("[cpu] sampling for %lu s\n", (unsigned long)seconds);
+}
+
+void cpuSampleFinish() {
+  CpuSample* s1 = static_cast<CpuSample*>(heap_caps_calloc(1, sizeof(CpuSample), MALLOC_CAP_SPIRAM));
+  if (!s1) return;
+  cpuTake(*s1);
+  // The run-time counter is esp_timer microseconds per core: elapsed wall time
+  // times two cores is 200 %.
+  const uint32_t wall = s1->total - s_cpu0->total;
+  std::string line = "[cpu] share of one core:";
+  uint32_t idle = 0;
+  for (UBaseType_t i = 0; i < s1->count; ++i) {
+    const TaskStatus_t& t = s1->tasks[i];
+    uint32_t before = 0;
+    for (UBaseType_t j = 0; j < s_cpu0->count; ++j) {
+      if (s_cpu0->tasks[j].xHandle == t.xHandle) before = s_cpu0->tasks[j].ulRunTimeCounter;
+    }
+    const uint32_t used = t.ulRunTimeCounter - before;
+    const uint32_t tenths = wall ? (uint32_t)((uint64_t)used * 1000 / wall) : 0;
+    if (strncmp(t.pcTaskName, "IDLE", 4) == 0) idle += tenths;
+    if (tenths < 1) continue;
+    char part[48];
+    snprintf(part, sizeof(part), " %s %lu.%lu%%", t.pcTaskName, (unsigned long)(tenths / 10),
+             (unsigned long)(tenths % 10));
+    line += part;
+  }
+  Serial.println(line.c_str());
+  Serial.printf("[cpu] over %lu ms: both cores busy %lu.%lu%% of 200%% (idle tasks %lu.%lu%%)\n",
+                (unsigned long)(wall / 1000), (unsigned long)((2000 - (idle > 2000 ? 2000 : idle)) / 10),
+                (unsigned long)((2000 - (idle > 2000 ? 2000 : idle)) % 10), (unsigned long)(idle / 10),
+                (unsigned long)(idle % 10));
+  heap_caps_free(s1);
+}
 #endif
 
 // Whole-word commands and the one-letter commands share the console; see serial_commands.h.
@@ -870,6 +929,15 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
   }
 #endif
 #if APP_DIAG
+  if (name == "diag-cpu") {
+    const int sec = value.empty() ? 5 : diagNumber(value, 1, 60);
+    if (sec < 0) {
+      Serial.println("[cmd] diag-cpu: :diag-cpu [s] (1 to 60, default 5)");
+    } else {
+      cpuSampleStart(static_cast<uint32_t>(sec));
+    }
+    return;
+  }
   if (name == "diag-img-fail") {
     static int s_imgFail = 20;
     s_imgFail = value.empty() ? 20 : diagNumber(value, 1, 500);
@@ -886,6 +954,8 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     void (*diagCall)() = nullptr;
     if (name == "diag-power-off") {
       diagCall = app_host_diag_power_off;
+    } else if (name == "diag-picker") {
+      diagCall = app_host_diag_picker;
 #if !APP_DEMO_DATA
     } else if (name == "ota-check") {
       diagCall = app_host_diag_ota_check;
@@ -1128,6 +1198,10 @@ void loop() {
   if (step > kLoopStepMs && step - kLoopStepMs > s_loopLagMaxMs) s_loopLagMaxMs = step - kLoopStepMs;
 
 #if APP_DIAG
+  if (s_cpuDueMs && (int32_t)(now - s_cpuDueMs) >= 0) {
+    s_cpuDueMs = 0;
+    cpuSampleFinish();
+  }
   if (s_dumpLabel && (int32_t)(now - s_dumpAtMs) >= 0) {
     lvgl_port_trace_dump(s_dumpLabel);
     s_dumpLabel = nullptr;

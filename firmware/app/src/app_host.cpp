@@ -19,6 +19,7 @@
 #include "power_policy.h"
 #include "image_provider.h"
 #include "screens/goal.h"
+#include "screens/team_picker.h"
 #include "format.h"
 #include "settings.h"
 #include "store.h"
@@ -1004,6 +1005,37 @@ void app_host_diag_key(int ms) {
   s_diagKeyUntilMs = monotonicMs() + ms;
   Serial.printf("[diag] %lld ms power key held for %d ms (injected; any power-off is a DRY RUN)\n",
                 (long long)monotonicMs(), ms);
+}
+
+void app_host_diag_picker() {
+  if (!s_host || !s_host->app) return;
+  lv_obj_t* app = s_host->app;
+  if (app_team_picker_view(app)) {
+    lv_obj_t* overlay = lv_obj_get_parent(app_team_picker_view(app));
+    lv_obj_delete(overlay);
+    Serial.println("[diag] picker closed");
+    return;
+  }
+  lv_mem_monitor_t m0 = {}, m1 = {};
+  lv_mem_monitor(&m0);
+  const size_t internal0 = heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+  const size_t psram0 = heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+  lvgl_port_trace_start();
+  const int64_t t0 = esp_timer_get_time();
+  app_open_team_picker(app);
+  const int64_t t1 = esp_timer_get_time();
+  lv_obj_t* picker = app_team_picker_view(app);
+  if (picker) lv_obj_update_layout(picker);
+  const int64_t t2 = esp_timer_get_time();
+  lv_mem_monitor(&m1);
+  const TeamPickerParts* parts = picker ? team_picker_parts(picker) : nullptr;
+  const uint32_t rows = parts && parts->list ? lv_obj_get_child_count(parts->list) : 0;
+  Serial.printf("[diag] picker: %u teams, %lu list children, create %lld us, layout %lld us | internal %+d B, psram %+d "
+                "B, lvgl used %+d B (trace running: v prints the frames)\n",
+                (unsigned)s_host->store.teams().size(), (unsigned long)rows, (long long)(t1 - t0),
+                (long long)(t2 - t1), (int)heap_caps_get_free_size(MALLOC_CAP_INTERNAL) - (int)internal0,
+                (int)heap_caps_get_free_size(MALLOC_CAP_SPIRAM) - (int)psram0,
+                (int)(m1.total_size - m1.free_size) - (int)(m0.total_size - m0.free_size));
 }
 #endif
 

@@ -167,6 +167,10 @@ void app_host_diag_power_off();
 // A power key press of `ms` milliseconds, as if the key were held (OR'ed with
 // the real key).
 void app_host_diag_key(int ms);
+// Opens the team picker (closes it when open) and prints how long building it
+// took (create + layout), the rows built, and the internal/PSRAM/LVGL memory it
+// took; a frame trace starts with it (v prints the frames that followed).
+void app_host_diag_picker();
 #endif
 
 #if APP_DIAG && !APP_DEMO_DATA
