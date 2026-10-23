@@ -94,7 +94,9 @@ std::optional<GoalEvent> GoalDetector::update(const std::vector<MatchSummary>& n
       } else if (oppNow > oppBase) {
         offer(1, make_event(m, home, away, oppSide, false));
       }
-      if (b.state == MatchState::Live && m.state == MatchState::Post && recent) b.fullTimePending = true;
+      if (b.state == MatchState::Live && m.state == MatchState::Post && recent && !b.fullTimeReported) {
+        b.fullTimePending = true;
+      }
       if (b.state == MatchState::Pre && m.state == MatchState::Live && recent) {
         const int minute = clock_minute(m.clock);
         if (minute <= kKickOffMaxMinute) {  // -1: no minutes to go by, the recency guard decides
@@ -112,12 +114,17 @@ std::optional<GoalEvent> GoalDetector::update(const std::vector<MatchSummary>& n
       offer(2, std::move(e));
     }
 
+    if (m.state == MatchState::Pre) b.fullTimeReported = false;
     b.home = home;
     b.away = away;
     b.state = m.state;
     b.seenAt = now;
   }
 
-  if (best && best->fullTime) baselines_[best->matchId].fullTimePending = false;
+  if (best && best->fullTime) {
+    Baseline& b = baselines_[best->matchId];
+    b.fullTimePending = false;
+    b.fullTimeReported = true;
+  }
   return best;
 }

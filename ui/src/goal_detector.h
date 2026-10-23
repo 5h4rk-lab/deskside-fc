@@ -70,6 +70,10 @@ class GoalDetector {
     MatchState state = MatchState::Pre;
     int64_t seenAt = 0;  // epoch of the poll that last saw this match
     bool fullTimePending = false;  // saw Live -> Post (recently), not yet reported
+    // Full time was reported for this match: a feed that flaps Post -> Live ->
+    // Post never reports it (whistle, celebration) again. Cleared when the
+    // match is seen Pre again.
+    bool fullTimeReported = false;
   };
   std::map<std::string, Baseline> baselines_;
   std::string lastFav_;

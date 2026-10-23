@@ -618,3 +618,22 @@ TEST_CASE("power: 'Powering off' ends a celebration and the fanfare waiting for 
   CHECK(f.sound.count() == 1);
   CHECK_FALSE(f.sound.played(SoundEvent::WinFanfare));
 }
+
+TEST_CASE("sound: a feed flapping Live -> Post -> Live -> Post whistles and celebrates once") {
+  Fixture f(true, false);
+  f.prefs.set("snd.mode", "2");
+  f.make();
+  f.poll(live_match(2, 1));
+  f.now += 25;
+  f.poll(live_match(2, 1, MatchState::Post));
+  test_advance(5000);
+  REQUIRE(f.sound.count() == 2);  // whistles, fanfare
+  goal_dismiss();
+  f.now += 25;
+  f.poll(live_match(2, 1));
+  f.now += 25;
+  f.poll(live_match(2, 1, MatchState::Post));
+  test_advance(5000);
+  CHECK(f.sound.count() == 2);
+  CHECK(goal_parts() == nullptr);
+}

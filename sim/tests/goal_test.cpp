@@ -413,3 +413,22 @@ TEST_CASE("recency guard: one failed poll at the idle cadence still whistles (tw
   g.update({fav_home(MatchState::Live, 1, 1)}, kFav, kT);
   CHECK_FALSE(g.update({fav_home(MatchState::Post, 1, 1)}, kFav, kT + GoalDetector::kRecentSeconds + 1).has_value());
 }
+
+TEST_CASE("full time is reported once even when the feed flaps Live -> Post -> Live -> Post") {
+  GoalDetector d;
+  d.update({fav_home(MatchState::Live, 2, 1)}, kFav, kT);
+  auto ft = d.update({fav_home(MatchState::Post, 2, 1)}, kFav, kT + 25);
+  REQUIRE(ft.has_value());
+  CHECK(ft->fullTime);
+  CHECK(ft->favourite);
+  CHECK_FALSE(d.update({fav_home(MatchState::Live, 2, 1)}, kFav, kT + 50).has_value());
+  CHECK_FALSE(d.update({fav_home(MatchState::Post, 2, 1)}, kFav, kT + 75).has_value());
+  CHECK_FALSE(d.update({fav_home(MatchState::Post, 2, 1)}, kFav, kT + 100).has_value());
+  // Back to Pre (a replayed fixture slot): a later real end is reported again.
+  d.update({fav_home(MatchState::Pre, std::nullopt, std::nullopt)}, kFav, kT + 125);
+  d.update({at(fav_home(MatchState::Live, 0, 0), "50'")}, kFav, kT + 150);
+  auto again = d.update({fav_home(MatchState::Post, 0, 0)}, kFav, kT + 175);
+  REQUIRE(again.has_value());
+  CHECK(again->fullTime);
+  CHECK(again->outcome == Outcome::Draw);
+}
