@@ -104,6 +104,30 @@ struct Item {
   bool applied = false;
 };
 
+// Everything the list (not the status row) is computed from besides the
+// Store's match list: when none of it changed, the rows cannot have changed.
+// Computing them takes about 17 ms for 62 matches on the board, too much for
+// every one-second refresh.
+struct ItemsKey {
+  uint32_t version = 0;
+  std::string favourite;
+  int tz = 0;
+  int64_t today = 0;
+  bool operator==(const ItemsKey& o) const {
+    return version == o.version && favourite == o.favourite && tz == o.tz && today == o.today;
+  }
+  bool operator!=(const ItemsKey& o) const { return !(*this == o); }
+};
+
+ItemsKey items_key(const Store& store, int64_t now) {
+  ItemsKey k;
+  k.version = store.matches_version();
+  k.favourite = store.favourite();
+  k.tz = store.tz_offset();
+  k.today = floor_div(now + k.tz, 86400);
+  return k;
+}
+
 struct MatchesState {
   Store* store = nullptr;
   ImageProvider* images = nullptr;
@@ -111,6 +135,7 @@ struct MatchesState {
   MatchesParts parts{};
   std::vector<Item> items;
   View shown;
+  ItemsKey shownKey;  // what `shown`'s items were computed from
   bool everApplied = false;
 };
 
@@ -511,6 +536,18 @@ void matches_refresh(lv_obj_t* screen, int64_t now) {
       widgets::crest_sync(it.parts.awayCrest);
     }
   }
+  const ItemsKey key = items_key(*st->store, now);
+  if (st->everApplied && key == st->shownKey) {
+    // The rows are as they were: only the status row (clock, stale marker,
+    // battery) may have changed.
+    const StatusInfo status = widgets::status_info(*st->store, now);
+    if (status != st->shown.status) {
+      widgets::status_row_apply(st->parts.status, "Matches", status);
+      st->shown.status = status;
+    }
+    return;
+  }
+  st->shownKey = key;
   const View v = compute_view(*st->store, now);
   if (st->everApplied && v == st->shown) return;
   apply(st, v);

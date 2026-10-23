@@ -308,6 +308,27 @@ TEST_CASE("two-digit scores fit the 54 px centre cell") {
   CHECK(lv_obj_get_width(r.centre) <= 54);
 }
 
+TEST_CASE("without a new match list the rows still follow midnight, the zone and the clock") {
+  Fixture f;
+  const int64_t lateEvening = kMidnight + 23 * 3600 + 59 * 60;  // 23:59 UTC
+  f.load({make("m-today", "eng.1", MatchState::Pre, kMidnight + 23 * 3600 + 59 * 60 + 30, rma(), bar()),
+          post("m-done", kMidnight + 15 * 3600, mnc(), liv(), 1, 0)},
+         lateEvening);
+  CHECK(f.sequence() == Seq{"#TODAY", "m-done", "m-today"});
+  CHECK(text(f.parts()->status.clock) == "23:59");
+
+  // Two minutes later it is tomorrow: no new list, yet the headers move on.
+  f.refresh(lateEvening + 120);
+  CHECK(text(f.parts()->status.clock) == "00:01");
+  CHECK(f.sequence() == Seq{"#YESTERDAY", "m-today", "m-done"});
+
+  // A new zone (+05:30) without a new list: the kickoff reads in local time.
+  f.store.set_tz_offset(kIndia);
+  f.refresh(lateEvening + 120);
+  CHECK(text(f.row("m-today").centre) == "05:29");
+  CHECK(text(f.parts()->status.clock) == "05:31");
+}
+
 TEST_CASE("the favourite's dot appears on the home and the away role only") {
   Fixture f;
   f.load({live("m-home", kNow - 600, ars(), che(), 1, 0),

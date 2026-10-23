@@ -10,6 +10,7 @@ bool involves(const MatchSummary& m, const std::string& teamId) {
 
 void Store::set_matches(std::vector<MatchSummary> matches, int64_t now) {
   matches_ = std::move(matches);
+  ++matchesVersion_;
   lastSuccess_ = now;
   hasData_ = true;
   failures_ = 0;

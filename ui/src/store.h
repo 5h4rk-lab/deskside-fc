@@ -35,6 +35,9 @@ class Store {
   std::string data_status_text() const;
 
   const std::vector<MatchSummary>& matches() const { return matches_; }
+  // Grows by one at every set_matches(): screens that derive views from the
+  // list compare it to know whether the list changed since they last looked.
+  uint32_t matches_version() const { return matchesVersion_; }
   // True once set_matches() has succeeded at least once (UI shows "Connecting"
   // until then).
   bool has_data() const { return hasData_; }
@@ -86,6 +89,7 @@ class Store {
   std::vector<Team> teams_;
   std::string favourite_;
   int64_t lastSuccess_ = 0;
+  uint32_t matchesVersion_ = 0;
   bool hasData_ = false;
   int failures_ = 0;
   FetchError error_ = FetchError::None;
