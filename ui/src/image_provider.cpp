@@ -25,7 +25,24 @@ Holder* find_holder(lv_obj_t* obj) {
   return nullptr;
 }
 
+// image_stretch_when_loaded(): the widget wants the picture fitted to its size.
+constexpr lv_obj_flag_t kStretchFlag = LV_OBJ_FLAG_USER_1;
+
+void fit(lv_obj_t* img, const lv_image_dsc_t* dsc) {
+  if (!lv_obj_has_flag(img, kStretchFlag)) return;
+  const int32_t w = lv_obj_get_style_width(img, LV_PART_MAIN);
+  const int32_t h = lv_obj_get_style_height(img, LV_PART_MAIN);
+  const bool same = static_cast<int32_t>(dsc->header.w) == w && static_cast<int32_t>(dsc->header.h) == h;
+  if (!same && lv_image_get_inner_align(img) != LV_IMAGE_ALIGN_STRETCH) {
+    lv_image_set_inner_align(img, LV_IMAGE_ALIGN_STRETCH);
+  }
+}
+
 }  // namespace
+
+void image_stretch_when_loaded(lv_obj_t* img) {
+  if (img != nullptr) lv_obj_add_flag(img, kStretchFlag);
+}
 
 void image_load_into(lv_obj_t* img, ImageProvider& provider, const std::string& path) {
   if (img == nullptr) return;
@@ -46,5 +63,6 @@ void image_load_into(lv_obj_t* img, ImageProvider& provider, const std::string& 
     if (!*liveness || !image) return;
     holder->image = image;
     lv_image_set_src(img, holder->image.get());
+    fit(img, holder->image.get());
   });
 }

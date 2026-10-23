@@ -28,3 +28,13 @@ class ImageProvider {
 // again for the same widget supersedes the earlier request (the image already
 // shown stays valid until the new one arrives).
 void image_load_into(lv_obj_t* img, ImageProvider& provider, const std::string& path);
+
+// Marks `img` (an lv_image whose size was set with lv_obj_set_size) to be
+// stretched to its size, but only once a picture of another size arrives
+// through image_load_into(). Same picture as LV_IMAGE_ALIGN_STRETCH, without
+// its cost at creation: lv_image_set_inner_align() lays out the whole screen
+// (LVGL 9.2 lv_image_set_pivot), so setting it on every row of a long list
+// while building it made the build quadratic (96 picker rows: 1 s on the
+// board). The helper sends pictures at the requested size, so on the device
+// nothing is stretched at all.
+void image_stretch_when_loaded(lv_obj_t* img);

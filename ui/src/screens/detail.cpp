@@ -870,7 +870,7 @@ lv_obj_t* add_marker(DetailState* st, lv_obj_t* pitch, const LineupPlayer& pl, S
     lv_obj_set_size(info->photo, photo, photo);
     // Child positions start inside the ring: undo that to centre on the marker.
     lv_obj_set_pos(info->photo, (size - photo) / 2 - kRing, -kRing);
-    lv_image_set_inner_align(info->photo, LV_IMAGE_ALIGN_STRETCH);
+    image_stretch_when_loaded(info->photo);
     st->photoMarkers.push_back(m);
     image_load_into(info->photo, *st->images, sized(pl.photo, kPhotoRequest, kPhotoRequest));
   }

@@ -84,8 +84,8 @@ lv_obj_t* crest_image(lv_obj_t* parent, int32_t size) {
   lv_obj_t* img = lv_image_create(parent);
   lv_obj_set_size(img, size, size);
   // Helper images are square at the requested size; stretch only matters for
-  // the simulator's larger local assets.
-  lv_image_set_inner_align(img, LV_IMAGE_ALIGN_STRETCH);
+  // the simulator's larger local assets (applied when such a picture arrives).
+  image_stretch_when_loaded(img);
   lv_obj_set_style_radius(img, LV_RADIUS_CIRCLE, 0);
   lv_obj_set_style_bg_color(img, theme().chalk, 0);
   lv_obj_set_style_bg_opa(img, kPlaceholderOpa, 0);

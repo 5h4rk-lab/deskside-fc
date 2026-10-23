@@ -385,3 +385,37 @@ TEST_CASE("image_load_into called again replaces the previous request") {
   }
   deinit_test_display();
 }
+
+TEST_CASE("image_stretch_when_loaded: a picture of the widget's size is drawn as it is, another size is stretched") {
+  init_test_display();
+  {
+    DeferredProvider provider;
+    lv_obj_t* exact = lv_image_create(lv_screen_active());
+    lv_obj_set_size(exact, 24, 24);
+    image_stretch_when_loaded(exact);
+    lv_obj_t* larger = lv_image_create(lv_screen_active());
+    lv_obj_set_size(larger, 24, 24);
+    image_stretch_when_loaded(larger);
+    lv_obj_t* plainImg = lv_image_create(lv_screen_active());  // not marked: never stretched
+    lv_obj_set_size(plainImg, 24, 24);
+    // Marking costs nothing at creation: no inner align yet.
+    CHECK(lv_image_get_inner_align(exact) == LV_IMAGE_ALIGN_CENTER);
+    CHECK(lv_image_get_inner_align(larger) == LV_IMAGE_ALIGN_CENTER);
+
+    image_load_into(exact, provider, "a");
+    image_load_into(larger, provider, "b");
+    image_load_into(plainImg, provider, "c");
+    provider.fire(0, make_image(24, 24, 0x10));
+    provider.fire(1, make_image(48, 48, 0x20));
+    provider.fire(2, make_image(48, 48, 0x30));
+    CHECK(lv_image_get_inner_align(exact) == LV_IMAGE_ALIGN_CENTER);
+    CHECK(lv_image_get_scale_x(exact) == LV_SCALE_NONE);
+    CHECK(lv_image_get_inner_align(larger) == LV_IMAGE_ALIGN_STRETCH);
+    lv_obj_update_layout(lv_screen_active());
+    CHECK(lv_image_get_scale_x(larger) == LV_SCALE_NONE / 2);
+    CHECK(lv_image_get_scale_y(larger) == LV_SCALE_NONE / 2);
+    CHECK(lv_image_get_inner_align(plainImg) == LV_IMAGE_ALIGN_CENTER);
+    test_advance(20);
+  }
+  deinit_test_display();
+}
