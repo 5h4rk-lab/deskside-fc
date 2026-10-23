@@ -16,6 +16,10 @@
 
 // The status rows' and Settings' text while the clock is not valid.
 constexpr const char* kWaitingForClock = "Waiting for the clock";
+// Settings' data line, and the status rows while the clock is not valid, when
+// the Wi-Fi link is down (no clock can come without it).
+constexpr const char* kNoWifiConnection = "No Wi-Fi connection";
+constexpr const char* kNoWifiShort = "No Wi-Fi";
 
 class Store {
  public:
@@ -34,8 +38,9 @@ class Store {
   // Plain-English state of the data for Settings: "Live data is up to date",
   // "Waiting for the first update...", or what is wrong ("Cannot reach the
   // helper", "Helper rejected the token", "Helper returned an error", "Helper
-  // sent unreadable data"). An error wins over old data, and a missing clock
-  // (kWaitingForClock: nothing is fetched without one) wins over both.
+  // sent unreadable data"). An error wins over old data, a missing clock
+  // (kWaitingForClock: nothing is fetched without one) wins over both, and a
+  // Wi-Fi link that is down (kNoWifiConnection) wins over everything.
   std::string data_status_text() const;
 
   const std::vector<MatchSummary>& matches() const { return matches_; }
@@ -44,6 +49,12 @@ class Store {
   // until told otherwise.
   void set_clock_valid(bool valid) { clockValid_ = valid; }
   bool clock_valid() const { return clockValid_; }
+  // True while the device's Wi-Fi link is down (app_refresh sets it from the
+  // WifiService; hosts without one leave it false). It wins over the clock
+  // and over fetch errors in data_status_text(), and over "Waiting for the
+  // clock" in the status rows: the real problem is named first.
+  void set_link_down(bool down) { linkDown_ = down; }
+  bool link_down() const { return linkDown_; }
 
   // Grows by one at every set_matches(): screens that derive views from the
   // list compare it to know whether the list changed since they last looked.
@@ -107,6 +118,7 @@ class Store {
   int64_t lastSuccess_ = 0;
   uint32_t matchesVersion_ = 0;
   bool clockValid_ = true;
+  bool linkDown_ = false;
   bool hasData_ = false;
   int failures_ = 0;
   FetchError error_ = FetchError::None;

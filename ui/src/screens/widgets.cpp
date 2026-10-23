@@ -227,7 +227,7 @@ StatusInfo status_info(const Store& store, int64_t now) {
     // No clock: no time to show, and no way to tell how old the data is.
     s.clock = "--:--";
     s.stale = true;
-    s.staleText = kWaitingForClock;
+    s.staleText = store.link_down() ? kNoWifiShort : kWaitingForClock;  // the cause first
   } else {
     s.clock = hh_mm(now + store.tz_offset());
     if (!s.connecting) {

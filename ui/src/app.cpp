@@ -1038,6 +1038,7 @@ void app_refresh(lv_obj_t* appRoot, int64_t now) {
   AppState* st = app_state(appRoot);
   if (st == nullptr) return;
   st->now = now;
+  if (st->wifi != nullptr) st->store->set_link_down(!st->wifi->status().connected);
   sync_favourite_from_teams(st);
   // Every screen's local times follow the zone, daylight saving included
   // (without a valid clock `now` is the last valid one: the offset stays).

@@ -18,6 +18,7 @@ void Store::set_matches(std::vector<MatchSummary> matches, int64_t now) {
 }
 
 std::string Store::data_status_text() const {
+  if (linkDown_) return kNoWifiConnection;
   if (!clockValid_) return kWaitingForClock;
   switch (error_) {
     case FetchError::Offline: return "Cannot reach the helper";

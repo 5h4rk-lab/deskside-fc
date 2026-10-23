@@ -9,6 +9,7 @@
 
 #include "app.h"
 #include "fonts.h"
+#include "mock_wifi.h"
 #include "battery_model.h"
 #include "power_service.h"
 #include "prefs.h"
@@ -785,4 +786,61 @@ TEST_CASE("no clock: Settings' data line says so, whatever the last fetch did") 
   h.store.set_clock_valid(true);
   h.refresh(kNow);
   CHECK(text(h.settings()->dataStatus) == "Cannot reach the helper");
+}
+
+TEST_CASE("no clock and no Wi-Fi: the status rows name the Wi-Fi, Settings too; the clock alone says the clock") {
+  for (auto kind : {ScreenHost::Live, ScreenHost::Matches, ScreenHost::News}) {
+    CAPTURE(kind);
+    ScreenHost h(kind);
+    h.store.set_clock_valid(false);
+    h.store.set_link_down(true);
+    h.refresh(0);
+    CHECK(text(h.row().staleLabel) == kNoWifiShort);
+    CHECK(text(h.row().clock) == "--:--");
+    h.store.set_link_down(false);
+    h.refresh(0);
+    CHECK(text(h.row().staleLabel) == kWaitingForClock);
+  }
+  Store s;
+  s.set_error(FetchError::Auth);
+  s.set_clock_valid(false);
+  s.set_link_down(true);
+  CHECK(s.data_status_text() == kNoWifiConnection);  // the link first
+  s.set_link_down(false);
+  CHECK(s.data_status_text() == kWaitingForClock);   // then the clock
+  s.set_clock_valid(true);
+  CHECK(s.data_status_text() == "Helper rejected the token");
+  s.set_link_down(true);
+  CHECK(s.data_status_text() == kNoWifiConnection);  // even with a clock
+}
+
+TEST_CASE("app_refresh reads the Wi-Fi link into the Store: down until a join, then up") {
+  init_test_display();
+  theme_reset();
+  {
+    Store store;
+    NoImages images;
+    NoSource source;
+    MemoryPrefs prefs;
+    MockWifi wifi;
+    wifi.set_networks({WifiNetwork{"HomeNet-5G", -50, false}});
+    wifi.set_saved({"HomeNet-5G"});
+    AppDeps deps{store, images, source, nullptr, prefs};
+    deps.wifi = &wifi;
+    lv_obj_t* app = app_create(lv_screen_active(), deps);
+    test_advance(20);
+    REQUIRE_FALSE(wifi.status().connected);
+    store.set_clock_valid(false);
+    app_refresh(app, 0);
+    CHECK(store.link_down());
+    CHECK(store.data_status_text() == kNoWifiConnection);
+    REQUIRE(wifi.auto_join());
+    REQUIRE(wifi.status().connected);
+    app_refresh(app, 0);
+    CHECK_FALSE(store.link_down());
+    CHECK(store.data_status_text() == kWaitingForClock);
+    lv_obj_delete(app);
+  }
+  theme_reset();
+  deinit_test_display();
 }
