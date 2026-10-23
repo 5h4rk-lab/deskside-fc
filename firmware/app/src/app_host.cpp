@@ -998,6 +998,50 @@ void app_host_diag_key(int ms) {
                 (long long)monotonicMs(), ms);
 }
 
+namespace {
+// :diag-strip: switches one kind of decoration off on every object of the
+// shown tab (measurement only: the tab stays so until a restart).
+int stripTree(lv_obj_t* o, int what, bool root) {
+  int n = 0;
+  if (!root) {
+    switch (what) {
+      case 0:
+        if (lv_obj_get_style_radius(o, 0) != 0) { lv_obj_set_style_radius(o, 0, 0); ++n; }
+        break;
+      case 1:
+        if (lv_obj_check_type(o, &lv_image_class)) { lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); ++n; }
+        break;
+      case 2:
+        if (lv_obj_check_type(o, &lv_label_class)) { lv_obj_add_flag(o, LV_OBJ_FLAG_HIDDEN); ++n; }
+        break;
+      case 3:
+        if (lv_obj_get_style_bg_opa(o, 0) != LV_OPA_TRANSP) { lv_obj_set_style_bg_opa(o, LV_OPA_TRANSP, 0); ++n; }
+        break;
+      case 4:
+        if (lv_obj_get_style_bg_grad_dir(o, 0) != LV_GRAD_DIR_NONE) { lv_obj_set_style_bg_grad_dir(o, LV_GRAD_DIR_NONE, 0); ++n; }
+        break;
+      case 5:
+        if (lv_obj_get_style_opa(o, 0) != LV_OPA_COVER || lv_obj_get_style_bg_image_src(o, 0) != nullptr) ++n;  // count only
+        break;
+      default: break;
+    }
+  }
+  for (uint32_t i = 0; i < lv_obj_get_child_count(o); ++i) n += stripTree(lv_obj_get_child(o, (int32_t)i), what, false);
+  return n;
+}
+}  // namespace
+
+void app_host_diag_strip(int what) {
+  if (!s_host || !s_host->app) return;
+  const uint32_t tab = lv_tabview_get_tab_active(s_host->app);
+  lv_obj_t* page = lv_obj_get_child(lv_tabview_get_content(s_host->app), (int32_t)tab);
+  static const char* const kNames[] = {"radius", "images", "labels", "backgrounds", "gradients", "layers (count)"};
+  const int n = page ? stripTree(page, what, true) : 0;
+  if (page) lv_obj_invalidate(page);
+  Serial.printf("[diag] strip tab %lu: %s off on %d objects (until a restart)\n", (unsigned long)tab,
+                what >= 0 && what <= 5 ? kNames[what] : "?", n);
+}
+
 void app_host_diag_shot() {
   // What LVGL rendered (the same software renderer and settings as the panel
   // gets, not the panel's own light): RGB565 rows as hex, for a host script.

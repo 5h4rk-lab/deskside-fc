@@ -174,6 +174,9 @@ void app_host_diag_picker();
 // The active screen as LVGL rendered it, printed as [shot] lines of RGB565 hex
 // (240 x 320): what the renderer produced, for comparing with the simulator.
 void app_host_diag_shot();
+// Measurement: one kind of decoration off on every object of the shown tab
+// (0 radius, 1 images, 2 labels, 3 backgrounds, 4 gradients, 5 count layered objects).
+void app_host_diag_strip(int what);
 #endif
 
 #if APP_DIAG && !APP_DEMO_DATA

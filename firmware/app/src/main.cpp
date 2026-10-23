@@ -997,6 +997,15 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
   }
 #endif
 #if APP_DIAG
+  if (name == "diag-strip") {
+    const int w = diagNumber(value, 0, 5);
+    if (w < 0) {
+      Serial.println("[cmd] diag-strip: :diag-strip <0-5> (0 radius, 1 images, 2 labels, 3 backgrounds, 4 gradients, 5 count)");
+    } else {
+      app_host_post_call_arg(app_host_diag_strip, w);
+    }
+    return;
+  }
   if (name == "diag-backlight") {
     blCommand(value);
     return;
