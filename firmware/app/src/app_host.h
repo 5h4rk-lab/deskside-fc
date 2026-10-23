@@ -171,6 +171,9 @@ void app_host_diag_key(int ms);
 // took (create + layout), the rows built, and the internal/PSRAM/LVGL memory it
 // took; a frame trace starts with it (v prints the frames that followed).
 void app_host_diag_picker();
+// The active screen as LVGL rendered it, printed as [shot] lines of RGB565 hex
+// (240 x 320): what the renderer produced, for comparing with the simulator.
+void app_host_diag_shot();
 #endif
 
 #if APP_DIAG && !APP_DEMO_DATA

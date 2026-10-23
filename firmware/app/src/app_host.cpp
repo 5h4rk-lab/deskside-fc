@@ -949,9 +949,11 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, Es
   heapStep("first refresh done");
   s_host->loop.note_refreshed(now);
 #else
-  // No clock yet: the first tick refreshes without it (status rows "Waiting
-  // for the clock", day brightness) until SNTP has set it; the first valid
-  // tick fetches everything and refreshes.
+  // No clock yet: refresh without it now (status rows "Waiting for the
+  // clock", the day brightness set before the first frame lights the panel),
+  // and every tick until SNTP has set it; the first valid tick fetches
+  // everything and refreshes.
+  s_host->loop.tick(monotonicMs(), epochNow());
 #endif
   if (!lv_timer_create(onTick, kTickMs, nullptr)) {
     Serial.println("[app] ERROR: cannot create the host loop timer (out of memory)");
@@ -994,6 +996,37 @@ void app_host_diag_key(int ms) {
   s_diagKeyUntilMs = monotonicMs() + ms;
   Serial.printf("[diag] %lld ms power key held for %d ms (injected; any power-off is a DRY RUN)\n",
                 (long long)monotonicMs(), ms);
+}
+
+void app_host_diag_shot() {
+  // What LVGL rendered (the same software renderer and settings as the panel
+  // gets, not the panel's own light): RGB565 rows as hex, for a host script.
+  lv_obj_t* scr = lv_screen_active();
+  lv_draw_buf_t* buf = lv_snapshot_take(scr, LV_COLOR_FORMAT_RGB565);
+  if (!buf) {
+    Serial.println("[shot] snapshot failed (out of memory)");
+    return;
+  }
+  const uint32_t w = buf->header.w, h = buf->header.h, stride = buf->header.stride;
+  Serial.setTxTimeoutMs(2000);  // every byte must arrive: wait for the host instead of dropping
+  Serial.printf("[shot] begin %lu %lu rgb565le\n", (unsigned long)w, (unsigned long)h);
+  static const char kHex[] = "0123456789abcdef";
+  std::string line;
+  line.reserve(w * 4 + 16);
+  for (uint32_t y = 0; y < h; ++y) {
+    const uint8_t* row = buf->data + y * stride;
+    line = "[shot] ";
+    for (uint32_t i = 0; i < w * 2; ++i) {
+      line += kHex[row[i] >> 4];
+      line += kHex[row[i] & 15];
+    }
+    line += '\n';
+    Serial.write(reinterpret_cast<const uint8_t*>(line.data()), line.size());
+  }
+  Serial.println("[shot] end");
+  Serial.flush();
+  Serial.setTxTimeoutMs(5);
+  lv_draw_buf_destroy(buf);
 }
 
 void app_host_diag_picker() {

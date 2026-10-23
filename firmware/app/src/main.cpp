@@ -89,6 +89,8 @@
 //                        resets with reason "task watchdog" after 15 s (counted as a crash)
 //   :diag-panic          abort() now: a panic reset (counted as a crash; three within 10 min = safe mode)
 //   :diag-cpu [s]        each task's share of the CPU over s seconds (default 5; FreeRTOS run-time counters)
+//   :diag-shot           the active screen as LVGL rendered it, as [shot] lines of RGB565 hex (a host script
+//                        turns them into a PNG)
 //   :diag-picker         open (or close) the team picker, timed: build time, rows, memory; starts a trace (v)
 //   :diag-img-fail [n]   the next n (default 20) picture decodes run with every LVGL allocation of 1 KB
 //                        or more failing, as with PSRAM full: placeholders, no crash
@@ -940,6 +942,7 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     }
     return;
   }
+#if !APP_DEMO_DATA
   if (name == "diag-img-fail") {
     static int s_imgFail = 20;
     s_imgFail = value.empty() ? 20 : diagNumber(value, 1, 500);
@@ -950,6 +953,7 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     }
     return;
   }
+#endif
   // Diagnostics words without a value (none of them is destructive except the
   // two fault injections, which only restart the board).
   if (value.empty()) {
@@ -958,6 +962,8 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
       diagCall = app_host_diag_power_off;
     } else if (name == "diag-picker") {
       diagCall = app_host_diag_picker;
+    } else if (name == "diag-shot") {
+      diagCall = app_host_diag_shot;
 #if !APP_DEMO_DATA
     } else if (name == "ota-check") {
       diagCall = app_host_diag_ota_check;
