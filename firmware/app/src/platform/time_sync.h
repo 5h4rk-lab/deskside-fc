@@ -21,9 +21,18 @@ int64_t epoch_now_if_valid();
 // Number of completed syncs since boot (serial status line).
 uint32_t time_sync_count();
 
+// Syncs refused because they set a time before 2024 (a bad server answer).
+// After a good sync the clock is put back to that sync carried forward on the
+// monotonic clock, so the epoch stays valid; before any good sync it stays
+// not valid (the screens say "Waiting for the clock").
+uint32_t time_sync_refused();
+
 #if APP_DIAG
 // Diagnostics builds only: stops SNTP and sets the clock to 2023-06-01 (invalid),
 // to see the app with a wrong clock; time_sync_diag_restore() starts SNTP again.
 void time_sync_diag_break();
 void time_sync_diag_restore();
+// Feeds the sync callback a 2023 time exactly as SNTP would (clock set first):
+// it must be refused and, after a good sync, the clock put back.
+void time_sync_diag_bad_sync();
 #endif

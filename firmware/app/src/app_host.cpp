@@ -260,6 +260,12 @@ struct Host {
     h.refresh = [this](int64_t now) {
       if (app) app_refresh(app, now);
     };
+    // No valid clock (not synced yet, or a sync refused as before 2024): the
+    // screens say "Waiting for the clock" and the backlight takes the day
+    // brightness (app_refresh with Store::clock_valid() false).
+    h.refreshWithoutClock = [this](int64_t lastValid) {
+      if (app) app_refresh(app, lastValid);
+    };
     return h;
   }
 
@@ -284,7 +290,6 @@ struct Host {
   ImageProvider& images;
   bool linkWasUp = false;
   bool clockWasValid = false;
-  int lastUntimedPercent = -1;
 #endif
   bool firstData = false;
   int64_t linkUpAtMs = -1;
@@ -443,20 +448,6 @@ void testCelebration(bool fullTime) {
                 e.homeAbbr.c_str());
 }
 
-// Before the clock is valid app_refresh() does not run, so nothing drives the
-// backlight: give it the saved day brightness (no night dimming without a
-// clock). Once refreshes run, app_refresh() takes over.
-void untimedBacklight() {
-  const Settings* s = app_settings(s_host->app);
-  if (!s || app_screen_off(s_host->app)) {
-    s_host->lastUntimedPercent = -1;  // set again when the screen comes back on
-    return;
-  }
-  if (s->dayBrightness == s_host->lastUntimedPercent) return;
-  s_host->lastUntimedPercent = s->dayBrightness;
-  s_host->backlight.set_percent(static_cast<uint8_t>(s->dayBrightness));
-}
-
 // Wi-Fi link and clock transitions (LVGL task, every tick).
 void watchNetwork(int64_t epoch) {
   Host& h = *s_host;
@@ -479,7 +470,7 @@ void watchNetwork(int64_t epoch) {
                   utc.tm_mon + 1, utc.tm_mday, utc.tm_hour, utc.tm_min, utc.tm_sec, (long long)monotonicMs(),
                   h.http ? "" : "; no valid helper URL/token, so no requests (:show-config)");
   } else if (epoch <= 0 && h.clockWasValid) {
-    Serial.println("[time] clock no longer valid: polling and refreshes pause");
+    Serial.println("[time] clock no longer valid: polling pauses, the screens say 'Waiting for the clock'");
   }
   h.clockWasValid = epoch > 0;
 }
@@ -851,7 +842,6 @@ void onTick(lv_timer_t*) {
   const int64_t epoch = epochNow();
 #if !APP_DEMO_DATA
   watchNetwork(epoch);
-  if (epoch <= 0) untimedBacklight();
   if (s_host->updater) static_cast<EspUpdater*>(s_host->updater)->tick();
 #endif
   s_host->loop.tick(monotonicMs(), epoch);
@@ -960,9 +950,9 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, Es
   heapStep("first refresh done");
   s_host->loop.note_refreshed(now);
 #else
-  // No clock yet: the screens show "Connecting..." until SNTP has set it; the
-  // first valid tick fetches everything and refreshes.
-  untimedBacklight();
+  // No clock yet: the first tick refreshes without it (status rows "Waiting
+  // for the clock", day brightness) until SNTP has set it; the first valid
+  // tick fetches everything and refreshes.
 #endif
   if (!lv_timer_create(onTick, kTickMs, nullptr)) {
     Serial.println("[app] ERROR: cannot create the host loop timer (out of memory)");
@@ -1061,10 +1051,10 @@ void app_host_print_net() {
   const EspHttpTransport::Stats s = h.transport.stats();
   auto kb = [](size_t v) { return v == SIZE_MAX ? -1 : (int)(v / 1024); };
   Serial.printf(
-      "[net] link %s, clock %s (syncs %lu) | http ok %lu failed %lu refused %lu, last %d %u B in %lu ms (handshake "
+      "[net] link %s, clock %s (syncs %lu, refused %lu) | http ok %lu failed %lu refused %lu, last %d %u B in %lu ms (handshake "
       "%lu ms), in flight %u | internal free in TLS last %d KB, min %d KB, largest min %d KB, psram min %d KB | "
       "worker stack free %u B | data: %s%s\n",
-      h.wifi.link_up() ? "up" : "down", epoch > 0 ? "valid" : "NOT valid", (unsigned long)time_sync_count(),
+      h.wifi.link_up() ? "up" : "down", epoch > 0 ? "valid" : "NOT valid", (unsigned long)time_sync_count(), (unsigned long)time_sync_refused(),
       (unsigned long)s.ok, (unsigned long)s.failed, (unsigned long)s.refused, s.lastStatus, (unsigned)s.lastBytes,
       (unsigned long)s.lastMs, (unsigned long)s.lastHandshakeMs, (unsigned)h.transport.outstanding(),
       s.internalFreeInTls ? (int)(s.internalFreeInTls / 1024) : -1, kb(s.internalFreeInTlsMin),

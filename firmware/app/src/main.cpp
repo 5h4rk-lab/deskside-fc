@@ -65,8 +65,10 @@
 //   S        scan and print the networks in range (SSID, signal, open/secured)
 //   W        join the most recently saved network with a deliberately wrong throw-away key (failure path)
 //   Z        join a network that does not exist (the 15 s timeout path)
-//   :diag-clock-break    stop SNTP and set the clock to 2023-06-01 (not valid): polling pauses
+//   :diag-clock-break    stop SNTP and set the clock to 2023-06-01 (not valid): polling pauses, the
+//                        status rows read "--:--  Waiting for the clock"
 //   :diag-clock-restore  start SNTP again
+//   :diag-clock-badsync  a sync to 2023-06-01 as SNTP would deliver it: refused, the clock stays valid
 //   :diag-burst [n]      n (default 100, at most 200) matches requests in a row, heap every 10 (leak check)
 //   :diag-img-churn [n]  n (default 100, at most 300) distinct real pictures (team crests at seven sizes)
 //                        through the picture provider, cache and heap every 20 (leak and budget check)
@@ -975,6 +977,9 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
       return;
     } else if (name == "diag-clock-restore") {
       time_sync_diag_restore();
+      return;
+    } else if (name == "diag-clock-badsync") {
+      time_sync_diag_bad_sync();
       return;
     } else if (name == "diag-wdt-stall") {
       health_diag_wdt_stall();
