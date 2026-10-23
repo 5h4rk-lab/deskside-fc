@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <esp_attr.h>
 #include <esp_core_dump.h>
+#include <esp_partition.h>
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <esp_timer.h>
@@ -104,14 +105,25 @@ std::string loadDumpSummary() {
   return err == ESP_OK ? std::string(buf) : std::string();
 }
 
+// The core dump partition's first word (the dump's size) is 0xFFFFFFFF.
+bool coreDumpPartitionBlank() {
+  const esp_partition_t* p =
+      esp_partition_find_first(ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_DATA_COREDUMP, nullptr);
+  uint32_t word = 0;
+  if (p == nullptr || esp_partition_read(p, 0, &word, sizeof(word)) != ESP_OK) return false;
+  return word == 0xFFFFFFFFu;
+}
+
 void readCoreDump() {
   const esp_err_t check = esp_core_dump_image_check();
-  // None: an erased partition reads as ESP_ERR_INVALID_SIZE on this board (not
-  // ESP_ERR_NOT_FOUND as documented), so only a bad checksum counts as damaged
-  // (erasing on every start would wear the flash).
-  if (check == ESP_ERR_NOT_FOUND || check == ESP_ERR_INVALID_SIZE) return;
+  if (check == ESP_ERR_NOT_FOUND) return;  // no partition, or no dump
+  // An erased partition reads as ESP_ERR_INVALID_SIZE (its size word is
+  // 0xFFFFFFFF, esp_core_dump_image_erase leaves it so): that is no dump, and
+  // erasing it again at every start would wear the flash. Any other size word
+  // is a damaged dump that may hold RAM contents (the token): erased below.
+  if (check == ESP_ERR_INVALID_SIZE && coreDumpPartitionBlank()) return;
   if (check != ESP_OK) {
-    // Damaged (bad checksum): no summary to read, but it may still
+    // Damaged (bad checksum or size): no summary to read, but it may still
     // hold RAM contents (the helper token): the release build erases it too.
 #if !APP_DIAG
     const esp_err_t err = esp_core_dump_image_erase();
