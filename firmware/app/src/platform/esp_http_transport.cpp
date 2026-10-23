@@ -68,6 +68,9 @@ struct EspHttpTransport::Job {
   esp_err_t err = ESP_OK;
   uint32_t ms = 0;
   uint32_t handshakeMs = 0;
+  HttpPrepare prepare;     // get_prepared(): runs on the worker
+  uint32_t prepareUs = 0;  // how long it took there
+  size_t bodyBytes = 0;    // the body's size (it is freed once prepared)
 };
 
 EspHttpTransport::EspHttpTransport(const char* name, size_t capBytes, const char* accept, bool (*ready)(),
@@ -111,6 +114,11 @@ void EspHttpTransport::refuse(uint32_t id, const char* why) { refusedNow_.emplac
 
 void EspHttpTransport::get(const std::string& url, const std::string& token, int timeoutMs,
                            std::function<void(HttpResult)> done) {
+  get_prepared(url, token, timeoutMs, nullptr, std::move(done));
+}
+
+void EspHttpTransport::get_prepared(const std::string& url, const std::string& token, int timeoutMs,
+                                    HttpPrepare prepare, std::function<void(HttpResult)> done) {
   const uint32_t id = ++nextId_;
   pending_[id] = std::move(done);
   if (task_ == nullptr) return refuse(id, "worker not running");
@@ -127,6 +135,7 @@ void EspHttpTransport::get(const std::string& url, const std::string& token, int
   job->url = url;
   job->token = token;
   job->timeoutMs = timeoutMs > 0 ? timeoutMs : 8000;
+  job->prepare = std::move(prepare);
   if (xQueueSend(todo_, &job, 0) != pdTRUE) {
     wipe(job->token);
     delete job;
@@ -164,12 +173,17 @@ void EspHttpTransport::poll(size_t maxResults) {
                     job->err != ESP_OK ? esp_err_to_name(job->err) : "");
     } else {
       ++stats_.ok;
+      if (job->prepareUs >= kSlowDeliveryUs) {
+        Serial.printf("[http] %s GET %s: %u B parsed on the worker in %lu.%lu ms\n", name_, path_of(job->url).c_str(),
+                      (unsigned)job->bodyBytes, (unsigned long)(job->prepareUs / 1000),
+                      (unsigned long)(job->prepareUs % 1000 / 100));
+      }
       if (job->result.status != 200) {
         Serial.printf("[http] %s GET %s answered %d after %lu ms\n", name_, path_of(job->url).c_str(),
                       job->result.status, (unsigned long)job->ms);
       }
       stats_.lastStatus = job->result.status;
-      stats_.lastBytes = job->result.body.size();
+      stats_.lastBytes = job->bodyBytes;
     }
     stats_.lastMs = job->ms;
     if (job->handshakeMs) stats_.lastHandshakeMs = job->handshakeMs;
@@ -181,8 +195,9 @@ void EspHttpTransport::poll(size_t maxResults) {
     }
     HttpResult res = std::move(job->result);
     const std::string path = path_of(job->url);
+    const size_t job_bytes = job->bodyBytes;
     delete job;  // the token was wiped by the worker
-    const size_t bytes = res.body.size();
+    const size_t bytes = job_bytes;
     const int64_t t0 = esp_timer_get_time();
     if (done) done(std::move(res));
     // The answer's handling on the LVGL task (parse, store, detector): a frame
@@ -232,10 +247,21 @@ void EspHttpTransport::task_main(void* arg) {
     self->run(*job);
     job->ms = static_cast<uint32_t>(nowMs() - t0);
     wipe(job->token);
+    job->bodyBytes = job->result.body.size();
     if (job->result.transportError) {
       job->result.status = 0;
       job->result.body.clear();
       job->result.body.shrink_to_fit();
+    } else if (job->prepare) {
+      // The answer's slow part (parsing) here, off the LVGL task.
+      self->wdt_.feed();
+      const int64_t p0 = esp_timer_get_time();
+      job->result.prepared = job->prepare(job->result);
+      job->prepareUs = static_cast<uint32_t>(esp_timer_get_time() - p0);
+      if (job->result.prepared) {
+        job->result.body.clear();
+        job->result.body.shrink_to_fit();
+      }
     }
     // The done queue has room for every request the todo queue held; wait if
     // the LVGL task is slow rather than lose an answer.

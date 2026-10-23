@@ -25,6 +25,8 @@
 //   has an address and the clock is valid"), when the URL is not https:// or
 //   when the queue is full. `ready()` is asked again just before the request
 //   starts.
+// - get_prepared(): the request's `prepare` (pure, see http_transport.h) runs
+//   on the worker for an answer that is not a transport error.
 // - Results: any HTTP status is a result. DNS, connection, TLS (including a
 //   certificate that does not verify), timeouts, a truncated body and a body
 //   over the size cap give status 0 and transportError.
@@ -119,6 +121,12 @@ class EspHttpTransport : public HttpTransport {
 
   void get(const std::string& url, const std::string& token, int timeoutMs,
            std::function<void(HttpResult)> done) override;
+  // `prepare` runs on the worker, after the body has arrived and before the
+  // result is queued for poll() (a 30 KB matches answer parses there in about
+  // 50 ms instead of holding the LVGL task); a prepared answer's body is
+  // freed there too. `done` still runs on the LVGL task.
+  void get_prepared(const std::string& url, const std::string& token, int timeoutMs, HttpPrepare prepare,
+                    std::function<void(HttpResult)> done) override;
 
   // LVGL task: delivers refused requests and at most `maxResults` finished
   // ones (the rest wait for the next poll; the images transport passes 1 so
