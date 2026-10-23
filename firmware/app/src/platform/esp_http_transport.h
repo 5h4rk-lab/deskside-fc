@@ -48,6 +48,7 @@
 
 #include <esp_timer.h>
 #include "../app_diag.h"
+#include "health.h"
 #include <freertos/FreeRTOS.h>
 #include <freertos/queue.h>
 #include <freertos/semphr.h>
@@ -67,6 +68,8 @@ class EspHttpTransport : public HttpTransport {
   static constexpr int kQueueLength = 8;
   static constexpr uint32_t kWorkerStackBytes = 8192;
   static constexpr int64_t kIdleCloseMs = 15000;
+  static constexpr uint32_t kWdtWaitMs = 2000;  // longest idle wait between two task watchdog feeds
+  static constexpr uint32_t kDnsAllowanceMs = 30000;  // a connect is covered for its timeout plus this
   // Heap guard default for the images transport: a new connection (TCP + TLS
   // handshake, about 25 KB of internal RAM while it runs) is opened only with
   // at least this much internal RAM free; otherwise the worker waits in
@@ -162,6 +165,7 @@ class EspHttpTransport : public HttpTransport {
   bool unwatch();
 
   const char* name_;
+  WdtUser wdt_;  // the worker's task watchdog user (platform/health.h)
   size_t cap_;
   const char* accept_;
   bool (*ready_)();

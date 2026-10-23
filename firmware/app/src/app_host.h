@@ -113,8 +113,15 @@ struct HelperConfig {
 // and Wi-Fi started, both read as levels every tick: lvgl_port_frames_total()
 // > 0 and EspWifiService::started(); then the first matches or a minute of
 // running).
+// `safeMode` (platform/health.h): the app runs as without a helper (no data
+// transport, no pictures, no update checks; `helper` is ignored) and shows the
+// banner "Safe mode: updates paused"; Settings and Wi-Fi work as usual.
 bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, EspPowerService& power,
-                    I2sSoundOut* speaker, const HelperConfig& helper, const OtaBoot& boot);
+                    I2sSoundOut* speaker, const HelperConfig& helper, const OtaBoot& boot, bool safeMode);
+
+// The [status] lines of :status the LVGL task owns: Wi-Fi, battery, the
+// update trial and row, data path. LVGL task (post it).
+void app_host_print_status();
 
 // Any task: the running image was just installed and is not confirmed yet
 // (until the first data, or 60 s of running). Any restart before then (the
@@ -182,4 +189,7 @@ void app_host_diag_slow(bool headers);
 void app_host_diag_ota_url(const std::string& url);  // any task
 void app_host_diag_ota_check();                      // LVGL task (post it)
 void app_host_diag_ota_install();                    // LVGL task (post it)
+// The next `n` picture decodes run with every LVGL allocation of 1 KB or more
+// failing (as with PSRAM full); they must end as placeholders (LVGL task).
+void app_host_diag_img_fail(int n);
 #endif

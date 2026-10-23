@@ -12,6 +12,10 @@
 #include "app_diag.h"
 #include "image_decoder.h"
 
+#if APP_DIAG
+extern volatile bool g_lvglDiagFailLarge;  // board/lvgl_alloc.cpp
+#endif
+
 class TimedImageDecoder : public ImageDecoder {
  public:
   struct Stats {
@@ -30,7 +34,20 @@ class TimedImageDecoder : public ImageDecoder {
 
   ImagePtr decode(const std::string& bytes) override {
     const int64_t t0 = esp_timer_get_time();
+#if APP_DIAG
+    // :diag-img-fail: this decode runs with every LVGL allocation of 1 KB or
+    // more failing (as with PSRAM full): the decoder must answer nullptr.
+    const bool inject = diagFailLeft_ > 0;
+    if (inject) {
+      --diagFailLeft_;
+      g_lvglDiagFailLarge = true;
+    }
     ImagePtr image = inner_.decode(bytes);
+    g_lvglDiagFailLarge = false;
+    if (inject) Serial.printf("[diag] img-fail: decode under failing allocations -> %s\n", image ? "an image (!)" : "nullptr (placeholder)");
+#else
+    ImagePtr image = inner_.decode(bytes);
+#endif
     const uint32_t us = static_cast<uint32_t>(esp_timer_get_time() - t0);
     stats_.lastUs = us;
     if (us > stats_.maxUs) stats_.maxUs = us;
@@ -55,8 +72,15 @@ class TimedImageDecoder : public ImageDecoder {
   }
 
   const Stats& stats() const { return stats_; }
+#if APP_DIAG
+  // The next `n` decodes run with failing allocations (LVGL task).
+  void diag_fail_next(int n) { diagFailLeft_ = n; }
+#endif
 
  private:
   ImageDecoder& inner_;
   Stats stats_;
+#if APP_DIAG
+  int diagFailLeft_ = 0;
+#endif
 };

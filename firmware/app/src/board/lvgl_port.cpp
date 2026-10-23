@@ -6,6 +6,7 @@
 // SPI completion interrupt calls lv_display_flush_ready(), which is a single
 // store of a volatile flag and is safe in interrupt context.
 #include "lvgl_port.h"
+#include "../platform/health.h"
 
 #include <Arduino.h>
 #include <atomic>
@@ -186,7 +187,11 @@ void touchReadCb(lv_indev_t*, lv_indev_data_t* data) {
 }
 
 void lvglTask(void*) {
+  // Watched by the task watchdog (platform/health.h): fed once per loop below.
+  // A handler call that hangs for kWdtTimeoutS (15 s) resets the board.
+  health_wdt_subscribe("lvgl");
   for (;;) {
+    health_wdt_feed();
     xSemaphoreTakeRecursive(s_lock, portMAX_DELAY);
     const int64_t t0 = esp_timer_get_time();
     s_handlerStartUs = t0;

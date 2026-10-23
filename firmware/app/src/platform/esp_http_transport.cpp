@@ -1,4 +1,5 @@
 #include "esp_http_transport.h"
+#include "health.h"
 
 #include <Arduino.h>
 #include <esp_crt_bundle.h>
@@ -198,13 +199,18 @@ size_t EspHttpTransport::worker_stack_free_bytes() const {
 
 void EspHttpTransport::task_main(void* arg) {
   auto* self = static_cast<EspHttpTransport*>(arg);
+  // Watched by the task watchdog (health.h): the queue wait is cut into
+  // kWdtWaitMs slices so an idle worker still feeds it; a request feeds it
+  // between its steps, and the connect (DNS, TCP, TLS) runs in a WdtPause.
+  self->wdt_.begin(self->name_);
+  int64_t idleSince = nowMs();
   for (;;) {
+    self->wdt_.feed();
     Job* job = nullptr;
-    // A kept connection is closed after kIdleCloseMs without a request (it
-    // holds a TLS session's memory, and the server drops idle ones anyway).
-    const TickType_t wait = self->conn_ != nullptr ? pdMS_TO_TICKS(kIdleCloseMs) : portMAX_DELAY;
-    if (xQueueReceive(self->todo_, &job, wait) != pdTRUE) {
-      self->drop_connection();
+    if (xQueueReceive(self->todo_, &job, pdMS_TO_TICKS(kWdtWaitMs)) != pdTRUE) {
+      // A kept connection is closed after kIdleCloseMs without a request (it
+      // holds a TLS session's memory, and the server drops idle ones anyway).
+      if (self->conn_ != nullptr && nowMs() - idleSince >= kIdleCloseMs) self->drop_connection();
       continue;
     }
     if (job == nullptr) {  // drop_kept_connection()
@@ -223,7 +229,9 @@ void EspHttpTransport::task_main(void* arg) {
     // The done queue has room for every request the todo queue held; wait if
     // the LVGL task is slow rather than lose an answer.
     while (xQueueSend(self->done_, &job, pdMS_TO_TICKS(1000)) != pdTRUE) {
+      self->wdt_.feed();
     }
+    idleSince = nowMs();
   }
 }
 
@@ -342,6 +350,7 @@ void EspHttpTransport::run(Job& job) {
             return fail("low internal RAM: no new connection before the deadline");
           }
           vTaskDelay(pdMS_TO_TICKS(kHeapGuardStepMs));
+          wdt_.feed();
         }
       }
       c = new_client(job, deadline.remaining_ms(nowMs()));
@@ -364,7 +373,13 @@ void EspHttpTransport::run(Job& job) {
     auto retry = [&]() { return reused && attempt == 0 && !deadline.expired(nowMs()); };
 
     const int64_t tOpen = nowMs();
-    esp_err_t err = esp_http_client_open(c, 0);
+    esp_err_t err;
+    // lwIP's DNS lookup has no deadline of its own (about 20 s with the router
+    // up and the internet down); TCP and TLS are bounded by the request's
+    // timeout. A timer feeds the watchdog meanwhile, for at most that much.
+    wdt_.cover(static_cast<uint32_t>(job.timeoutMs) + kDnsAllowanceMs);
+    err = esp_http_client_open(c, 0);
+    wdt_.uncover();
     if (err != ESP_OK) {
       release(false);
       if (retry()) {
@@ -420,6 +435,7 @@ void EspHttpTransport::run(Job& job) {
           const int step = deadline.step_timeout_ms(nowMs(), kReadStepMs);
           if (step <= 0) return -1;
           esp_http_client_set_timeout_ms(c, step);
+          wdt_.feed();
           const int got = esp_http_client_read(c, buf, n);
           // A step that timed out with nothing read: try again while time is left.
           return got == -ESP_ERR_HTTP_EAGAIN ? kBodyReadAgain : got;

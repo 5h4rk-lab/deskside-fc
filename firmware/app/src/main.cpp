@@ -21,10 +21,17 @@
 // command; a word left unfinished for 5 s is dropped, and the rest of its line is swallowed
 // too (until Enter, or 5 s more without input), so the tail of a token typed with a pause
 // never runs as letter commands:
+// (The word names and their values are parsed by ui/src/serial_commands.h parse_console_word, sim-tested.)
+//   :status          uptime, reset reason, crash counter, safe mode, version, heap (internal/PSRAM free
+//                    and lowest), task stack headroom, Wi-Fi, battery, the update trial; nothing secret
+//   :heap            the memory report (as m)
 //   :wifi            one line: connected network, signal, address, saved networks, memory
 //   :wipe-wifi       forget every saved network and restart (first-run Wi-Fi setup shows again)
-//   :erase-settings  erase the saved settings (not the Wi-Fi networks) and restart
-//   :restart         restart the board
+//   :wipe-settings   erase the saved settings (not the Wi-Fi networks, not the helper) and restart;
+//                    :erase-settings is the same command
+//   :reboot          restart the board (a software restart: never counted as a crash); :restart too
+//   :safe-mode       the crash counter and safe mode;  :safe-mode off  clears the counter and restarts
+//                    in normal mode (see platform/health.h for when safe mode starts and ends)
 //   :set-url <url>   save the helper's address (https only, at most 200 characters);
 //                    used from the next restart
 //   :set-token <t>   save the helper's token (16 to 128 printable characters, no spaces);
@@ -76,6 +83,11 @@
 //                        a local test server; no token is sent to it); until the next restart
 //   :ota-check           check for an update now (as a tap on the Software update row)
 //   :ota-install         install the offered update now (as a tap on "available · Install")
+//   :diag-wdt-stall      start a task that subscribes to the task watchdog and never feeds it: the board
+//                        resets with reason "task watchdog" after 15 s (counted as a crash)
+//   :diag-panic          abort() now: a panic reset (counted as a crash; three within 10 min = safe mode)
+//   :diag-img-fail [n]   the next n (default 20) picture decodes run with every LVGL allocation of 1 KB
+//                        or more failing, as with PSRAM full: placeholders, no crash
 // A diagnostics image built with -DAPP_DIAG_CRASH_AT_BOOT=1 aborts 2 s after every start (the
 // rollback test: it must never be confirmed, and the previous image comes back by itself).
 // The commands are read here (the Arduino loop task) and handed to the LVGL
@@ -85,6 +97,7 @@
 #include <Arduino.h>
 #include <driver/gpio.h>
 #include <esp_heap_caps.h>
+#include <esp_ota_ops.h>
 #include <esp_system.h>
 #include <esp_timer.h>
 #include <lvgl.h>
@@ -105,6 +118,7 @@
 #include "platform/esp_ota.h"
 #include "platform/esp_power_service.h"
 #include "platform/esp_wifi_service.h"
+#include "platform/health.h"
 #include "platform/i2s_sound_out.h"
 #include "platform/nvs_prefs.h"
 #include "platform/time_sync.h"
@@ -766,6 +780,35 @@ void restartNow() {
   esp_restart();
 }
 
+// :status (loop task): what the board is and how it runs. Nothing secret: no
+// token, no password, the helper URL only as its host.
+void statusCommand() {
+  health_print_status();
+  const esp_partition_t* running = esp_ota_get_running_partition();
+  Serial.printf("[status] soccer-display %s (%s), built %s %s | helper %s\n", kAppVersion,
+                running ? running->label : "?", __DATE__, __TIME__,
+                s_helperInUse ? s_urlInUse.substr(0, s_urlInUse.find('/', 8)).c_str() : "none (no requests)");
+  Serial.printf("[status] heap internal free %u (min %u, largest %u) | psram free %u (min %u, largest %u)\n",
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL),
+                (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+                (unsigned)heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM),
+                (unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+  // Stack headroom (lowest ever) of the app's tasks, by name; "-" when not running.
+  static const char* const kTasks[] = {"loopTask", "lvgl", "wifi_worker", "http_data", "http_images", "sound", "ota"};
+  std::string line = "[status] stack free (lowest):";
+  for (const char* name : kTasks) {
+    TaskHandle_t t = xTaskGetHandle(name);
+    line += " ";
+    line += name;
+    line += " ";
+    line += t ? std::to_string(uxTaskGetStackHighWaterMark(t) * sizeof(StackType_t)) + " B" : std::string("-");
+  }
+  Serial.println(line.c_str());
+  app_host_post_call(app_host_print_status);  // Wi-Fi, battery, update trial, data (LVGL task)
+}
+
 void handleSerialItem(SerialCommandSplitter::Item& it) {
   if (!it.isWord) {
     handleSerialByte(static_cast<unsigned char>(it.byte));
@@ -826,70 +869,121 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
     return;
   }
 #endif
-  if (name == "set-token") {
-    setHelperToken(value);
-  } else if (name == "cal-battery") {
-    calBatteryCommand(value);
-  } else if (name == "set-url") {
-    setHelperUrl(value);
-  } else if (name == "sound") {
-    soundCommand(value);
-  } else if (!value.empty()) {
-    // Only the settings words take a value. Neither the value nor the name is
-    // echoed: "set-tokenXYZ..." typed without its space would be a token.
-    Serial.println("[cmd] not a command that takes a value (nothing is echoed; :help lists them)");
-  } else if (name == "show-config") {
-    showHelperConfig();
-  } else if (name == "net") {
-    app_host_post_call(app_host_print_net);
-  } else if (name == "power") {
-    app_host_post_call(app_host_print_power);
-  } else if (name == "ota") {
-    app_host_post_call(app_host_print_ota);
-#if APP_DIAG && !APP_DEMO_DATA
-  } else if (name == "ota-check") {
-    app_host_post_call(app_host_diag_ota_check);
-  } else if (name == "ota-install") {
-    app_host_post_call(app_host_diag_ota_install);
-#endif
 #if APP_DIAG
-  } else if (name == "diag-power-off") {
-    app_host_post_call(app_host_diag_power_off);
-#endif
-#if APP_DIAG
-  } else if (name == "diag-clock-break") {
-    time_sync_diag_break();
-  } else if (name == "diag-clock-restore") {
-    time_sync_diag_restore();
+  if (name == "diag-img-fail") {
+    static int s_imgFail = 20;
+    s_imgFail = value.empty() ? 20 : diagNumber(value, 1, 500);
+    if (s_imgFail < 0) {
+      Serial.println("[cmd] diag-img-fail: :diag-img-fail [n] (1 to 500, default 20)");
+    } else {
+      app_host_post_call([] { app_host_diag_img_fail(s_imgFail); });
+    }
+    return;
+  }
+  // Diagnostics words without a value (none of them is destructive except the
+  // two fault injections, which only restart the board).
+  if (value.empty()) {
+    void (*diagCall)() = nullptr;
+    if (name == "diag-power-off") {
+      diagCall = app_host_diag_power_off;
 #if !APP_DEMO_DATA
-  } else if (name == "diag-slow-body") {
-    app_host_post_call([] { app_host_diag_slow(false); });
-  } else if (name == "diag-slow-headers") {
-    app_host_post_call([] { app_host_diag_slow(true); });
-  } else if (name == "diag-goal-photo") {
-    app_host_post_call(app_host_diag_goal_photo);
-  } else if (name == "diag-offline") {
-    app_host_post_call(app_host_diag_offline_toggle);
+    } else if (name == "ota-check") {
+      diagCall = app_host_diag_ota_check;
+    } else if (name == "ota-install") {
+      diagCall = app_host_diag_ota_install;
+    } else if (name == "diag-slow-body") {
+      diagCall = [] { app_host_diag_slow(false); };
+    } else if (name == "diag-slow-headers") {
+      diagCall = [] { app_host_diag_slow(true); };
+    } else if (name == "diag-goal-photo") {
+      diagCall = app_host_diag_goal_photo;
+    } else if (name == "diag-offline") {
+      diagCall = app_host_diag_offline_toggle;
 #endif
+    } else if (name == "diag-clock-break") {
+      time_sync_diag_break();
+      return;
+    } else if (name == "diag-clock-restore") {
+      time_sync_diag_restore();
+      return;
+    } else if (name == "diag-wdt-stall") {
+      health_diag_wdt_stall();
+      return;
+    } else if (name == "diag-panic") {
+      health_diag_panic();
+    }
+    if (diagCall) {
+      app_host_post_call(diagCall);
+      return;
+    }
+  }
 #endif
-  } else if (name == "wifi") {
-    app_host_post_call(wifiPrintState);
-  } else if (name == "wipe-wifi") {
-    warnIfTrialPending();
-    app_host_post_call(wifiWipeAndRestart);
-  } else if (name == "erase-settings") {
-    warnIfTrialPending();
-    app_host_post_call(eraseSettingsAndRestart);  // runs in the LVGL task, like the settings writes
-  } else if (name == "restart") {
-    restartNow();
-  } else if (name == "help") {
-    Serial.println("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): :wifi :wipe-wifi :erase-settings :restart "
-                   ":set-url <url> :set-token <token> :show-config :net :ota :sound [goal|win|kickoff|fulltime|low|critical|"
-                   "wifi|tone l|tone r|tone both|stop] [volume] :power :cal-battery [<mV>|clear] :help | a word unfinished for 5 s is dropped with the "
-                   "rest of its line");
-  } else {
-    // Not echoed: a mistyped word may hold a secret.
-    Serial.println("[cmd] unknown command (not echoed; :help lists them)");
+  switch (parse_console_word(name, value)) {
+    case ConsoleWord::SetToken:
+      setHelperToken(value);
+      break;
+    case ConsoleWord::CalBattery:
+      calBatteryCommand(value);
+      break;
+    case ConsoleWord::SetUrl:
+      setHelperUrl(value);
+      break;
+    case ConsoleWord::Sound:
+      soundCommand(value);
+      break;
+    case ConsoleWord::BadValue:
+      // Neither the value nor the name is echoed: "set-tokenXYZ..." typed
+      // without its space would be a token.
+      Serial.println("[cmd] that command takes no such value (nothing is echoed; :help lists them)");
+      break;
+    case ConsoleWord::ShowConfig:
+      showHelperConfig();
+      break;
+    case ConsoleWord::Net:
+      app_host_post_call(app_host_print_net);
+      break;
+    case ConsoleWord::Power:
+      app_host_post_call(app_host_print_power);
+      break;
+    case ConsoleWord::Ota:
+      app_host_post_call(app_host_print_ota);
+      break;
+    case ConsoleWord::Status:
+      statusCommand();
+      break;
+    case ConsoleWord::Heap:
+      printMemory();
+      break;
+    case ConsoleWord::Wifi:
+      app_host_post_call(wifiPrintState);
+      break;
+    case ConsoleWord::WipeWifi:
+      warnIfTrialPending();
+      app_host_post_call(wifiWipeAndRestart);
+      break;
+    case ConsoleWord::WipeSettings:
+      warnIfTrialPending();
+      app_host_post_call(eraseSettingsAndRestart);  // runs in the LVGL task, like the settings writes
+      break;
+    case ConsoleWord::Reboot:
+      restartNow();
+      break;
+    case ConsoleWord::SafeModeShow:
+      health_print_safe_mode();
+      break;
+    case ConsoleWord::SafeModeOff:
+      warnIfTrialPending();
+      health_safe_mode_off();
+      break;
+    case ConsoleWord::Help:
+      Serial.printf("[cmd] letters: g w d s0 s1 s2 t p k f m | words (Enter): %s | a word unfinished for 5 s is dropped "
+                    "with the rest of its line\n",
+                    console_help_text());
+      break;
+    case ConsoleWord::Unknown:
+      // Not echoed: a mistyped word may hold a secret.
+      Serial.println("[cmd] unknown command (not echoed; :help lists them)");
+      break;
   }
 }
 
@@ -920,8 +1014,13 @@ void setup() {
   // Before anything else that could fail: an update on trial that keeps
   // failing to start is rolled back here (this call then restarts).
   const OtaBoot otaBoot = ota_boot();
-  Serial.printf("reset reason %d, power hold GPIO%d level %d, CPU %lu MHz, flash %lu MHz\n", (int)esp_reset_reason(),
-                pins::kPowerHold, gpio_get_level((gpio_num_t)pins::kPowerHold), (unsigned long)getCpuFrequencyMhz(),
+  // The task watchdog at 15 s (panic -> reboot), then the reset reason and the
+  // crash counter: three abnormal resets within 10 min of running start the
+  // board in safe mode (platform/health.h; may roll a newer update back and restart).
+  health_wdt_setup();
+  const bool safeMode = health_boot().verdict.safeMode;
+  Serial.printf("reset reason %s (%d), power hold GPIO%d level %d, CPU %lu MHz, flash %lu MHz\n",
+                reset_kind_name(health_boot_info().kind), (int)esp_reset_reason(), pins::kPowerHold, gpio_get_level((gpio_num_t)pins::kPowerHold), (unsigned long)getCpuFrequencyMhz(),
                 (unsigned long)(ESP.getFlashChipSpeed() / 1000000));
 
   // The backlight stays off until the first frame has been drawn.
@@ -969,7 +1068,7 @@ void setup() {
     HelperConfig helper = loadHelperConfig();
     s_helperInUse = helper.valid;
     s_urlInUse = helper.url;
-    s_appOk = app_host_start(prefs, backlight, wifi, power, &speaker, helper, otaBoot);
+    s_appOk = app_host_start(prefs, backlight, wifi, power, &speaker, helper, otaBoot, safeMode);
     wipeString(helper.token);
   }
   lvgl_unlock();
@@ -993,8 +1092,10 @@ void setup() {
   if (s_appOk) backlight.open();
   // (The update trial's health check reads the frame count and wifi.started() itself.)
   if (s_appOk && !wifi.start()) Serial.println("[main] the Wi-Fi service did not start (see above)");
-  if (xTaskCreatePinnedToCoreWithCaps(soundPrepareTask, "snd_prep", 8192, nullptr, 1, &s_prepTask, 1,
-                                      MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
+  if (safeMode) {
+    Serial.println("[sound] safe mode: no clip preparation at start (clips are made on first use)");
+  } else if (xTaskCreatePinnedToCoreWithCaps(soundPrepareTask, "snd_prep", 8192, nullptr, 1, &s_prepTask, 1,
+                                             MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT) != pdPASS) {
     s_prepTask = nullptr;
     Serial.println("[sound] could not start the clip preparation: clips are made on first use");
   }
@@ -1013,6 +1114,7 @@ void loop() {
   static uint32_t lastStep = millis();
 
   pollSerial();
+  health_tick();  // the RTC uptime and the crash counter's runtime rules (once a second)
   if (s_prepTask && eTaskGetState(s_prepTask) == eSuspended) {
     vTaskDeleteWithCaps(s_prepTask);
     s_prepTask = nullptr;

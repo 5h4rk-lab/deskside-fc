@@ -38,6 +38,19 @@ constexpr uint32_t kPsramCaps = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
 
 }  // namespace
 
+#include "../app_diag.h"
+#if APP_DIAG
+// Fault injection (diagnostics builds only, LVGL task): while set, every LVGL
+// request of kDiagFailMin bytes or more fails as if PSRAM were full. Set only
+// around a picture decode (TimedImageDecoder), never around drawing.
+volatile bool g_lvglDiagFailLarge = false;
+constexpr size_t kDiagFailMin = 1024;
+#define DIAG_FAIL(size) \
+  if (g_lvglDiagFailLarge && (size) >= kDiagFailMin) return nullptr
+#else
+#define DIAG_FAIL(size)
+#endif
+
 extern "C" {
 
 void lv_mem_init(void) {}
@@ -49,6 +62,7 @@ lv_mem_pool_t lv_mem_add_pool(void*, size_t) { return nullptr; }  // not support
 void lv_mem_remove_pool(lv_mem_pool_t) {}
 
 void* lv_malloc_core(size_t size) {
+  DIAG_FAIL(size);
   if (size >= kPsramThreshold) {
     void* p = heap_caps_malloc(size, kPsramCaps);
     // PSRAM full: a small block (an object, a style) may still live in internal
@@ -61,6 +75,7 @@ void* lv_malloc_core(size_t size) {
 
 void* lv_realloc_core(void* p, size_t new_size) {
   if (p == nullptr) return lv_malloc_core(new_size);
+  DIAG_FAIL(new_size);
   // A block that already lives in PSRAM stays there; so does any block that
   // grows to the PSRAM threshold or beyond. heap_caps_realloc moves the data
   // when the block has to change heap.

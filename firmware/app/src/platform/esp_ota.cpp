@@ -5,6 +5,7 @@
 #include <esp_crt_bundle.h>
 #include <esp_heap_caps.h>
 #include <esp_http_client.h>
+#include <esp_image_format.h>
 #include <esp_ota_ops.h>
 #include <esp_timer.h>
 #include <mbedtls/sha256.h>
@@ -156,6 +157,42 @@ void ota_print_state() {
                 ""
 #endif
   );
+}
+
+bool ota_older_image_available(std::string& version) {
+  const esp_partition_t* other = other_slot();
+  esp_app_desc_t desc = {};
+  if (other == nullptr || esp_ota_get_partition_description(other, &desc) != ESP_OK) return false;
+  if (strncmp(desc.project_name, kFirmwareProjectName, sizeof(desc.project_name)) != 0) return false;
+  // Valid, or not tracked at all (flashed over USB: otadata has no entry for
+  // it); never one that failed (aborted, invalid) or was never confirmed.
+  const int st = image_state(other);
+  if (st == static_cast<int>(ESP_OTA_IMG_INVALID) || st == static_cast<int>(ESP_OTA_IMG_ABORTED) ||
+      st == static_cast<int>(ESP_OTA_IMG_PENDING_VERIFY)) {
+    return false;
+  }
+  // The whole image must check out (headers, segments, hash): the bootloader
+  // would refuse a damaged one anyway, and then we would gain nothing.
+  const esp_partition_pos_t pos = {other->address, other->size};
+  esp_image_metadata_t meta = {};
+  if (esp_image_verify(ESP_IMAGE_VERIFY_SILENT, &pos, &meta) != ESP_OK) return false;
+  Version v;
+  if (!parse_version(desc.version, v) || !is_newer(running_version(), v)) return false;
+  version = version_text(v);
+  return true;
+}
+
+bool ota_switch_to_older_image() {
+  std::string v;
+  if (!ota_older_image_available(v)) return false;
+  const esp_err_t err = esp_ota_set_boot_partition(other_slot());
+  if (err != ESP_OK) {
+    Serial.printf("[ota] ERROR: cannot switch back to %s (%s)\n", v.c_str(), esp_err_to_name(err));
+    return false;
+  }
+  erase_trial();
+  Serial.printf("[ota] boot slot set to the older image %s\n", v.c_str());
+  return true;
 }
 
 // ---- download ---------------------------------------------------------------------

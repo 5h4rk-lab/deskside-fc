@@ -1,4 +1,5 @@
 #include "esp_wifi_service.h"
+#include "health.h"
 
 #include <Arduino.h>
 #include <esp_event.h>
@@ -275,7 +276,11 @@ class EspRadio : public WifiRadio {
                     (int)xPortGetCoreID(), kHostname);
     }
     uint32_t lastRssi = millis();
+    // Watched by the task watchdog (health.h): every command it runs is short
+    // (a join waits at most 0.6 s for an old association), the queue wait 250 ms.
+    health_wdt_subscribe("wifi_worker");
     for (;;) {
+      health_wdt_feed();
       Command c;
       if (xQueueReceive(commands_, &c, pdMS_TO_TICKS(250)) == pdTRUE) {
         handle(c);

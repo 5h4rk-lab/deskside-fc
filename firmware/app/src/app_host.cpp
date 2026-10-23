@@ -90,6 +90,7 @@ std::atomic<bool> s_updatePause{false};
 // An image on trial not confirmed yet (any task reads it: the console warns
 // before a restart, which would roll the update back).
 std::atomic<bool> s_trialPending{false};
+bool s_safeMode = false;
 #if !APP_DEMO_DATA
 
 // The link and the clock, without the update pause (the update itself needs them).
@@ -867,8 +868,19 @@ static void heapStep(const char* what) {
 }
 
 bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, EspPowerService& power,
-                    I2sSoundOut* speaker, const HelperConfig& helper, const OtaBoot& boot) {
+                    I2sSoundOut* speaker, const HelperConfig& helperIn, const OtaBoot& boot, bool safeMode) {
   if (s_host) return true;
+  // Safe mode: as without a helper (no data source, no pictures, no update
+  // checks, no request at all); Settings and the Wi-Fi pages work.
+  HelperConfig helper;
+  if (!safeMode) helper = helperIn;
+  struct WipeOnExit {  // this copy of the token is wiped on every way out
+    std::string& s;
+    ~WipeOnExit() {
+      if (!s.empty()) memset(&s[0], 0, s.size());
+    }
+  } wipeToken{helper.token};
+  s_safeMode = safeMode;
   heapStep("before the app");
   s_queue = xQueueCreate(kQueueLength, sizeof(Command));
   if (!s_queue) {
@@ -884,7 +896,11 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, Es
   }
 #if !APP_DEMO_DATA
   if (helper.valid && !s_host->http) Serial.println("[app] ERROR: out of memory for the data source");
-  if (!s_host->transport.start()) Serial.println("[app] the data transport did not start: no live data");
+  if (safeMode) {
+    Serial.println("[app] SAFE MODE: no data transport, no pictures, no update checks");
+  } else if (!s_host->transport.start()) {
+    Serial.println("[app] the data transport did not start: no live data");
+  }
   if (helper.valid && !s_host->httpImages) Serial.println("[app] ERROR: out of memory for the picture provider");
   if (s_host->httpImages) {
     s_host->httpImages->set_entry_overhead_bytes(HttpImageProvider::kDeviceEntryOverheadBytes);
@@ -899,7 +915,7 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, Es
 #if !APP_DEMO_DATA
   // Software updates: checks go to the helper's /api/firmware/version (none
   // without a valid helper); the image must come from the same host.
-  {
+  if (!safeMode) {
     Version running;
     parse_version(kAppVersion, running);
     auto* updater = new (std::nothrow)
@@ -920,6 +936,8 @@ bool app_host_start(Prefs& prefs, Backlight& backlight, EspWifiService& wifi, Es
   loadDemo();
   heapStep("demo data loaded");
 #endif
+  s_host->deps.safeMode = safeMode;
+  if (safeMode) s_host->loop.set_fetches_paused(true);
   lv_obj_t* app = app_create(lv_screen_active(), s_host->deps);
   if (!app) {
     Serial.println("[app] ERROR: app_create failed (out of memory)");
@@ -1218,6 +1236,23 @@ void app_host_diag_offline_toggle() {
 
 bool app_host_trial_pending() { return s_trialPending.load(); }
 
+void app_host_print_status() {
+  if (!s_host) return;
+  const Host& h = *s_host;
+  s_host->wifi.print_state();  // one [wifi] line, never a password
+  app_host_print_power();
+  Serial.printf("[status] update: %s%s | app %s\n",
+                h.boot.action == BootAction::Trial        ? "this start is an update ON TRIAL"
+                : h.boot.action == BootAction::RolledBack ? "this start followed a rollback"
+                : h.boot.onTrial                          ? "pending verification by the bootloader"
+                                                          : "no trial",
+                h.boot.onTrial ? (h.confirmed ? " (confirmed)" : " (NOT confirmed yet: a restart now rolls it back)") : "",
+                s_safeMode ? "in SAFE MODE (no data, no pictures, no update checks)" : "normal");
+#if !APP_DEMO_DATA
+  Serial.printf("[status] data: %s\n", h.store.data_status_text().c_str());
+#endif
+}
+
 void app_host_print_ota() {
   ota_print_state();
   if (!s_host) return;
@@ -1249,6 +1284,15 @@ void app_host_diag_ota_url(const std::string& url) {
     Serial.printf("[ota] diag: manifest from %s (no token sent%s)\n", s_otaUrl.c_str(),
                   http ? ", plain http allowed" : "");
   });
+}
+
+void app_host_diag_img_fail(int n) {
+  if (!s_host || !s_host->httpImages) {
+    Serial.println("[diag] img-fail: no picture provider (no helper, or safe mode)");
+    return;
+  }
+  s_host->decoder.diag_fail_next(n);
+  Serial.printf("[diag] img-fail: the next %d picture decodes run with failing allocations (1 KB and more)\n", n);
 }
 
 void app_host_diag_ota_check() {

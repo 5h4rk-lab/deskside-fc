@@ -63,6 +63,15 @@ OtaBoot ota_boot();
 bool ota_confirm();
 // One [ota] line: running and idle slots, states, the trial record.
 void ota_print_state();
+// Safe mode (platform/health.h): the other slot holds an intact soccer-display
+// image OLDER than the running one (the image this one was updated from):
+// state valid or untracked (flashed over USB), never aborted, invalid or
+// pending; the whole image is verified (about 1 s for 2.5 MB).
+// `version` gets its version text.
+bool ota_older_image_available(std::string& version);
+// Makes that older image the boot image (and drops a trial record). True when
+// done; the caller restarts. Nothing changes when false.
+bool ota_switch_to_older_image();
 
 class EspOta {
  public:
