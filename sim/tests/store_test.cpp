@@ -66,13 +66,27 @@ TEST_CASE("next_for picks the earliest future pre match") {
   CHECK(s.next_for("9", 0) == nullptr);
 }
 
-TEST_CASE("stale is false at exactly 90 s and true at 91 s") {
+TEST_CASE("stale: with a live match after 90 s (25 s polls plus a grace, at least 90 s)") {
   Store s;
-  s.set_matches({make("a", "1", "2", MatchState::Pre)}, 1000);
+  s.set_matches({make("a", "1", "2", MatchState::Live)}, 1000);
   CHECK(s.has_data());
+  CHECK(s.stale_after_s() == 90);
   CHECK_FALSE(s.stale(1000));
   CHECK_FALSE(s.stale(1090));
   CHECK(s.stale(1091));
+}
+
+TEST_CASE("stale: without a live match polls every 180 s are never stale; stale after 240 s") {
+  Store s;
+  s.set_matches({make("a", "1", "2", MatchState::Pre), make("b", "3", "4", MatchState::Post)}, 1000);
+  CHECK(s.stale_after_s() == 240);
+  // A poll on time (180 s) that also took its full 10 s request budget.
+  CHECK_FALSE(s.stale(1000 + 190));
+  CHECK_FALSE(s.stale(1240));
+  CHECK(s.stale(1241));
+  // The next poll on time clears it.
+  s.set_matches({make("a", "1", "2", MatchState::Pre)}, 1190);
+  CHECK_FALSE(s.stale(1241));
 }
 
 TEST_CASE("mark_failure does not reset the success time") {
@@ -80,7 +94,7 @@ TEST_CASE("mark_failure does not reset the success time") {
   s.mark_failure();
   CHECK_FALSE(s.has_data());
   CHECK_FALSE(s.stale(5000));
-  s.set_matches({make("a", "1", "2", MatchState::Pre)}, 1000);
+  s.set_matches({make("a", "1", "2", MatchState::Live)}, 1000);
   s.mark_failure();
   CHECK(s.has_data());
   CHECK(s.matches().size() == 1);
@@ -92,7 +106,8 @@ TEST_CASE("set_matches with an empty list still counts as data") {
   Store s;
   s.set_matches({}, 1000);
   CHECK(s.has_data());
-  CHECK(s.stale(1091));
+  CHECK_FALSE(s.stale(1240));
+  CHECK(s.stale(1241));
 }
 
 TEST_CASE("tz offset, favourite, news and teams round trip") {

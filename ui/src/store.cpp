@@ -1,7 +1,8 @@
 #include "store.h"
 
+#include "refresh_policy.h"
+
 namespace {
-constexpr int64_t kStaleAfterSeconds = 90;
 
 bool involves(const MatchSummary& m, const std::string& teamId) {
   return m.home.id == teamId || m.away.id == teamId;
@@ -52,8 +53,16 @@ const MatchSummary* Store::last_for(const std::string& teamId, int64_t now) cons
   return best;
 }
 
+int64_t Store::stale_after_s() const {
+  bool live = false;
+  for (const MatchSummary& m : matches_) live = live || m.state == MatchState::Live;
+  const int64_t interval = (live ? RefreshPolicy::kLiveMs : RefreshPolicy::kIdleMs) / 1000;
+  const int64_t after = interval + kStaleGraceSeconds;
+  return after > kStaleMinSeconds ? after : kStaleMinSeconds;
+}
+
 bool Store::stale(int64_t now) const {
-  return hasData_ && now - lastSuccess_ > kStaleAfterSeconds;
+  return hasData_ && now - lastSuccess_ > stale_after_s();
 }
 
 void Store::set_detail(MatchDetail detail) {

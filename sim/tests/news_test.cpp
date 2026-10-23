@@ -456,15 +456,18 @@ TEST_CASE("stale data shows the same marker as the other screens") {
   CHECK(visible(p->status.freshDot));
   CHECK(text(p->status.clock) == "17:00");
 
+  // No live match: polls every 180 s, stale only after 240 s.
   f.refresh(kNow + 180);
+  CHECK_FALSE(visible(p->status.staleDot));
+  f.refresh(kNow + 300);
   CHECK(visible(p->status.staleDot));
   CHECK(visible(p->status.staleLabel));
   CHECK_FALSE(visible(p->status.freshDot));
-  CHECK(text(p->status.staleLabel) == "Updated 3 min ago");
+  CHECK(text(p->status.staleLabel) == "Updated 5 min ago");
   CHECK(u32(lv_obj_get_style_bg_color(p->status.staleDot, 0)) == u32(theme().amber));
-  CHECK(text(p->status.clock) == "17:03");
+  CHECK(text(p->status.clock) == "17:05");
 
-  f.load({article("a", 600)}, {}, kNow + 200);
+  f.load({article("a", 600)}, {}, kNow + 320);
   CHECK_FALSE(visible(p->status.staleLabel));
 }
 

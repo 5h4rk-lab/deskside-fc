@@ -54,9 +54,15 @@ class Store {
   // Time of the last successful set_matches() (0 before the first one).
   int64_t last_success() const { return lastSuccess_; }
 
-  // True when data exists but the last success is more than 90 s old. False
-  // when no data has ever arrived.
+  // True when data exists but the last success is older than stale_after_s():
+  // the poll interval the list asks for (RefreshPolicy: 25 s with a live
+  // match, 180 s without) plus kStaleGraceSeconds, and never less than
+  // kStaleMinSeconds. So polls on time never show stale, whatever the
+  // interval, and one missed poll does. False when no data has ever arrived.
   bool stale(int64_t now) const;
+  static constexpr int64_t kStaleMinSeconds = 90;
+  static constexpr int64_t kStaleGraceSeconds = 60;
+  int64_t stale_after_s() const;
 
   // Match details are cached for the last few matches (most recent last).
   // Setting a detail for an id already cached replaces it. Pointers returned
