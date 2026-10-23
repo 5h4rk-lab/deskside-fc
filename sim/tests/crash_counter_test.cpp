@@ -283,3 +283,25 @@ TEST_CASE("crash counter: the stored text round-trips and garbage is refused") {
     CHECK(untouched == r);
   }
 }
+
+TEST_CASE("crash list text: kinds oldest first with their age in running time") {
+  CrashRecord r;
+  CHECK(crash_list_text(r, 0) == "");
+  r.crashes = {{60000, ResetKind::Panic}, {400000, ResetKind::TaskWatchdog}};
+  CHECK(crash_list_text(r, 460000) == "panic 6 min ago, task watchdog 1 min ago");
+  CHECK(crash_list_text(r, 410000) == "panic 5 min ago, task watchdog under 1 min ago");
+  r.crashes.push_back({450000, ResetKind::Brownout});
+  CHECK(crash_list_text(r, 450000) == "panic 6 min ago, task watchdog under 1 min ago, brownout under 1 min ago");
+}
+
+TEST_CASE("crash summary for storage: at most 200 bytes, whole UTF-8 characters, no control characters") {
+  CHECK(crash_summary_for_storage("task lvgl, PC 0x4200\n") == "task lvgl, PC 0x4200 ");
+  const std::string longText(250, 'a');
+  CHECK(crash_summary_for_storage(longText).size() == kCrashSummaryMax);
+  // An e-acute (2 bytes) straddling the limit is dropped whole.
+  std::string straddle(199, 'b');
+  straddle += "\xC3\xA9tail";
+  const std::string cut = crash_summary_for_storage(straddle);
+  CHECK(cut == std::string(199, 'b'));
+  CHECK(crash_summary_for_storage("") == "");
+}

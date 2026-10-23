@@ -72,6 +72,32 @@ const char* reset_kind_name(ResetKind k) {
   return "unknown";
 }
 
+std::string crash_list_text(const CrashRecord& r, int64_t axisNowMs) {
+  std::string out;
+  for (const CrashEntry& c : r.crashes) {
+    if (!out.empty()) out += ", ";
+    out += reset_kind_name(c.kind);
+    const int64_t ago = axisNowMs - c.atMs;
+    out += ago < 60000 ? " under 1 min ago" : " " + std::to_string(ago / 60000) + " min ago";
+  }
+  return out;
+}
+
+std::string crash_summary_for_storage(const std::string& text) {
+  std::string out = text.substr(0, kCrashSummaryMax);
+  // Do not end inside a UTF-8 sequence: drop continuation bytes and their lead.
+  if (text.size() > kCrashSummaryMax) {
+    size_t end = out.size();
+    while (end > 0 && (static_cast<unsigned char>(out[end - 1]) & 0xC0) == 0x80) --end;
+    if (end > 0 && (static_cast<unsigned char>(out[end - 1]) & 0x80) != 0) --end;
+    out.resize(end);
+  }
+  for (char& c : out) {
+    if (static_cast<unsigned char>(c) < 0x20 || c == 0x7F) c = ' ';
+  }
+  return out;
+}
+
 bool CrashRecord::operator==(const CrashRecord& o) const {
   if (axisMs != o.axisMs || safe != o.safe || safeSinceMs != o.safeSinceMs || episodes != o.episodes ||
       last != o.last || crashes.size() != o.crashes.size()) {

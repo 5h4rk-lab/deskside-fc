@@ -65,6 +65,17 @@ bool reset_is_software_fault(ResetKind k);
 // Short English name for the console ("panic", "task watchdog", ...).
 const char* reset_kind_name(ResetKind k);
 
+struct CrashRecord;
+// The counted crashes for the console, oldest first, with how long ago they
+// were in running time: "panic 7 min ago, task watchdog under 1 min ago"; ""
+// when none. `axisNowMs`: the record's axis now (axisMs + this start's uptime).
+std::string crash_list_text(const CrashRecord& r, int64_t axisNowMs);
+
+// A crash summary for keeping in NVS: `text` cut to at most kCrashSummaryMax
+// bytes (at a UTF-8 boundary), control characters replaced by spaces.
+constexpr size_t kCrashSummaryMax = 200;
+std::string crash_summary_for_storage(const std::string& text);
+
 struct CrashEntry {
   int64_t atMs = 0;  // on the running-time axis
   ResetKind kind = ResetKind::Unknown;
