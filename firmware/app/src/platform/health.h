@@ -13,15 +13,17 @@
 // feeds the user meanwhile, for at most maxMs; a connect hung beyond that still
 // resets the board. (Unsubscribing for the call instead would be unbounded, and
 // every re-subscription restarts the watchdog's period for ALL tasks, which
-// can hide another task's stall.) The OTA download task and the Arduino loop
-// task are not watched (the download has its own stall and total limits).
+// can hide another task's stall.) The Arduino loop task (serial console,
+// battery sampling, health_tick) subscribes at the end of setup() and feeds at
+// the top of every loop(). The OTA download task is not watched (it has its
+// own stall and total limits).
 //
 // Reset reason and crash counter. health_boot() runs early in setup(): it
 // prints one [health] line (the reason, how long the previous start ran, the
 // crashes counted, safe mode), updates the record in NVS (namespace "health",
 // key "crash": nothing else is touched) and returns whether this start runs in
 // SAFE MODE. On entering safe mode with a software fault among the counted
-// resets it rolls a newer update back (ota_roll_back_to_previous) when the
+// resets it rolls a newer update back (ota_switch_to_older_image) when the
 // other slot holds a valid older image: the record is cleared and the board
 // restarts into that image. How long the previous start ran comes from a few
 // bytes of RTC memory (RTC_NOINIT) that health_tick() rewrites every second:
@@ -31,9 +33,12 @@
 //
 // Core dumps (to the flash partition "coredump", CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH
 // in the prebuilt libraries): health_boot() prints the summary of a stored
-// dump (task, PC, reason, backtrace) and keeps it for :status. The release
-// build then erases it (it may hold the helper token from RAM); diagnostics
-// builds keep it for `espcoredump.py`.
+// dump (task, PC, reason, backtrace) and keeps it for :status, also in NVS
+// (namespace "health", key "dump", at most kCrashSummaryMax bytes) so the line
+// survives later starts. The release build then erases the dump (it may hold
+// the helper token from RAM), a damaged one too; diagnostics builds keep it
+// for `espcoredump.py`. :status and :safe-mode list the counted crashes by
+// kind ("panic 7 min ago, ...") and the last kept summary.
 #pragma once
 
 #include <stdint.h>

@@ -16,7 +16,10 @@
 namespace {
 
 constexpr const char* kNamespace = "health";
-constexpr const char* kRecordKey = "crash";  // 5 characters; nothing else in the namespace
+constexpr const char* kRecordKey = "crash";  // 5 characters
+// The last core dump's one-line summary (at most kCrashSummaryMax bytes): the
+// release build erases the dump itself, this line stays for :status.
+constexpr const char* kDumpKey = "dump";
 constexpr uint32_t kRtcMagic = 0x5AFEB007u;
 constexpr uint32_t kTickMs = 1000;
 
@@ -36,6 +39,7 @@ CrashRecord s_stored;       // what was stored at this start (on_uptime's input)
 bool s_cleared = false;     // the record was cleared after a stable run
 bool s_leaving = false;     // safe mode's time ran: restarting
 std::string s_coredump;     // the stored core dump's summary at start ("" when none)
+std::string s_lastDump;     // the last summary kept in NVS (from this or an earlier start)
 
 int64_t uptimeMs() { return esp_timer_get_time() / 1000; }
 
@@ -81,8 +85,40 @@ bool storeRecord(const CrashRecord& r) {
   return err == ESP_OK;
 }
 
+bool storeDumpSummary(const std::string& text) {
+  nvs_handle_t h = 0;
+  if (nvs_open(kNamespace, NVS_READWRITE, &h) != ESP_OK) return false;
+  esp_err_t err = nvs_set_str(h, kDumpKey, crash_summary_for_storage(text).c_str());
+  if (err == ESP_OK) err = nvs_commit(h);
+  nvs_close(h);
+  return err == ESP_OK;
+}
+
+std::string loadDumpSummary() {
+  nvs_handle_t h = 0;
+  if (nvs_open(kNamespace, NVS_READONLY, &h) != ESP_OK) return std::string();
+  char buf[kCrashSummaryMax + 64] = {};
+  size_t len = sizeof(buf);
+  const esp_err_t err = nvs_get_str(h, kDumpKey, buf, &len);
+  nvs_close(h);
+  return err == ESP_OK ? std::string(buf) : std::string();
+}
+
 void readCoreDump() {
-  if (esp_core_dump_image_check() != ESP_OK) return;  // none (or damaged)
+  const esp_err_t check = esp_core_dump_image_check();
+  if (check == ESP_ERR_NOT_FOUND) return;  // none
+  if (check != ESP_OK) {
+    // Damaged (wrong size or checksum): no summary to read, but it may still
+    // hold RAM contents (the helper token): the release build erases it too.
+#if !APP_DIAG
+    const esp_err_t err = esp_core_dump_image_erase();
+    Serial.printf("[health] a damaged core dump (%s) was in flash: erased (release build): %s\n",
+                  esp_err_to_name(check), esp_err_to_name(err));
+#else
+    Serial.printf("[health] a damaged core dump (%s) is in flash (kept: diagnostics build)\n", esp_err_to_name(check));
+#endif
+    return;
+  }
   esp_core_dump_summary_t* sum = static_cast<esp_core_dump_summary_t*>(calloc(1, sizeof(esp_core_dump_summary_t)));
   if (sum == nullptr) return;
   char line[200];
@@ -100,6 +136,12 @@ void readCoreDump() {
   }
   free(sum);
   Serial.printf("[health] core dump in flash: %s\n", s_coredump.c_str());
+  // The summary outlives the dump (erased below in the release build).
+  const std::string kept = crash_summary_for_storage(reset_kind_name(s_boot.kind) + std::string(": ") + s_coredump);
+  if (kept != s_lastDump) {  // a diagnostics build keeps the dump: the same one again is not rewritten
+    s_lastDump = kept;
+    if (!storeDumpSummary(s_lastDump)) Serial.println("[health] WARNING: could not keep the core dump summary");
+  }
 #if !APP_DIAG
   // The release build: it may hold the helper token from RAM; the summary above is kept.
   const esp_err_t err = esp_core_dump_image_erase();
@@ -111,9 +153,10 @@ void readCoreDump() {
 
 void printCounter(const char* prefix) {
   const CrashRecord& r = s_boot.verdict.record;
-  Serial.printf("%s crashes counted %u of %d (window %d min of running) | safe mode %s", prefix,
+  const std::string kinds = crash_list_text(r, r.axisMs + uptimeMs());
+  Serial.printf("%s crashes counted %u of %d (window %d min of running)%s%s | safe mode %s", prefix,
                 (unsigned)r.crashes.size(), CrashCounter::kSafeAfter, (int)(CrashCounter::kWindowMs / 60000),
-                r.safe ? "ON" : "off");
+                kinds.empty() ? "" : ": ", kinds.c_str(), r.safe ? "ON" : "off");
   if (r.safe) {
     const int64_t left = CrashCounter::safe_duration_ms(r.episodes) - (r.axisMs + uptimeMs() - r.safeSinceMs);
     Serial.printf(" (episode %d, normal mode again in %lld min of running, or :safe-mode off)", r.episodes,
@@ -246,6 +289,7 @@ HealthBoot health_boot() {
     Serial.println("[health] the last reset was a BROWNOUT: the supply voltage dipped (weak battery, cable or charger)");
   }
   printCounter("[health]");
+  s_lastDump = loadDumpSummary();
   readCoreDump();
 
   if (v.enteredSafe) {
@@ -318,7 +362,10 @@ void health_safe_mode_off() {
   restartNow("safe mode off (:safe-mode off)");
 }
 
-void health_print_safe_mode() { printCounter("[cmd] safe-mode:"); }
+void health_print_safe_mode() {
+  printCounter("[cmd] safe-mode:");
+  if (!s_lastDump.empty()) Serial.printf("[cmd] safe-mode: last core dump kept: %s\n", s_lastDump.c_str());
+}
 
 void health_print_status() {
   const int64_t up = uptimeMs();
@@ -328,8 +375,9 @@ void health_print_status() {
                 s_boot.espReason,
                 s_boot.previousRunMs < 0 ? "unknown" : (std::to_string(s_boot.previousRunMs / 1000) + " s").c_str());
   printCounter("[status]");
-  Serial.printf("[status] core dump at start: %s | task watchdog %lu s on lvgl, wifi_worker, http workers\n",
+  Serial.printf("[status] core dump at start: %s | task watchdog %lu s on lvgl, loopTask, wifi_worker, http workers\n",
                 s_coredump.empty() ? "none" : s_coredump.c_str(), (unsigned long)kWdtTimeoutS);
+  Serial.printf("[status] last core dump kept: %s\n", s_lastDump.empty() ? "none" : s_lastDump.c_str());
 }
 
 #if APP_DIAG

@@ -1182,12 +1182,16 @@ void setup() {
       (long long)app_host_epoch());
   if (first.frames == 0) Serial.println("[boot] WARNING: no frame completed within 1 s");
   printMemory();
+  // From here this task (serial console, battery, health_tick) is watched too:
+  // fed at the top of every loop(), which never blocks for long.
+  health_wdt_subscribe("loopTask");
 }
 
 void loop() {
   static uint32_t lastReport = millis();
   static uint32_t lastStep = millis();
 
+  health_wdt_feed();
   pollSerial();
   health_tick();  // the RTC uptime and the crash counter's runtime rules (once a second)
   if (s_prepTask && eTaskGetState(s_prepTask) == eSuspended) {

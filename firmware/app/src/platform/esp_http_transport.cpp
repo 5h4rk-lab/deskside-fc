@@ -227,7 +227,7 @@ void EspHttpTransport::task_main(void* arg) {
   auto* self = static_cast<EspHttpTransport*>(arg);
   // Watched by the task watchdog (health.h): the queue wait is cut into
   // kWdtWaitMs slices so an idle worker still feeds it; a request feeds it
-  // between its steps, and the connect (DNS, TCP, TLS) runs in a WdtPause.
+  // between its steps, and the connect (DNS, TCP, TLS) runs under WdtUser::cover().
   self->wdt_.begin(self->name_);
   int64_t idleSince = nowMs();
   for (;;) {
