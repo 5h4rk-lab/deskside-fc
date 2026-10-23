@@ -10,6 +10,7 @@
 // still works.
 #pragma once
 
+#include <stddef.h>
 #include <stdint.h>
 
 #include <string>
@@ -28,3 +29,15 @@ bool parse_news(const std::string& body, std::vector<NewsItem>& out, int64_t& up
 
 // {teams:[(Team + league)...]}
 bool parse_teams(const std::string& body, std::vector<Team>& out);
+
+// Optional memory for the parsers' JSON documents: the firmware passes one in
+// PSRAM (a 30 KB answer's document would otherwise take internal RAM while it
+// is parsed on an HTTP worker, next to a TLS session). nullptr (the default)
+// uses ArduinoJson's own (malloc). Set it once at start, before any parse;
+// the functions must be thread-safe (parsers may run on a worker).
+struct JsonParseMemory {
+  void* (*allocate)(size_t size);
+  void (*deallocate)(void* p);
+  void* (*reallocate)(void* p, size_t size);
+};
+void json_parse_set_memory(const JsonParseMemory* memory);

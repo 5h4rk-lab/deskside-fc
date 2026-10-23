@@ -91,6 +91,23 @@ bool get_arr(Obj o, const char* key, JsonArrayConst& out) {
   return true;
 }
 
+class FunctionAllocator : public ArduinoJson::Allocator {
+ public:
+  void* allocate(size_t size) override { return mem->allocate(size); }
+  void deallocate(void* p) override { mem->deallocate(p); }
+  void* reallocate(void* p, size_t size) override { return mem->reallocate(p, size); }
+  const JsonParseMemory* mem = nullptr;
+};
+
+FunctionAllocator g_allocator;
+const JsonParseMemory* g_memory = nullptr;
+
+// The documents' allocator: the host's (json_parse_set_memory) or ArduinoJson's.
+ArduinoJson::Allocator* doc_allocator() {
+  if (g_memory == nullptr) return ArduinoJson::detail::DefaultAllocator::instance();
+  return &g_allocator;
+}
+
 bool parse_json(const std::string& body, JsonDocument& doc) {
   if (deserializeJson(doc, body) != DeserializationError::Ok) return false;
   return doc.is<JsonObjectConst>();
@@ -195,7 +212,7 @@ bool read_list(JsonArrayConst arr, std::vector<T>& out, Reader reader) {
 }  // namespace
 
 bool parse_matches(const std::string& body, std::vector<MatchSummary>& out, int64_t& updated) {
-  JsonDocument doc;
+  JsonDocument doc(doc_allocator());
   if (!parse_json(body, doc)) return false;
   Obj root = doc.as<JsonObjectConst>();
   int64_t u;
@@ -211,7 +228,7 @@ bool parse_matches(const std::string& body, std::vector<MatchSummary>& out, int6
 }
 
 bool parse_detail(const std::string& body, MatchDetail& out) {
-  JsonDocument doc;
+  JsonDocument doc(doc_allocator());
   if (!parse_json(body, doc)) return false;
   Obj root = doc.as<JsonObjectConst>();
   MatchDetail d;
@@ -229,7 +246,7 @@ bool parse_detail(const std::string& body, MatchDetail& out) {
 }
 
 bool parse_news(const std::string& body, std::vector<NewsItem>& out, int64_t& updated) {
-  JsonDocument doc;
+  JsonDocument doc(doc_allocator());
   if (!parse_json(body, doc)) return false;
   Obj root = doc.as<JsonObjectConst>();
   int64_t u;
@@ -245,7 +262,7 @@ bool parse_news(const std::string& body, std::vector<NewsItem>& out, int64_t& up
 }
 
 bool parse_teams(const std::string& body, std::vector<Team>& out) {
-  JsonDocument doc;
+  JsonDocument doc(doc_allocator());
   if (!parse_json(body, doc)) return false;
   Obj root = doc.as<JsonObjectConst>();
   JsonArrayConst arr;
@@ -256,4 +273,9 @@ bool parse_teams(const std::string& body, std::vector<Team>& out) {
   }
   out = std::move(tmp);
   return true;
+}
+
+void json_parse_set_memory(const JsonParseMemory* memory) {
+  g_allocator.mem = memory;
+  g_memory = memory;
 }

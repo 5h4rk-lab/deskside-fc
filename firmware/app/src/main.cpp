@@ -119,6 +119,7 @@
 #include <vector>
 
 #include "helper_config.h"
+#include "json_parse.h"
 #include "battery_cal.h"
 #include "platform/esp_http_transport.h"
 #include "platform/esp_ota.h"
@@ -1120,6 +1121,12 @@ void setup() {
 #if !APP_TLS_INTERNAL
   tls_use_psram();
 #endif
+  // The JSON documents of the helper's answers too (parsed on the HTTP worker).
+  static const JsonParseMemory jsonMemory{
+      [](size_t n) { return heap_caps_malloc(n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); },
+      [](void* p) { heap_caps_free(p); },
+      [](void* p, size_t n) { return heap_caps_realloc(p, n, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT); }};
+  json_parse_set_memory(&jsonMemory);
   // The saved Wi-Fi list must be known before the UI is built (it opens the
   // first-run setup when the list is empty). The radio starts after the first frame.
   static EspWifiService wifi;

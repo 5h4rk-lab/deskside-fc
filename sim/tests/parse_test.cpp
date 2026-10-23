@@ -399,3 +399,27 @@ TEST_CASE("wrong types in nullable fields are rejected") {
   doc["matches"][0]["clock"] = 5;
   CHECK_FALSE(parse_matches(dump(doc), matches, updated));
 }
+
+namespace {
+int g_allocs = 0, g_frees = 0;
+void* count_alloc(size_t n) { ++g_allocs; return malloc(n); }
+void count_free(void* p) { if (p) ++g_frees; free(p); }
+void* count_realloc(void* p, size_t n) { if (!p) ++g_allocs; return realloc(p, n); }
+}  // namespace
+
+TEST_CASE("parse: the host's JSON memory is used for every document, and all of it is given back") {
+  static const JsonParseMemory mem{count_alloc, count_free, count_realloc};
+  g_allocs = g_frees = 0;
+  json_parse_set_memory(&mem);
+  std::vector<MatchSummary> matches;
+  int64_t updated = 0;
+  const bool ok = parse_matches(R"({"updated":1,"matches":[]})", matches, updated);
+  json_parse_set_memory(nullptr);
+  CHECK(ok);
+  CHECK(g_allocs > 0);
+  CHECK(g_allocs == g_frees);
+  // Back to ArduinoJson's own: the counters stay.
+  const int before = g_allocs;
+  CHECK(parse_matches(R"({"updated":1,"matches":[]})", matches, updated));
+  CHECK(g_allocs == before);
+}
