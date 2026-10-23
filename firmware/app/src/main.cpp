@@ -88,6 +88,8 @@
 //   :diag-wdt-stall      start a task that subscribes to the task watchdog and never feeds it: the board
 //                        resets with reason "task watchdog" after 15 s (counted as a crash)
 //   :diag-panic          abort() now: a panic reset (counted as a crash; three within 10 min = safe mode)
+//   :diag-backlight      calibration sweep: 1 % .. 100 % in 20 steps, 4 s each, percent and LEDC duty printed;
+//                        :diag-backlight <0-100> holds one level, :diag-backlight off gives it back to the app
 //   :diag-cpu [s]        each task's share of the CPU over s seconds (default 5; FreeRTOS run-time counters)
 //   :diag-shot           the active screen as LVGL rendered it, as [shot] lines of RGB565 hex (a host script
 //                        turns them into a PNG)
@@ -206,6 +208,8 @@ bool s_fast = false;            // [perf] line every second
 uint32_t s_loopLagMaxMs = 0;    // worst overshoot of the loop's own 20 ms step since the last report
 bool s_appOk = false;
 NvsPrefs* s_prefs = nullptr;
+LedcBacklight* s_ledc = nullptr;      // the real backlight (diag :diag-backlight drives it directly)
+GatedBacklight* s_gated = nullptr;  // what the app asked for (given back after :diag-backlight)
 NvsPrefs* s_helperPrefs = nullptr;  // namespace "helper": helper.url, helper.token
 EspWifiService* s_wifi = nullptr;
 I2sSoundOut* s_speaker = nullptr;
@@ -768,6 +772,65 @@ int diagNumber(const std::string& v, int lo, int hi) {
 }
 int s_diagKeyMs = 0;
 
+// :diag-backlight (calibration, eyes needed): steps the panel through
+// percentages with the LEDC duty printed, or holds one; "off" gives the
+// backlight back to the app. Loop task; the app's own changes are held off
+// only by not changing (it writes on changes), so a touch at night may win.
+const uint8_t kBlSteps[] = {1, 2, 3, 4, 5, 6, 8, 10, 12, 15, 20, 25, 30, 40, 50, 60, 70, 80, 90, 100};
+constexpr size_t kBlStepCount = sizeof(kBlSteps) / sizeof(kBlSteps[0]);
+int s_blStep = -1;         // the sweep's next step, -1 when not sweeping
+uint32_t s_blStepMs = 4000;
+uint32_t s_blNextMs = 0;
+
+void blWrite(uint8_t percent, const char* what) {
+  if (!s_ledc) return;
+  const bool locked = lvgl_lock(100);
+  s_ledc->set_percent(percent);
+  if (locked) lvgl_unlock();
+  Serial.printf("[bl] %s %u %% -> LEDC duty %u of 1024 (20 kHz, curve (p/100)^2.2)\n", what, (unsigned)percent,
+                (unsigned)backlight_duty_for_percent(percent));
+}
+
+void blGiveBack() {
+  s_blStep = -1;
+  if (s_gated) blWrite(s_gated->percent(), "given back to the app:");
+}
+
+void blCommand(const std::string& value) {
+  if (value.empty()) {
+    s_blStep = 0;
+    s_blNextMs = millis();
+    Serial.printf("[bl] sweep: %u steps, %lu ms each (:diag-backlight off stops it)\n", (unsigned)kBlStepCount,
+                  (unsigned long)s_blStepMs);
+    return;
+  }
+  if (value == "off") {
+    blGiveBack();
+    return;
+  }
+  const int p = diagNumber(value, 0, 100);
+  if (p < 0) {
+    Serial.println("[cmd] diag-backlight: :diag-backlight (sweep), :diag-backlight <0-100> (hold), :diag-backlight off");
+    return;
+  }
+  s_blStep = -1;
+  blWrite(static_cast<uint8_t>(p), "hold");
+}
+
+void blTick(uint32_t now) {
+  if (s_blStep < 0 || (int32_t)(now - s_blNextMs) < 0) return;
+  if (static_cast<size_t>(s_blStep) >= kBlStepCount) {
+    Serial.println("[bl] sweep done");
+    blGiveBack();
+    return;
+  }
+  char what[32];
+  snprintf(what, sizeof(what), "step %d/%u:", s_blStep + 1, (unsigned)kBlStepCount);
+  blWrite(kBlSteps[s_blStep], what);
+  ++s_blStep;
+  s_blNextMs = now + s_blStepMs;
+}
+
 // :diag-cpu: each task's share of the CPU time over a window (FreeRTOS run-time
 // counters, CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS), both cores together (200 %
 // is both cores busy). Non-blocking: the second sample is taken by loop().
@@ -934,6 +997,10 @@ void handleSerialItem(SerialCommandSplitter::Item& it) {
   }
 #endif
 #if APP_DIAG
+  if (name == "diag-backlight") {
+    blCommand(value);
+    return;
+  }
   if (name == "diag-cpu") {
     const int sec = value.empty() ? 5 : diagNumber(value, 1, 60);
     if (sec < 0) {
@@ -1109,6 +1176,8 @@ void setup() {
   static LedcBacklight ledc;
   if (!ledc.ok()) Serial.println("[backlight] ERROR: backlight unavailable");
   static GatedBacklight backlight(ledc);
+  s_ledc = &ledc;
+  s_gated = &backlight;
 
   Serial.printf("[heap] %-22s internal free %6u\n", "at setup", (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
   // Settings first: a broken NVS must never keep the screen from starting.
@@ -1220,6 +1289,7 @@ void loop() {
   if (step > kLoopStepMs && step - kLoopStepMs > s_loopLagMaxMs) s_loopLagMaxMs = step - kLoopStepMs;
 
 #if APP_DIAG
+  blTick(now);
   if (s_cpuDueMs && (int32_t)(now - s_cpuDueMs) >= 0) {
     s_cpuDueMs = 0;
     cpuSampleFinish();
