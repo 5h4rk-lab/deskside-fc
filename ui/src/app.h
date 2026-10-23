@@ -153,7 +153,10 @@ std::string app_open_match_id(lv_obj_t* appRoot);
 // into the Store (the Live strip shows the new event) and, for the favourite's
 // goals and wins, starts the goal celebration (with its sound: the goal horn,
 // or at a win the full-time whistles and then the fanfare; opponents' goals
-// and first sightings never make a sound) and then fills in the scorer
+// and first sightings never make a sound). The favourite's kick-off and its
+// draws and defeats at full time only blow the whistle (Sound "Goals and match
+// alerts"), and only when the detector watched them happen (its recency guard:
+// never after an outage). For the celebrations it then fills in the scorer
 // from the detail, once a detail has as many goals of the scoring side as its
 // score (scorer_for_goal): app_refresh() keeps checking the Store's detail
 // while the overlay shows. The first call never celebrates (first sight of a

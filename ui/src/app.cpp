@@ -1205,8 +1205,19 @@ void app_matches_changed(lv_obj_t* appRoot, int64_t now) {
   AppState* st = app_state(appRoot);
   if (st == nullptr) return;
   const std::optional<GoalEvent> event =
-      st->detector.update(st->store->matches(), st->store->favourite());
+      st->detector.update(st->store->matches(), st->store->favourite(), now);
   if (!event) return;
+  if (event->kickOff) {
+    // The favourite's match went live (watched as it happened): the whistle
+    // when match alerts are on. No celebration, nothing to fetch.
+    app_sound(st, SoundEvent::KickOff, now);
+    return;
+  }
+  if (event->fullTime && !event->favourite) {
+    // A draw or a defeat: the full-time whistle when match alerts are on,
+    // never the fanfare, no celebration.
+    app_sound(st, SoundEvent::FullTime, now);
+  }
   if (event->favourite) {
     // The favourite's goal or win is meant to be seen: a screen turned off
     // with the power key comes back on (at the level the schedule wants).

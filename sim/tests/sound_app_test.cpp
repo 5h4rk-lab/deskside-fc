@@ -325,20 +325,97 @@ TEST_CASE("sound: Goals and match alerts plays the full-time whistles, then the 
   CHECK(f.sound.count() == 2);  // once
 }
 
-TEST_CASE("sound: a draw or a defeat at full time makes no sound") {
+TEST_CASE("sound: a draw or a defeat at full time blows the whistle with match alerts, never the fanfare") {
   Fixture f(true, false);
   f.prefs.set("snd.mode", "2");
   f.make();
   f.poll(live_match(1, 1));
   f.poll(live_match(1, 1, MatchState::Post));
   test_advance(5000);
-  CHECK(f.sound.count() == 0);
+  REQUIRE(f.sound.count() == 1);
+  CHECK(f.sound.played(SoundEvent::FullTime));
+  CHECK(goal_parts() == nullptr);  // no celebration
   Fixture g(true, false);
   g.prefs.set("snd.mode", "2");
   g.make();
   g.poll(live_match(0, 1));
   g.poll(live_match(0, 1, MatchState::Post));
-  CHECK(g.sound.count() == 0);
+  test_advance(5000);
+  REQUIRE(g.sound.count() == 1);
+  CHECK(g.sound.played(SoundEvent::FullTime));
+  CHECK_FALSE(g.sound.played(SoundEvent::WinFanfare));
+}
+
+TEST_CASE("sound: Goals only makes no sound at a draw, a defeat or a kick-off") {
+  Fixture f;
+  f.poll(live_match(1, 1));
+  f.poll(live_match(1, 1, MatchState::Post));
+  MatchSummary pre = live_match(0, 0, MatchState::Pre);
+  pre.id = "m2";
+  f.poll(pre);
+  MatchSummary ko = live_match(0, 0);
+  ko.id = "m2";
+  ko.clock = "1'";
+  f.poll(ko);
+  test_advance(5000);
+  CHECK(f.sound.count() == 0);
+}
+
+TEST_CASE("sound: the favourite's kick-off blows the whistle with match alerts, once") {
+  Fixture f(true, false);
+  f.prefs.set("snd.mode", "2");
+  f.make();
+  MatchSummary pre = live_match(0, 0, MatchState::Pre);
+  pre.id = "m2";
+  pre.homeScore.reset();
+  pre.awayScore.reset();
+  f.poll(pre);
+  MatchSummary ko = live_match(0, 0);
+  ko.id = "m2";
+  ko.clock = "1'";
+  f.now += 180;
+  f.poll(ko);
+  REQUIRE(f.sound.count() == 1);
+  CHECK(f.sound.played(SoundEvent::KickOff));
+  CHECK(goal_parts() == nullptr);
+  ko.clock = "3'";
+  f.now += 25;
+  f.poll(ko);
+  CHECK(f.sound.count() == 1);
+}
+
+TEST_CASE("sound: an opponent's kick-off or full time of another match makes no sound") {
+  Fixture f(true, false);
+  f.prefs.set("snd.mode", "2");
+  f.make();
+  MatchSummary pre = live_match(0, 0, MatchState::Pre);
+  pre.id = "m7";
+  pre.home = {"1", "AAA", "A", "", 0, 0, ""};
+  pre.away = {"2", "BBB", "B", "", 0, 0, ""};
+  f.poll(pre);
+  MatchSummary ko = pre;
+  ko.state = MatchState::Live;
+  ko.clock = "1'";
+  f.poll(ko);
+  MatchSummary ft = ko;
+  ft.state = MatchState::Post;
+  f.poll(ft);
+  f.poll(ft);
+  test_advance(5000);
+  CHECK(f.sound.count() == 0);
+}
+
+TEST_CASE("sound: after a long outage the full time found later makes no sound") {
+  Fixture f(true, false);
+  f.prefs.set("snd.mode", "2");
+  f.make();
+  f.poll(live_match(2, 1));
+  f.now += 2 * 3600;  // the router was off; the match ended meanwhile
+  f.poll(live_match(2, 1, MatchState::Post));
+  f.poll(live_match(2, 1, MatchState::Post));
+  test_advance(5000);
+  CHECK(f.sound.count() == 0);
+  CHECK(goal_parts() == nullptr);
 }
 
 TEST_CASE("sound: the app deleted while the fanfare waits leaves nothing behind") {
