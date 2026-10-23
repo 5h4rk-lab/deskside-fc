@@ -19,6 +19,7 @@
 #include "json_parse.h"
 #include "demo_data.h"
 #include "screens/detail.h"
+#include "screens/matches.h"
 #include "screens/live.h"
 #include "store.h"
 #include "test_display.h"
@@ -741,6 +742,9 @@ struct AppHost {
 
   void settle() {
     test_advance(20);
+    // The Matches tab builds a long list in steps: let it finish.
+    lv_obj_t* matchesScreen = lv_obj_get_child(lv_obj_get_child(lv_tabview_get_content(app), 1), 0);
+    for (int i = 0; i < 500 && !matches_complete(matchesScreen); ++i) test_advance(kMatchesStepMs);
     lv_obj_update_layout(lv_screen_active());
   }
   uint32_t top_level() const { return lv_obj_get_child_count(lv_screen_active()); }

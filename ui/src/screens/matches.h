@@ -37,12 +37,12 @@ lv_obj_t* matches_create(lv_obj_t* parent, Store& store, ImageProvider& images,
 // Updates the screen from the Store. Rows are reused: only data that changed
 // since the last call is touched, and the scroll position is kept. A list
 // that needs many new rows (the first data: about 70 rows and headers, about
-// 10 ms each on the board) gets its first kMatchesFirstItems at once and the
+// 15 ms per row on the board: 1.07 s at once) gets its first kMatchesFirstItems at once and the
 // rest kMatchesItemsPerStep every kMatchesStepMs (an LVGL timer), in order,
 // so the screen never stops for a second.
 void matches_refresh(lv_obj_t* screen, int64_t now);
-constexpr size_t kMatchesFirstItems = 20;
-constexpr size_t kMatchesItemsPerStep = 6;
+constexpr size_t kMatchesFirstItems = 8;
+constexpr size_t kMatchesItemsPerStep = 3;
 constexpr uint32_t kMatchesStepMs = 30;
 // True when every row and header of the last refresh has its widget.
 bool matches_complete(lv_obj_t* screen);

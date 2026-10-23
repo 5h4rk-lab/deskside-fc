@@ -158,15 +158,20 @@ struct Fixture {
 
   const MatchesParts* parts() const { return matches_parts(screen); }
 
-  void refresh(int64_t now = kNow) {
+  // A refresh, then LVGL's timers until a long list is complete (built in
+  // steps: kMatchesFirstItems at once); `wholeList` false stops after the
+  // refresh's own pass.
+  void refresh(int64_t now = kNow, bool wholeList = true) {
     matches_refresh(screen, now);
+    if (!wholeList) return;
     test_advance(20);
+    for (int i = 0; i < 500 && !matches_complete(screen); ++i) test_advance(kMatchesStepMs);
     lv_obj_update_layout(screen);
   }
 
-  void load(std::vector<MatchSummary> v, int64_t now = kNow) {
+  void load(std::vector<MatchSummary> v, int64_t now = kNow, bool wholeList = true) {
     store.set_matches(std::move(v), now);
-    refresh(now);
+    refresh(now, wholeList);
   }
 
   // "#TEXT" for a header, the match id for a row, in display order.
@@ -584,6 +589,7 @@ struct AppHost {
 
   void settle() {
     test_advance(20);
+    for (int i = 0; i < 500 && !matches_complete(matches()); ++i) test_advance(kMatchesStepMs);  // a long list
     lv_obj_update_layout(lv_screen_active());
   }
   lv_obj_t* matches() const {
@@ -701,7 +707,7 @@ void finish(Fixture& f) {
 
 TEST_CASE("a long list shows its first items at once and the rest in steps, in order") {
   Fixture f;
-  f.load(many_days(30));  // 60 items: a header and a row per day
+  f.load(many_days(30), kNow, false);  // 60 items: a header and a row per day
   CHECK_FALSE(matches_complete(f.screen));
   CHECK(f.sequence().size() == kMatchesFirstItems);
   const size_t before = f.sequence().size();
@@ -724,11 +730,11 @@ TEST_CASE("a long list shows its first items at once and the rest in steps, in o
 
 TEST_CASE("a new list while the long one is still being built: built to the new list") {
   Fixture f;
-  f.load(many_days(30));
+  f.load(many_days(30), kNow, false);
   REQUIRE_FALSE(matches_complete(f.screen));
   std::vector<MatchSummary> fewer = many_days(12);
   fewer.erase(fewer.begin());  // m0 is gone
-  f.load(fewer);
+  f.load(fewer, kNow, false);
   finish(f);
   const Seq seq = f.sequence();
   REQUIRE(seq.size() == 22);
@@ -739,7 +745,7 @@ TEST_CASE("a new list while the long one is still being built: built to the new 
 
 TEST_CASE("the screen deleted while its list is being built takes the build step with it") {
   Fixture f;
-  f.load(many_days(30));
+  f.load(many_days(30), kNow, false);
   REQUIRE_FALSE(matches_complete(f.screen));
   lv_obj_delete(f.screen);
   f.screen = nullptr;
@@ -749,9 +755,10 @@ TEST_CASE("the screen deleted while its list is being built takes the build step
 
 TEST_CASE("the status row follows the clock while the list is being built") {
   Fixture f;
-  f.load(many_days(30));
+  f.load(many_days(30), kNow, false);
   REQUIRE_FALSE(matches_complete(f.screen));
-  f.refresh(kNow + 120);
+  f.refresh(kNow + 120, false);
+  test_advance(kMatchesStepMs);  // a build step keeps the new clock
   CHECK(text(f.parts()->status.clock) == "17:02");
   finish(f);
   CHECK(f.sequence().size() == 60);

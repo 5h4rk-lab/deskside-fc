@@ -106,9 +106,12 @@ std::string loadDumpSummary() {
 
 void readCoreDump() {
   const esp_err_t check = esp_core_dump_image_check();
-  if (check == ESP_ERR_NOT_FOUND) return;  // none
+  // None: an erased partition reads as ESP_ERR_INVALID_SIZE on this board (not
+  // ESP_ERR_NOT_FOUND as documented), so only a bad checksum counts as damaged
+  // (erasing on every start would wear the flash).
+  if (check == ESP_ERR_NOT_FOUND || check == ESP_ERR_INVALID_SIZE) return;
   if (check != ESP_OK) {
-    // Damaged (wrong size or checksum): no summary to read, but it may still
+    // Damaged (bad checksum): no summary to read, but it may still
     // hold RAM contents (the helper token): the release build erases it too.
 #if !APP_DIAG
     const esp_err_t err = esp_core_dump_image_erase();
