@@ -121,6 +121,7 @@
 #include "screens/detail.h"
 #include "screens/goal.h"
 #include "screens/settings.h"
+#include "screens/matches.h"
 #include "screens/team_picker.h"
 #include "screens/wifi.h"
 #include "sim_backlight.h"
@@ -943,6 +944,13 @@ int main(int argc, char** argv) {
       }
     } else {
       for (int i = 0; i < 10; ++i) lv_timer_handler();
+      // A long match list is built in steps (kMatchesStepMs): let it finish.
+      lv_obj_t* matchesTab = lv_obj_get_child(lv_tabview_get_content(app), 1);
+      lv_obj_t* matchesScreen = matchesTab != nullptr ? lv_obj_get_child(matchesTab, 0) : nullptr;
+      for (int i = 0; i < 300 && matchesScreen != nullptr && !matches_complete(matchesScreen); ++i) {
+        SDL_Delay(kMatchesStepMs);
+        lv_timer_handler();
+      }
       // A long team list fills in steps (kPickerStepMs): let it finish.
       lv_obj_t* picker = app_team_picker_view(app);
       for (int i = 0; i < 1000 && picker != nullptr && !team_picker_complete(picker); ++i) {

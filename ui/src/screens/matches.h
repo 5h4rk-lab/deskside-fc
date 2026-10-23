@@ -17,6 +17,9 @@
 #include <lvgl.h>
 #include <stdint.h>
 
+#include <stddef.h>
+#include <stdint.h>
+
 #include <functional>
 #include <string>
 #include <vector>
@@ -32,8 +35,17 @@ lv_obj_t* matches_create(lv_obj_t* parent, Store& store, ImageProvider& images,
                          std::function<void(std::string matchId)> onOpen);
 
 // Updates the screen from the Store. Rows are reused: only data that changed
-// since the last call is touched, and the scroll position is kept.
+// since the last call is touched, and the scroll position is kept. A list
+// that needs many new rows (the first data: about 70 rows and headers, about
+// 10 ms each on the board) gets its first kMatchesFirstItems at once and the
+// rest kMatchesItemsPerStep every kMatchesStepMs (an LVGL timer), in order,
+// so the screen never stops for a second.
 void matches_refresh(lv_obj_t* screen, int64_t now);
+constexpr size_t kMatchesFirstItems = 20;
+constexpr size_t kMatchesItemsPerStep = 6;
+constexpr uint32_t kMatchesStepMs = 30;
+// True when every row and header of the last refresh has its widget.
+bool matches_complete(lv_obj_t* screen);
 
 // Text of the empty states (exact wording).
 constexpr const char* kMatchesConnecting = "Connecting...";

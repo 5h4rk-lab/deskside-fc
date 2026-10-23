@@ -137,6 +137,11 @@ struct MatchesState {
   View shown;
   ItemsKey shownKey;  // what `shown`'s items were computed from
   bool everApplied = false;
+  // A long list is built in steps (kMatchesFirstItems, then
+  // kMatchesItemsPerStep every kMatchesStepMs): `target` is the view being
+  // built, `builder` the timer that goes on with it.
+  View target;
+  lv_timer_t* builder = nullptr;
 };
 
 MatchesState* state_of(lv_obj_t* screen) {
@@ -266,7 +271,11 @@ View compute_view(const Store& store, int64_t now) {
 
 // ---------------------------------------------------------------- widgets
 
-void on_delete(lv_event_t* e) { delete static_cast<MatchesState*>(lv_event_get_user_data(e)); }
+void on_delete(lv_event_t* e) {
+  auto* st = static_cast<MatchesState*>(lv_event_get_user_data(e));
+  if (st->builder != nullptr) lv_timer_delete(st->builder);
+  delete st;
+}
 
 void on_row_clicked(lv_event_t* e) {
   auto* st = static_cast<MatchesState*>(lv_event_get_user_data(e));
@@ -400,9 +409,10 @@ void apply_row(MatchesState* st, Item& it, const RowView& v) {
 }
 
 // Brings the list's children in line with `v`: rows and headers keep their
-// widgets while their key is still wanted, new ones are created, others
-// deleted, and the order is set.
-void reconcile(MatchesState* st, const View& v) {
+// widgets while their key is still wanted, new ones are created (at most
+// `maxNew` of them: the rest wait for the next step), others deleted, and the
+// order is set. True when every item of `v` has its widget.
+bool reconcile(MatchesState* st, const View& v, size_t maxNew) {
   std::unordered_set<std::string> wanted;
   for (const ItemView& iv : v.items) wanted.insert(iv.key);
 
@@ -419,19 +429,24 @@ void reconcile(MatchesState* st, const View& v) {
 
   std::vector<Item> next;
   next.reserve(v.items.size());
+  size_t created = 0;
+  bool complete = true;
   for (size_t i = 0; i < v.items.size(); ++i) {
     const ItemView& iv = v.items[i];
     Item it;
     auto found = have.find(iv.key);
     if (found != have.end()) {
       it = std::move(kept[found->second]);
+    } else if (created >= maxNew) {
+      complete = false;  // built in a later step
+      continue;
     } else {
       it = iv.header ? create_header(st) : create_row(st);
       it.key = iv.key;
+      ++created;
     }
-    if (lv_obj_get_index(it.obj) != static_cast<int32_t>(i)) {
-      lv_obj_move_to_index(it.obj, static_cast<int32_t>(i));
-    }
+    const int32_t pos = static_cast<int32_t>(next.size());
+    if (lv_obj_get_index(it.obj) != pos) lv_obj_move_to_index(it.obj, pos);
     if (iv.header) {
       set_text(it.obj, iv.text);
     } else {
@@ -441,17 +456,40 @@ void reconcile(MatchesState* st, const View& v) {
     next.push_back(std::move(it));
   }
   st->items = std::move(next);
+  return complete;
 }
 
-void apply(MatchesState* st, const View& v) {
+void on_build_step(lv_timer_t* t);
+
+// Shows `v` (in steps when it needs many new widgets).
+void apply(MatchesState* st, const View& v, size_t maxNew) {
   MatchesParts& p = st->parts;
   widgets::status_row_apply(p.status, "Matches", v.status);
   show(p.connecting, v.mode == Mode::Connecting);
   show(p.emptyCard, v.mode == Mode::Empty);
   show(p.list, v.mode == Mode::List);
-  reconcile(st, v);
-  st->shown = v;
+  const bool complete = reconcile(st, v, maxNew);
   st->everApplied = true;
+  if (complete) {
+    st->shown = v;
+    if (st->builder != nullptr) {
+      lv_timer_delete(st->builder);
+      st->builder = nullptr;
+    }
+    return;
+  }
+  // Not all there yet: `shown` keeps what was complete before (so the next
+  // refresh never takes the partial list for the target) and a timer goes on.
+  st->shown.status = v.status;
+  st->target = v;
+  if (st->builder == nullptr) st->builder = lv_timer_create(on_build_step, kMatchesStepMs, st);
+}
+
+void on_build_step(lv_timer_t* t) {
+  auto* st = static_cast<MatchesState*>(lv_timer_get_user_data(t));
+  View v = st->target;           // apply() may replace st->target
+  v.status = st->shown.status;   // the status row as the last refresh left it
+  apply(st, v, kMatchesItemsPerStep);
 }
 
 }  // namespace
@@ -538,8 +576,8 @@ void matches_refresh(lv_obj_t* screen, int64_t now) {
   }
   const ItemsKey key = items_key(*st->store, now);
   if (st->everApplied && key == st->shownKey) {
-    // The rows are as they were: only the status row (clock, stale marker,
-    // battery) may have changed.
+    // The rows are as they were (or still being built for the same list):
+    // only the status row (clock, stale marker, battery) may have changed.
     const StatusInfo status = widgets::status_info(*st->store, now);
     if (status != st->shown.status) {
       widgets::status_row_apply(st->parts.status, "Matches", status);
@@ -549,8 +587,13 @@ void matches_refresh(lv_obj_t* screen, int64_t now) {
   }
   st->shownKey = key;
   const View v = compute_view(*st->store, now);
-  if (st->everApplied && v == st->shown) return;
-  apply(st, v);
+  if (st->everApplied && v == st->shown && st->builder == nullptr) return;
+  apply(st, v, kMatchesFirstItems);
+}
+
+bool matches_complete(lv_obj_t* screen) {
+  MatchesState* st = screen != nullptr ? state_of(screen) : nullptr;
+  return st != nullptr && st->builder == nullptr;
 }
 
 namespace {

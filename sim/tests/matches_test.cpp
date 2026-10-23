@@ -678,3 +678,81 @@ TEST_CASE("the favourite's dot sits by its own crest, clear of both crests") {
     }
   }
 }
+
+// ------------------------------------------------------------ a long list
+
+namespace {
+
+// `n` upcoming matches, one a day at 18:00, so each brings its own day header.
+std::vector<MatchSummary> many_days(int n) {
+  std::vector<MatchSummary> v;
+  for (int i = 0; i < n; ++i) {
+    const std::string id = "m" + std::to_string(i);
+    v.push_back(make(id.c_str(), "eng.1", MatchState::Pre, kMidnight + i * kDay + 18 * 3600, mnc(), liv()));
+  }
+  return v;
+}
+
+void finish(Fixture& f) {
+  for (int i = 0; i < 500 && !matches_complete(f.screen); ++i) test_advance(kMatchesStepMs);
+}
+
+}  // namespace
+
+TEST_CASE("a long list shows its first items at once and the rest in steps, in order") {
+  Fixture f;
+  f.load(many_days(30));  // 60 items: a header and a row per day
+  CHECK_FALSE(matches_complete(f.screen));
+  CHECK(f.sequence().size() == kMatchesFirstItems);
+  const size_t before = f.sequence().size();
+  test_advance(kMatchesStepMs);
+  CHECK(f.sequence().size() == before + kMatchesItemsPerStep);
+  finish(f);
+  REQUIRE(matches_complete(f.screen));
+  const Seq seq = f.sequence();
+  REQUIRE(seq.size() == 60);
+  CHECK(seq[0] == "#TODAY");
+  CHECK(seq[1] == "m0");
+  CHECK(seq[2] == "#TOMORROW");
+  CHECK(seq[59] == "m29");
+  // A refresh of the complete list changes nothing.
+  const uint32_t n = count_descendants(f.parts()->list);
+  f.refresh();
+  CHECK(count_descendants(f.parts()->list) == n);
+  CHECK(f.sequence() == seq);
+}
+
+TEST_CASE("a new list while the long one is still being built: built to the new list") {
+  Fixture f;
+  f.load(many_days(30));
+  REQUIRE_FALSE(matches_complete(f.screen));
+  std::vector<MatchSummary> fewer = many_days(12);
+  fewer.erase(fewer.begin());  // m0 is gone
+  f.load(fewer);
+  finish(f);
+  const Seq seq = f.sequence();
+  REQUIRE(seq.size() == 22);
+  CHECK(seq[0] == "#TOMORROW");
+  CHECK(seq[1] == "m1");
+  CHECK(seq.back() == "m11");
+}
+
+TEST_CASE("the screen deleted while its list is being built takes the build step with it") {
+  Fixture f;
+  f.load(many_days(30));
+  REQUIRE_FALSE(matches_complete(f.screen));
+  lv_obj_delete(f.screen);
+  f.screen = nullptr;
+  for (int i = 0; i < 40; ++i) test_advance(kMatchesStepMs);  // nothing may touch it (ASan)
+  CHECK(true);
+}
+
+TEST_CASE("the status row follows the clock while the list is being built") {
+  Fixture f;
+  f.load(many_days(30));
+  REQUIRE_FALSE(matches_complete(f.screen));
+  f.refresh(kNow + 120);
+  CHECK(text(f.parts()->status.clock) == "17:02");
+  finish(f);
+  CHECK(f.sequence().size() == 60);
+}

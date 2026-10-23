@@ -137,7 +137,9 @@ void readCoreDump() {
   free(sum);
   Serial.printf("[health] core dump in flash: %s\n", s_coredump.c_str());
   // The summary outlives the dump (erased below in the release build).
-  const std::string kept = crash_summary_for_storage(reset_kind_name(s_boot.kind) + std::string(": ") + s_coredump);
+  // The dump itself (task, PC, reason, backtrace): the reset that wrote it is
+  // not known here once later starts have passed (a diagnostics build keeps it).
+  const std::string kept = crash_summary_for_storage(s_coredump);
   if (kept != s_lastDump) {  // a diagnostics build keeps the dump: the same one again is not rewritten
     s_lastDump = kept;
     if (!storeDumpSummary(s_lastDump)) Serial.println("[health] WARNING: could not keep the core dump summary");
