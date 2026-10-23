@@ -944,10 +944,12 @@ int main(int argc, char** argv) {
       }
     } else {
       for (int i = 0; i < 10; ++i) lv_timer_handler();
-      // A long match list is built in steps (kMatchesStepMs): let it finish.
+      // A long match list is built in steps (kMatchesStepMs): let it finish
+      // (only for the Matches tab: other snapshots keep their animation time).
       lv_obj_t* matchesTab = lv_obj_get_child(lv_tabview_get_content(app), 1);
       lv_obj_t* matchesScreen = matchesTab != nullptr ? lv_obj_get_child(matchesTab, 0) : nullptr;
-      for (int i = 0; i < 300 && matchesScreen != nullptr && !matches_complete(matchesScreen); ++i) {
+      for (int i = 0; i < 300 && opt.screen == "matches" && matchesScreen != nullptr && !matches_complete(matchesScreen);
+           ++i) {
         SDL_Delay(kMatchesStepMs);
         lv_timer_handler();
       }
