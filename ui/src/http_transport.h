@@ -18,20 +18,39 @@
 //   them (HttpSource runs one at a time).
 // - A transport destroyed with requests outstanding drops them: their `done`
 //   is never called.
+// - get_prepared(): the same, plus a `prepare` step that turns the finished
+//   result into something ready to use (the parsed body), delivered in
+//   HttpResult::prepared. A transport may run it on its worker thread, so the
+//   slow part of an answer (a 30 KB JSON parse: ~50 ms on the board) is not
+//   paid on the UI thread; the default runs it on the UI thread just before
+//   `done`. `prepare` must be pure: it reads the result and nothing else
+//   shared (no UI, no Store, no `this` of a UI object), and may be empty.
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <string>
 
 struct HttpResult {
   int status = 0;
-  std::string body;
+  std::string body;  // may be emptied by a transport once `prepared` holds it parsed
   bool transportError = false;
+  std::shared_ptr<void> prepared;  // get_prepared(): what `prepare` returned (may be null)
 };
+
+using HttpPrepare = std::function<std::shared_ptr<void>(const HttpResult&)>;
 
 class HttpTransport {
  public:
   virtual ~HttpTransport() = default;
   virtual void get(const std::string& url, const std::string& token, int timeoutMs,
                    std::function<void(HttpResult)> done) = 0;
+
+  virtual void get_prepared(const std::string& url, const std::string& token, int timeoutMs, HttpPrepare prepare,
+                            std::function<void(HttpResult)> done) {
+    get(url, token, timeoutMs, [prepare = std::move(prepare), done = std::move(done)](HttpResult r) {
+      if (prepare) r.prepared = prepare(r);
+      done(std::move(r));
+    });
+  }
 };

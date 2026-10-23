@@ -5,7 +5,9 @@
 // - GET <base>/api/matches?leagues=<l1,l2,...>, /api/match/<id>?league=<code>,
 //   /api/news?league=<newsLeague> and /api/teams, each with the token in the
 //   x-token header and a kHttpTimeoutMs timeout.
-// - Success is a 200 whose body parses with the matching json_parse.h parser;
+// - Success is a 200 whose body parses with the matching json_parse.h parser
+//   (through HttpTransport::get_prepared: the firmware parses on its HTTP
+//   worker, off the UI task; results reach the callbacks on the UI thread);
 //   anything else calls back with ok=false and empty data, and last_error()
 //   says why (Auth for 401, Offline for transport errors, Server for other
 //   statuses, Parse for an unreadable 200).
@@ -59,10 +61,11 @@ class HttpSource : public DataSource {
   struct Request {
     Kind kind;
     std::string target;  // the URL, or the match id of a detail request
+    HttpPrepare prepare;  // parses a 200's body (pure: may run on the transport's worker)
     std::function<void(const HttpResult&)> handle;
   };
 
-  void enqueue(Kind kind, std::string target, std::function<void(const HttpResult&)> handle);
+  void enqueue(Kind kind, std::string target, HttpPrepare prepare, std::function<void(const HttpResult&)> handle);
   std::string detail_url(const std::string& id) const;
   void trim_queue();
   void pump();

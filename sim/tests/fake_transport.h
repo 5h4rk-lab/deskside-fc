@@ -26,9 +26,26 @@ class FakeTransport : public HttpTransport {
     pending_.push_back(std::move(done));
   }
 
+  // As the firmware's transport: `prepare` runs when the answer is delivered
+  // (there on the worker, before the result is queued), and a prepared
+  // answer's body is emptied, so a caller that parsed the body again instead
+  // of using `prepared` would fail. preparedCalls counts the runs.
+  void get_prepared(const std::string& url, const std::string& token, int timeoutMs, HttpPrepare prepare,
+                    std::function<void(HttpResult)> done) override {
+    get(url, token, timeoutMs, [this, prepare = std::move(prepare), done = std::move(done)](HttpResult r) {
+      if (prepare) {
+        ++preparedCalls;
+        r.prepared = prepare(r);
+        if (r.prepared) r.body.clear();
+      }
+      done(std::move(r));
+    });
+  }
+  int preparedCalls = 0;
+
   // Scripts the answer to a future request (answers are used in order).
-  void respond(int status, std::string body) { script_.push_back({status, std::move(body), false}); }
-  void respond_transport_error() { script_.push_back({0, "", true}); }
+  void respond(int status, std::string body) { script_.push_back(result(status, std::move(body), false)); }
+  void respond_transport_error() { script_.push_back(result(0, "", true)); }
 
   // Requests made and not answered yet.
   size_t pending() const { return pending_.size(); }
@@ -77,6 +94,14 @@ class FakeTransport : public HttpTransport {
     pending_.erase(pending_.begin() + static_cast<std::ptrdiff_t>(index));
     done(std::move(r));  // may issue new requests
     return true;
+  }
+
+  static HttpResult result(int status, std::string body, bool error) {
+    HttpResult r;
+    r.status = status;
+    r.body = std::move(body);
+    r.transportError = error;
+    return r;
   }
 
   std::deque<std::function<void(HttpResult)>> pending_;

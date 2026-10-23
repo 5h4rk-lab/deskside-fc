@@ -341,3 +341,74 @@ TEST_CASE("http source: a folded duplicate whose first caller destroys the sourc
   CHECK(laterCalls == 0);  // the newer half never ran on the dead source
   CHECK(t.pending() == 0);  // and nothing more was sent
 }
+
+TEST_CASE("http source: answers are parsed once in the transport's prepare step, whatever the status") {
+  Fixture f;
+  std::vector<MatchSummary> matches;
+  f.source.fetch_matches([&](bool, std::vector<MatchSummary> v) { matches = std::move(v); });
+  f.transport.respond(200, fixture("matches-normalised.json"));
+  f.transport.flush();
+  CHECK(f.transport.preparedCalls == 1);  // and the body was emptied after it (FakeTransport)
+  CHECK(matches.size() == 1);
+
+  // A 401, a 500 and a transport error are not parsed (prepare gives nothing)
+  // and are classified as before; an unreadable 200 is a Parse error.
+  for (int status : {401, 500}) {
+    bool ok = true;
+    f.source.fetch_matches([&](bool o, std::vector<MatchSummary>) { ok = o; });
+    f.transport.respond(status, "{\"error\":\"no\"}");
+    f.transport.flush();
+    CHECK_FALSE(ok);
+  }
+  CHECK(f.source.last_error() == FetchError::Server);
+  bool ok = true;
+  f.source.fetch_matches([&](bool o, std::vector<MatchSummary>) { ok = o; });
+  f.transport.respond(200, "{not json");
+  f.transport.flush();
+  CHECK_FALSE(ok);
+  CHECK(f.source.last_error() == FetchError::Parse);
+}
+
+TEST_CASE("http source: folded duplicates each get the whole prepared answer") {
+  Fixture f;
+  f.source.fetch_matches([&](bool, std::vector<MatchSummary>) {});  // in flight
+  std::vector<size_t> sizes;
+  for (int i = 0; i < 6; ++i) f.source.fetch_news([&](bool, std::vector<NewsItem> v) { sizes.push_back(v.size()); });
+  for (int i = 0; i < 5; ++i) f.source.fetch_teams([&](bool, std::vector<Team>) {});
+  f.transport.respond(500, "");
+  for (int i = 0; i < 20; ++i) f.transport.respond(200, fixture("news-normalised.json"));
+  f.transport.flush();
+  CHECK(sizes == std::vector<size_t>(6, 6));
+}
+
+namespace {
+
+// A transport with only get(): HttpTransport's default get_prepared prepares
+// on the UI thread at delivery.
+class PlainTransport : public HttpTransport {
+ public:
+  void get(const std::string&, const std::string&, int, std::function<void(HttpResult)> done) override {
+    pending.push_back(std::move(done));
+  }
+  std::vector<std::function<void(HttpResult)>> pending;
+};
+
+}  // namespace
+
+TEST_CASE("http source: a transport without its own get_prepared still parses (default)") {
+  PlainTransport t;
+  HttpSource src(t, kBase, kToken);
+  std::vector<Team> teams;
+  bool ok = false;
+  src.fetch_teams([&](bool o, std::vector<Team> v) {
+    ok = o;
+    teams = std::move(v);
+  });
+  REQUIRE(t.pending.size() == 1);
+  HttpResult r;
+  r.status = 200;
+  r.body = fixture("teams-normalised.json");
+  t.pending[0](std::move(r));
+  CHECK(ok);
+  CHECK(teams.size() == 20);
+}

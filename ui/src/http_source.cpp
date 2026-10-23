@@ -38,36 +38,99 @@ bool HttpSource::accept(const HttpResult& r) {
   return false;
 }
 
+namespace {
+
+// What the prepare step makes of a 200 (on the transport's worker in the
+// firmware). `ok` false: the body did not parse.
+struct ParsedMatches {
+  bool ok = false;
+  std::vector<MatchSummary> matches;
+};
+struct ParsedDetail {
+  bool ok = false;
+  MatchDetail detail;
+};
+struct ParsedNews {
+  bool ok = false;
+  std::vector<NewsItem> news;
+};
+struct ParsedTeams {
+  bool ok = false;
+  std::vector<Team> teams;
+};
+
+bool is_ok(const HttpResult& r) { return !r.transportError && r.status == 200; }
+
+std::shared_ptr<void> prepare_matches(const HttpResult& r) {
+  if (!is_ok(r)) return nullptr;
+  auto p = std::make_shared<ParsedMatches>();
+  int64_t updated = 0;
+  p->ok = parse_matches(r.body, p->matches, updated);
+  return p;
+}
+
+std::shared_ptr<void> prepare_detail(const HttpResult& r) {
+  if (!is_ok(r)) return nullptr;
+  auto p = std::make_shared<ParsedDetail>();
+  p->ok = parse_detail(r.body, p->detail);
+  return p;
+}
+
+std::shared_ptr<void> prepare_news(const HttpResult& r) {
+  if (!is_ok(r)) return nullptr;
+  auto p = std::make_shared<ParsedNews>();
+  int64_t updated = 0;
+  p->ok = parse_news(r.body, p->news, updated);
+  return p;
+}
+
+std::shared_ptr<void> prepare_teams(const HttpResult& r) {
+  if (!is_ok(r)) return nullptr;
+  auto p = std::make_shared<ParsedTeams>();
+  p->ok = parse_teams(r.body, p->teams);
+  return p;
+}
+
+// The prepared result of an accepted 200; parsed here when the transport did
+// not (a transport may drop `prepared` only by not supporting it: never null
+// for a 200 otherwise).
+template <typename T>
+std::shared_ptr<T> prepared(const HttpResult& r, std::shared_ptr<void> (*prepare)(const HttpResult&)) {
+  std::shared_ptr<void> p = r.prepared ? r.prepared : prepare(r);
+  return std::static_pointer_cast<T>(p);
+}
+
+}  // namespace
+
 void HttpSource::fetch_matches(std::function<void(bool, std::vector<MatchSummary>)> cb) {
-  enqueue(Kind::Matches, base_ + "/api/matches?leagues=" + leaguesParam_,
+  enqueue(Kind::Matches, base_ + "/api/matches?leagues=" + leaguesParam_, prepare_matches,
           [this, cb = std::move(cb)](const HttpResult& r) {
-            std::vector<MatchSummary> matches;
-            int64_t updated = 0;
             if (!accept(r)) return cb(false, {});
-            if (!parse_matches(r.body, matches, updated)) {
+            const std::shared_ptr<ParsedMatches> p = prepared<ParsedMatches>(r, prepare_matches);
+            if (!p || !p->ok) {
               lastError_ = FetchError::Parse;
               return cb(false, {});
             }
             lastError_ = FetchError::None;
             leagueOf_.clear();
-            for (const MatchSummary& m : matches) leagueOf_[m.id] = m.league;
-            cb(true, std::move(matches));
+            for (const MatchSummary& m : p->matches) leagueOf_[m.id] = m.league;
+            cb(true, std::move(p->matches));  // matches requests are never folded: one reader
           });
 }
 
 void HttpSource::fetch_detail(const std::string& id, std::function<void(bool, MatchDetail)> cb) {
   // The URL is made when the request is sent: a matches result still in the
   // queue may teach the league first.
-  enqueue(Kind::Detail, id, [this, cb = std::move(cb)](const HttpResult& r) {
-    MatchDetail detail;
+  enqueue(Kind::Detail, id, prepare_detail, [this, cb = std::move(cb)](const HttpResult& r) {
     if (!accept(r)) return cb(false, MatchDetail{});
-    if (!parse_detail(r.body, detail)) {
+    const std::shared_ptr<ParsedDetail> p = prepared<ParsedDetail>(r, prepare_detail);
+    if (!p || !p->ok) {
       lastError_ = FetchError::Parse;
       return cb(false, MatchDetail{});
     }
     lastError_ = FetchError::None;
-    if (!detail.match.league.empty()) leagueOf_[detail.match.id] = detail.match.league;
-    cb(true, std::move(detail));
+    if (!p->detail.match.league.empty()) leagueOf_[p->detail.match.id] = p->detail.match.league;
+    cb(true, std::move(p->detail));  // detail requests are never folded: one reader
   });
 }
 
@@ -78,35 +141,35 @@ std::string HttpSource::detail_url(const std::string& id) const {
 }
 
 void HttpSource::fetch_news(std::function<void(bool, std::vector<NewsItem>)> cb) {
-  enqueue(Kind::News, base_ + "/api/news?league=" + url_encode(newsLeague_),
+  enqueue(Kind::News, base_ + "/api/news?league=" + url_encode(newsLeague_), prepare_news,
           [this, cb = std::move(cb)](const HttpResult& r) {
-            std::vector<NewsItem> news;
-            int64_t updated = 0;
             if (!accept(r)) return cb(false, {});
-            if (!parse_news(r.body, news, updated)) {
+            const std::shared_ptr<ParsedNews> p = prepared<ParsedNews>(r, prepare_news);
+            if (!p || !p->ok) {
               lastError_ = FetchError::Parse;
               return cb(false, {});
             }
             lastError_ = FetchError::None;
-            cb(true, std::move(news));
+            cb(true, p->news);  // a copy: a folded request hands the same answer to two callers
           });
 }
 
 void HttpSource::fetch_teams(std::function<void(bool, std::vector<Team>)> cb) {
-  enqueue(Kind::Teams, base_ + "/api/teams", [this, cb = std::move(cb)](const HttpResult& r) {
-    std::vector<Team> teams;
+  enqueue(Kind::Teams, base_ + "/api/teams", prepare_teams, [this, cb = std::move(cb)](const HttpResult& r) {
     if (!accept(r)) return cb(false, {});
-    if (!parse_teams(r.body, teams)) {
+    const std::shared_ptr<ParsedTeams> p = prepared<ParsedTeams>(r, prepare_teams);
+    if (!p || !p->ok) {
       lastError_ = FetchError::Parse;
       return cb(false, {});
     }
     lastError_ = FetchError::None;
-    cb(true, std::move(teams));
+    cb(true, p->teams);  // a copy: a folded request hands the same answer to two callers
   });
 }
 
-void HttpSource::enqueue(Kind kind, std::string target, std::function<void(const HttpResult&)> handle) {
-  queue_.push_back({kind, std::move(target), std::move(handle)});
+void HttpSource::enqueue(Kind kind, std::string target, HttpPrepare prepare,
+                         std::function<void(const HttpResult&)> handle) {
+  queue_.push_back({kind, std::move(target), std::move(prepare), std::move(handle)});
   trim_queue();
   pump();
 }
@@ -145,11 +208,11 @@ void HttpSource::pump() {
   std::shared_ptr<bool> alive = alive_;
   std::function<void(const HttpResult&)> handle = std::move(req.handle);
   const std::string url = req.kind == Kind::Detail ? detail_url(req.target) : req.target;
-  transport_.get(url, token_, kHttpTimeoutMs,
-                 [this, alive, handle = std::move(handle)](HttpResult r) {
-                   if (!*alive) return;
-                   busy_ = false;
-                   handle(r);  // may queue more requests (and start one)
-                   if (*alive) pump();
-                 });
+  transport_.get_prepared(url, token_, kHttpTimeoutMs, std::move(req.prepare),
+                          [this, alive, handle = std::move(handle)](HttpResult r) {
+                            if (!*alive) return;
+                            busy_ = false;
+                            handle(r);  // may queue more requests (and start one)
+                            if (*alive) pump();
+                          });
 }
