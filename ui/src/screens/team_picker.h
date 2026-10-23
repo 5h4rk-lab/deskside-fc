@@ -4,6 +4,8 @@
 #pragma once
 
 #include <lvgl.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <functional>
 #include <string>
@@ -31,6 +33,15 @@ constexpr const char* kSearchPlaceholder = "Search teams";
 constexpr const char* kTeamsLoading = "Loading teams...";
 constexpr const char* kTeamsFailed = "Could not load the team list. Check the connection.";
 constexpr const char* kNoMatchPrefix = "No teams match \"";
+
+// Building the rows: the first kPickerFirstRows at once, the rest
+// kPickerRowsPerStep every kPickerStepMs (an LVGL timer), so a long list opens
+// at once and the screen stays responsive while it fills (a row costs about
+// 6 ms on the board: 96 rows built at once held the screen for 0.56 s). A
+// search typed meanwhile filters the rows still to come too.
+constexpr size_t kPickerFirstRows = 12;
+constexpr size_t kPickerRowsPerStep = 3;
+constexpr uint32_t kPickerStepMs = 30;
 
 // Builds the picker as a child of `parent`, filling it. An empty `teams` shows
 // the loading state until team_picker_set_teams() or
@@ -80,5 +91,7 @@ struct TeamPickerParts {
 
 // Parts of a picker made by team_picker_create(), or nullptr for any other object.
 const TeamPickerParts* team_picker_parts(lv_obj_t* picker);
-// The rows currently listed (matching the search), in display order.
+// The rows currently listed (built so far and matching the search), in display order.
 std::vector<TeamRowParts> team_picker_rows(lv_obj_t* picker);
+// True once every team has its row (see kPickerFirstRows).
+bool team_picker_complete(lv_obj_t* picker);

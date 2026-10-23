@@ -568,7 +568,8 @@ int main(int argc, char** argv) {
   const bool headless = !opt.snapshot.empty();
 
   lv_init();
-  if (headless && (goal_screen(opt.screen) || wifi_screen(opt.screen))) {
+  if (headless && (goal_screen(opt.screen) || wifi_screen(opt.screen) || opt.screen == "picker" ||
+                   opt.screen == "picker-search")) {
     lv_tick_set_cb(fake_ms);
   } else {
     lv_tick_set_cb(headless ? steady_ms : sdl_ticks);
@@ -942,6 +943,12 @@ int main(int argc, char** argv) {
       }
     } else {
       for (int i = 0; i < 10; ++i) lv_timer_handler();
+      // A long team list fills in steps (kPickerStepMs): let it finish.
+      lv_obj_t* picker = app_team_picker_view(app);
+      for (int i = 0; i < 1000 && picker != nullptr && !team_picker_complete(picker); ++i) {
+        g_fakeMs += kPickerStepMs;
+        lv_timer_handler();
+      }
     }
     const bool ok = snapshot_png(target, opt.snapshot.c_str());
     if (!ok) std::fprintf(stderr, "could not write %s\n", opt.snapshot.c_str());

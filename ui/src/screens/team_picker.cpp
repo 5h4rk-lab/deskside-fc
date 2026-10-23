@@ -46,8 +46,9 @@ struct PickerState {
   bool keyboard = false;
   std::string query;
   TeamPickerParts parts{};
-  std::vector<Row> rows;
+  std::vector<Row> rows;  // rows built so far, for teams[0 .. rows.size())
   lv_obj_t* root = nullptr;
+  lv_timer_t* builder = nullptr;  // builds the remaining rows, a few per step
 };
 
 PickerState* state_of(lv_obj_t* obj) { return static_cast<PickerState*>(lv_obj_get_user_data(obj)); }
@@ -105,15 +106,15 @@ void load_crests(PickerState* st) {
 
 void apply_filter(PickerState* st) {
   TeamPickerParts& p = st->parts;
+  for (Row& r : st->rows) show(r.parts.row, team_matches(r.parts.team, st->query));
+  // Rows still to be built count too: the message is about the whole list.
   size_t shown = 0;
-  for (Row& r : st->rows) {
-    const bool match = team_matches(r.parts.team, st->query);
-    show(r.parts.row, match);
-    if (match) ++shown;
+  for (const Team& t : st->teams) {
+    if (team_matches(t, st->query)) ++shown;
   }
   std::string message;
   bool retry = false;
-  if (st->rows.empty()) {
+  if (st->teams.empty()) {
     message = st->failed ? kTeamsFailed : kTeamsLoading;
     retry = st->failed;
   } else if (shown == 0) {
@@ -191,7 +192,11 @@ void on_retry(lv_event_t* e) {
   if (f) f();
 }
 
-void on_delete(lv_event_t* e) { delete static_cast<PickerState*>(lv_event_get_user_data(e)); }
+void on_delete(lv_event_t* e) {
+  auto* st = static_cast<PickerState*>(lv_event_get_user_data(e));
+  if (st->builder != nullptr) lv_timer_delete(st->builder);
+  delete st;
+}
 
 // ---------------------------------------------------------------- widgets
 
@@ -221,11 +226,40 @@ Row create_row(PickerState* st, const Team& team) {
   return r;
 }
 
+// Builds up to `count` more rows (in display order), filtered like the others.
+// True when every team has its row.
+bool build_more(PickerState* st, size_t count) {
+  const size_t end = std::min(st->teams.size(), st->rows.size() + count);
+  while (st->rows.size() < end) {
+    Row r = create_row(st, st->teams[st->rows.size()]);
+    if (!team_matches(r.parts.team, st->query)) show(r.parts.row, false);
+    st->rows.push_back(std::move(r));
+  }
+  return st->rows.size() >= st->teams.size();
+}
+
+void on_build_step(lv_timer_t* t) {
+  auto* st = static_cast<PickerState*>(lv_timer_get_user_data(t));
+  if (build_more(st, kPickerRowsPerStep)) {
+    lv_timer_delete(t);
+    st->builder = nullptr;
+  }
+  load_crests(st);
+}
+
+// The first rows at once (what the screen shows, and a little more); the rest
+// a few per kPickerStepMs, so the picker opens quickly and stays responsive.
 void build_rows(PickerState* st) {
+  if (st->builder != nullptr) {
+    lv_timer_delete(st->builder);
+    st->builder = nullptr;
+  }
   for (Row& r : st->rows) lv_obj_delete(r.parts.row);
   st->rows.clear();
   st->rows.reserve(st->teams.size());
-  for (const Team& t : st->teams) st->rows.push_back(create_row(st, t));
+  if (!build_more(st, kPickerFirstRows)) {
+    st->builder = lv_timer_create(on_build_step, kPickerStepMs, st);
+  }
 }
 
 PickerState* picker_state(lv_obj_t* picker) {
@@ -381,6 +415,11 @@ void team_picker_show_keyboard(lv_obj_t* picker, bool show) {
 const TeamPickerParts* team_picker_parts(lv_obj_t* picker) {
   PickerState* st = picker_state(picker);
   return st != nullptr ? &st->parts : nullptr;
+}
+
+bool team_picker_complete(lv_obj_t* picker) {
+  PickerState* st = picker_state(picker);
+  return st != nullptr && st->rows.size() >= st->teams.size();
 }
 
 std::vector<TeamRowParts> team_picker_rows(lv_obj_t* picker) {

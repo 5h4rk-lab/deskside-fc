@@ -1,5 +1,6 @@
 #include <doctest/doctest.h>
 
+#include <cstdio>
 #include <functional>
 #include <string>
 #include <vector>
@@ -297,4 +298,94 @@ TEST_CASE("picker: a white accent still shows a visible tick") {
   CHECK(relative_luminance(accent_mark(lv_color_hex(0x000000))) > 0.1f);
   theme_reset();
   deinit_test_display();
+}
+
+// ------------------------------------------------------------------ a long list
+
+namespace {
+
+// `n` teams in two leagues, named so their display order is easy to predict.
+std::vector<Team> many_teams(int n) {
+  std::vector<Team> out;
+  for (int i = 0; i < n; ++i) {
+    char id[8], abbr[8], name[32];
+    snprintf(id, sizeof id, "%d", 1000 + i);
+    snprintf(abbr, sizeof abbr, "T%02d", i);
+    snprintf(name, sizeof name, "Club %02d", i);
+    out.push_back(team(id, abbr, name, i % 2 ? "esp.1" : "eng.1"));
+  }
+  return out;
+}
+
+// Runs LVGL timers until the picker has every row (at most `limitMs`).
+void fill(Picker& p, uint32_t limitMs = 5000) {
+  for (uint32_t t = 0; t < limitMs && !team_picker_complete(p.obj); t += 10) test_advance(10);
+}
+
+}  // namespace
+
+TEST_CASE("picker: a long list opens with its first rows and fills in steps, in display order") {
+  const std::vector<Team> teams = many_teams(60);
+  Picker p(teams);
+  CHECK_FALSE(team_picker_complete(p.obj));
+  CHECK(p.listed().size() >= kPickerFirstRows);
+  CHECK(p.listed().size() < teams.size());
+  // A step adds kPickerRowsPerStep rows every kPickerStepMs.
+  const size_t before = p.listed().size();
+  test_advance(kPickerStepMs);
+  CHECK(p.listed().size() == before + kPickerRowsPerStep);
+  fill(p);
+  REQUIRE(team_picker_complete(p.obj));
+  CHECK(p.listed() == names(filter_teams(teams, "")));
+  CHECK_FALSE(visible(p.parts()->message));
+}
+
+TEST_CASE("picker: a short list is built at once") {
+  Picker p(sample_teams());
+  CHECK(team_picker_complete(p.obj));
+  CHECK(p.listed().size() == sample_teams().size());
+}
+
+TEST_CASE("picker: a search typed while the list fills also filters the rows still to come") {
+  const std::vector<Team> teams = many_teams(60);
+  Picker p(teams);
+  REQUIRE_FALSE(team_picker_complete(p.obj));
+  team_picker_set_query(p.obj, "club 5");  // Club 50 to Club 59
+  fill(p);
+  REQUIRE(team_picker_complete(p.obj));
+  CHECK(p.listed() == names(filter_teams(teams, "club 5")));
+  CHECK(p.listed().size() == 10);
+  CHECK_FALSE(visible(p.parts()->message));
+}
+
+TEST_CASE("picker: 'no match' counts the rows still to come") {
+  const std::vector<Team> teams = many_teams(60);
+  Picker p(teams);
+  REQUIRE_FALSE(team_picker_complete(p.obj));
+  // Only a team near the end matches: nothing built yet matches, but the
+  // list is not empty, so no "No teams match".
+  team_picker_set_query(p.obj, "club 59");
+  CHECK_FALSE(visible(p.parts()->message));
+  fill(p);
+  CHECK(p.listed() == std::vector<std::string>{"Club 59"});
+  team_picker_set_query(p.obj, "zzz");
+  REQUIRE(visible(p.parts()->message));
+  CHECK(text(p.parts()->message) == std::string(kNoMatchPrefix) + "zzz\"");
+}
+
+TEST_CASE("picker: deleted while it fills, its build step goes with it") {
+  Picker p(many_teams(60));
+  REQUIRE_FALSE(team_picker_complete(p.obj));
+  lv_obj_delete(p.obj);
+  for (int i = 0; i < 50; ++i) test_advance(kPickerStepMs);  // no step may touch the deleted picker (ASan)
+  CHECK(true);
+}
+
+TEST_CASE("picker: a new team list while filling starts over with the new list") {
+  Picker p(many_teams(60));
+  REQUIRE_FALSE(team_picker_complete(p.obj));
+  const std::vector<Team> fewer = many_teams(30);
+  team_picker_set_teams(p.obj, fewer);
+  fill(p);
+  CHECK(p.listed() == names(filter_teams(fewer, "")));
 }
