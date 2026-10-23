@@ -1008,12 +1008,22 @@ void app_host_diag_shot() {
     return;
   }
   const uint32_t w = buf->header.w, h = buf->header.h, stride = buf->header.stride;
-  Serial.setTxTimeoutMs(2000);  // every byte must arrive: wait for the host instead of dropping
+  // Every byte must arrive, so writes wait for the host, but the whole shot
+  // ends by kShotBudgetUs (it runs on the LVGL task: 15 s watchdog).
+  constexpr int64_t kShotBudgetUs = 8000000;
+  const int64_t shotEnd = esp_timer_get_time() + kShotBudgetUs;
   Serial.printf("[shot] begin %lu %lu rgb565le\n", (unsigned long)w, (unsigned long)h);
   static const char kHex[] = "0123456789abcdef";
   std::string line;
   line.reserve(w * 4 + 16);
+  bool cut = false;
   for (uint32_t y = 0; y < h; ++y) {
+    const int64_t left = shotEnd - esp_timer_get_time();
+    if (left <= 0) {
+      cut = true;
+      break;
+    }
+    Serial.setTxTimeoutMs(static_cast<uint32_t>(left / 1000 > 500 ? 500 : left / 1000 + 1));
     const uint8_t* row = buf->data + y * stride;
     line = "[shot] ";
     for (uint32_t i = 0; i < w * 2; ++i) {
@@ -1023,7 +1033,7 @@ void app_host_diag_shot() {
     line += '\n';
     Serial.write(reinterpret_cast<const uint8_t*>(line.data()), line.size());
   }
-  Serial.println("[shot] end");
+  Serial.println(cut ? "[shot] CUT SHORT (the host did not read in time)" : "[shot] end");
   Serial.flush();
   Serial.setTxTimeoutMs(5);
   lv_draw_buf_destroy(buf);

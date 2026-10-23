@@ -25,6 +25,16 @@ std::atomic<uint32_t> s_refused{0};
 // refused and the clock is put back to this anchor plus the time since.
 std::atomic<int64_t> s_anchorUtcUs{0};
 std::atomic<int64_t> s_anchorMonoUs{0};
+// A refused sync asks for another one soon (time_sync_tick), not in an hour.
+constexpr int64_t kRetryAfterRefusedUs = 30LL * 1000 * 1000;
+std::atomic<int64_t> s_retryAtUs{0};
+
+// The last good sync carried forward on the monotonic clock (0: none).
+int64_t carried_epoch() {
+  const int64_t anchor = s_anchorUtcUs.load();
+  if (anchor <= 0) return 0;
+  return (anchor + (esp_timer_get_time() - s_anchorMonoUs.load())) / 1000000;
+}
 
 // Runs in the lwIP task right after SNTP set the clock: no printing.
 void onSync(struct timeval* tv) {
@@ -39,6 +49,7 @@ void onSync(struct timeval* tv) {
   // good sync before, the clock goes back to that one carried forward (the
   // screens never notice); without one it stays "not valid" until a good sync.
   s_refused.fetch_add(1);
+  s_retryAtUs.store(esp_timer_get_time() + kRetryAfterRefusedUs);
   const int64_t anchor = s_anchorUtcUs.load();
   if (anchor > 0) {
     const int64_t now = anchor + (esp_timer_get_time() - s_anchorMonoUs.load());
@@ -74,7 +85,18 @@ void time_sync_start() {
 int64_t epoch_now_if_valid() {
   if (!s_synced.load()) return 0;
   const time_t now = time(nullptr);
-  return static_cast<int64_t>(now) >= kValidFrom ? static_cast<int64_t>(now) : 0;
+  if (static_cast<int64_t>(now) >= kValidFrom) return static_cast<int64_t>(now);
+  // A refused sync's wrong time is on the clock until onSync puts it back (a
+  // moment): read the last good sync carried forward meanwhile, never 0.
+  return carried_epoch();
+}
+
+void time_sync_tick() {
+  const int64_t at = s_retryAtUs.load();
+  if (at == 0 || esp_timer_get_time() < at || !s_started.load()) return;
+  s_retryAtUs.store(0);
+  const esp_err_t err = esp_netif_sntp_start();  // restarts the service: a new request now
+  Serial.printf("[time] asking the time servers again after a refused sync: %s\n", esp_err_to_name(err));
 }
 
 uint32_t time_sync_count() { return s_syncs.load(); }

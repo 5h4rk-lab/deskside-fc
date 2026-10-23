@@ -27,6 +27,10 @@ uint32_t time_sync_count();
 // not valid (the screens say "Waiting for the clock").
 uint32_t time_sync_refused();
 
+// Loop task, often: 30 s after a refused sync, asks the servers again (the
+// next regular resync would be an hour away).
+void time_sync_tick();
+
 #if APP_DIAG
 // Diagnostics builds only: stops SNTP and sets the clock to 2023-06-01 (invalid),
 // to see the app with a wrong clock; time_sync_diag_restore() starts SNTP again.

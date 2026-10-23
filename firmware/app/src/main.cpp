@@ -1276,6 +1276,7 @@ void loop() {
   health_wdt_feed();
   pollSerial();
   health_tick();  // the RTC uptime and the crash counter's runtime rules (once a second)
+  time_sync_tick();  // a refused SNTP answer is retried soon
   if (s_prepTask && eTaskGetState(s_prepTask) == eSuspended) {
     vTaskDeleteWithCaps(s_prepTask);
     s_prepTask = nullptr;
