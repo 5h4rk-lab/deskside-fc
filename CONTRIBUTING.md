@@ -61,4 +61,3 @@ If a check is wrong for your change, say so in the pull request; a maintainer ca
 
 Use the issue templates. For a board that behaves differently from the one in the README, the "It works (or not) on my
 board" template is very welcome.
-[broken](docs/does-not-exist.md)
