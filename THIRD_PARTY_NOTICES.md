@@ -45,4 +45,4 @@ PlatformIO Core, the Vercel CLI, cmake and SDL2 are used as build and deploy too
 
 ## Data and trademarks
 
-Football data comes at run time from the unofficial ESPN site API and TheSportsDB through the helper. No data, crest or photo from them is stored in this repository. Club names and crests are trademarks of their owners. This project is not affiliated with or endorsed by any club, league, ESPN, TheSportsDB or Waveshare. Respect the terms of the providers you use.
+Football data comes at run time from the unofficial ESPN site API and TheSportsDB through the helper. No crest or photo from them is stored in this repository (`sim/assets/fetch.mjs` can download sample pictures for the simulator on your own machine). `contract/fixtures` holds a few small recorded API samples (JSON, with team and player names and headline text) used as test fixtures; they remain the property of their sources and are included only to test the parsers. Club names and crests are trademarks of their owners. This project is not affiliated with or endorsed by any club, league, ESPN, TheSportsDB or Waveshare. Respect the terms of the providers you use.
