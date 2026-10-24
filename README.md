@@ -83,7 +83,7 @@ Press `g` in the window to make the favourite team score, `w` for a win. See [si
 |---|---|---|
 | ![Match detail pitch view in the simulator](docs/images/screens/pitch.png) | ![Goal celebration in the simulator](docs/images/screens/goal.png) | ![Settings in the simulator](docs/images/screens/settings.png) |
 
-The simulator shows demo data with placeholder crests. Real crests and photos are fetched through the helper at run time.
+The simulator shows demo data with placeholder crests. Optionally, `node sim/assets/fetch.mjs` downloads sample pictures for it onto your machine (needs `npm ci` in `helper/` first). On the device, crests and photos are fetched through the helper at run time.
 
 ### 2. Deploy the helper
 
@@ -177,4 +177,4 @@ Built on LVGL, ArduinoJson, doctest, Arduino-ESP32 and ESP-IDF, PlatformIO, shar
 
 ## Disclaimer
 
-This is an unofficial, independent project. It is not affiliated with, endorsed by or sponsored by any football club or league, ESPN, TheSportsDB or Waveshare. Club names and crests are trademarks of their owners; they are fetched at run time and are not distributed in this repository. The project is meant for personal and educational use. If you run a helper, respect the terms of the data providers it contacts and keep your request volume low.
+This is an unofficial, independent project. It is not affiliated with, endorsed by or sponsored by any football club or league, ESPN, TheSportsDB or Waveshare. Club names and crests are trademarks of their owners; they are fetched at run time and no crest or photo is distributed in this repository. A few small recorded API responses are kept in `contract/fixtures` as test data. The project is meant for personal and educational use. If you run a helper, respect the terms of the data providers it contacts and keep your request volume low.
