@@ -1,5 +1,7 @@
 # Soccer Desk Display
 
+**[Live demo: deskside-fc.vercel.app](https://deskside-fc.vercel.app)** (interactive device, real simulator screenshots)
+
 A small touchscreen that sits on a desk and shows live football without a phone: the score of your team's match, what is on today, last night's results and a few headlines. It was built as a birthday gift for a friend who follows football but works in places where phones are not allowed.
 
 <p align="center">
