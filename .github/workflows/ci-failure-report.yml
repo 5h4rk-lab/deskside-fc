@@ -1,0 +1,136 @@
+name: CI failure report
+
+# Tells the right person when a build breaks:
+#  - a pull request: a comment that @-mentions its author, with the failed jobs and how to repeat them locally;
+#  - the main branch (a push or the weekly run): an issue assigned to whoever pushed the commit, and to the
+#    maintainer, closed again automatically when main is green;
+#  - a failure that looks like infrastructure (runner, download, install) rather than the change: the failed jobs
+#    are re-run once, and the maintainer, not the author, is told if it still fails.
+# GitHub emails the people mentioned or assigned. This workflow never checks out or runs pull request code.
+on:
+  workflow_run:
+    workflows: ["CI", "Pull request checks"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  report:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/github-script@v7
+        with:
+          script: |
+            const run = context.payload.workflow_run;
+            const owner = context.repo.owner;
+            const marker = `<!-- ci-failure-report:${run.name} -->`;
+            const failedStates = ['failure', 'timed_out'];
+            const hints = {
+              'Simulator tests': 'cmake -S sim -B build/sim && cmake --build build/sim -j && ctest --test-dir build/sim --output-on-failure',
+              'Address and undefined-behaviour sanitizers': 'see "Sanitizers" in sim/README.md (ASAN_OPTIONS=detect_leaks=0)',
+              'Helper (types and tests)': 'cd helper && npm ci && npm run typecheck && npm test',
+              'Docs and tooling': 'python3 tools/ci/check_links.py && python3 -m unittest discover -s tools/ci -p "test_*.py"',
+              'Is the change described, sized and tested?': 'PR_TITLE="..." PR_BODY="$(cat body.md)" python3 tools/ci/pr_checks.py origin/main HEAD',
+              'Secret scan': 'remove the secret from the commits (a new commit is not enough: rewrite them) and rotate the secret',
+            };
+            const hintFor = (name) => name.startsWith('Firmware builds')
+              ? 'cd firmware/app && pio run -e ' + name.replace(/.*\((.*)\)/, '$1')
+              : (hints[name] || 'open the job log');
+
+            const label = 'ci-failure';
+            async function ensureLabel() {
+              try { await github.rest.issues.getLabel({...context.repo, name: label}); }
+              catch { await github.rest.issues.createLabel({...context.repo, name: label, color: 'd73a4a',
+                description: 'The build on main is broken'}); }
+            }
+            async function openFailureIssues() {
+              const { data } = await github.rest.issues.listForRepo({...context.repo, state: 'open', labels: label});
+              return data;
+            }
+
+            const isMain = run.head_branch === context.payload.repository.default_branch && run.event !== 'pull_request';
+
+            // ---- green on main: close the issue(s) we opened
+            if (run.conclusion === 'success') {
+              if (isMain && run.name === 'CI') {
+                for (const issue of await openFailureIssues()) {
+                  await github.rest.issues.createComment({...context.repo, issue_number: issue.number,
+                    body: `CI is green again on \`${run.head_sha.slice(0, 7)}\` (${run.html_url}). Closing.`});
+                  await github.rest.issues.update({...context.repo, issue_number: issue.number, state: 'closed', state_reason: 'completed'});
+                }
+              }
+              return;
+            }
+            if (!failedStates.includes(run.conclusion)) return;   // cancelled, skipped: nothing to report
+
+            // ---- what failed
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun,
+              {...context.repo, run_id: run.id, per_page: 100});
+            const failed = jobs.filter(j => failedStates.includes(j.conclusion));
+            const infraStep = /^(Set up job|Complete job|Post |Run actions\/|Run pip install|Install|Fetch|Check out)|apt-get|npm ci|curl|Cache/i;
+            const rows = failed.map(j => {
+              const step = (j.steps || []).find(s => failedStates.includes(s.conclusion));
+              const stepName = step ? step.name : '(job did not start)';
+              return { name: j.name, url: j.html_url, step: stepName, infra: !step || infraStep.test(stepName) };
+            });
+            const codeFailures = rows.filter(r => !r.infra);
+            const infraOnly = rows.length > 0 && codeFailures.length === 0;
+
+            // ---- infrastructure: retry once, tell the maintainer only if it persists
+            if (infraOnly && run.run_attempt === 1) {
+              await github.rest.actions.reRunWorkflowFailedJobs({...context.repo, run_id: run.id});
+              core.info('Looks like infrastructure: re-running the failed jobs once.');
+              return;
+            }
+
+            const table = rows.map(r => `| ${r.name} | \`${r.step}\` | [log](${r.url}) |`).join('\n');
+            const how = codeFailures.map(r => `- **${r.name}**: \`${hintFor(r.name)}\``).join('\n');
+            const kind = infraOnly
+              ? `This looks like a problem with the build environment (a download, an install or the runner), not with the change itself, and it failed again after a retry. @${owner}, please take a look.`
+              : 'The build broke because of the change. To repeat it on your machine:';
+            const summary = `${marker}\n### ${run.name} failed on \`${run.head_sha.slice(0, 7)}\`\n\n${kind}\n\n${infraOnly ? '' : how + '\n\n'}| Job | Failed step | |\n|---|---|---|\n${table}\n\nRun: ${run.html_url}`;
+
+            // ---- pull request: sticky comment mentioning the author
+            let pr = run.pull_requests && run.pull_requests[0];
+            if (!pr && run.event.startsWith('pull_request')) {
+              const { data } = await github.rest.repos.listPullRequestsAssociatedWithCommit({...context.repo, commit_sha: run.head_sha});
+              pr = data[0];
+            }
+            if (pr) {
+              const { data: prData } = await github.rest.pulls.get({...context.repo, pull_number: pr.number});
+              const mention = infraOnly ? '' : `@${prData.user.login} `;
+              const body = `${mention}${summary}`.replace(marker, marker + '\n');
+              const comments = await github.paginate(github.rest.issues.listComments, {...context.repo, issue_number: pr.number});
+              const mine = comments.find(c => c.body.includes(marker));
+              if (mine) await github.rest.issues.updateComment({...context.repo, comment_id: mine.id, body});
+              else await github.rest.issues.createComment({...context.repo, issue_number: pr.number, body});
+              return;
+            }
+
+            // ---- main (push or weekly run): an issue for the author and the maintainer
+            if (!isMain) return;
+            await ensureLabel();
+            let author = null;
+            if (run.event === 'push') {
+              try {
+                const { data } = await github.rest.repos.getCommit({...context.repo, ref: run.head_sha});
+                author = data.author && data.author.login;
+              } catch (e) { core.warning(String(e)); }
+            }
+            const people = [...new Set([owner, ...(infraOnly || !author ? [] : [author])])];
+            const mentions = people.map(p => '@' + p).join(' ');
+            const who = run.event === 'schedule' ? 'The weekly build' : `Commit \`${run.head_sha.slice(0, 7)}\``;
+            const body = `${mentions}\n\n${who} broke the build on \`${run.head_branch}\`.\n\n${summary}`;
+            const open = await openFailureIssues();
+            if (open.length) {
+              await github.rest.issues.createComment({...context.repo, issue_number: open[0].number, body});
+            } else {
+              const { data: issue } = await github.rest.issues.create({...context.repo,
+                title: `CI is red on ${run.head_branch} (${run.head_sha.slice(0, 7)})`, body, labels: [label]});
+              try { await github.rest.issues.addAssignees({...context.repo, issue_number: issue.number, assignees: people}); }
+              catch (e) { core.warning('Could not assign: ' + e.message); }
+            }

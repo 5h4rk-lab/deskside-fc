@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   pull_request:
+  workflow_dispatch:
+  schedule:
+    # Weekly, so a change in PlatformIO packages, Node or an Ubuntu image that breaks the
+    # build is noticed even when nobody pushed. The failure report tells the maintainer.
+    - cron: "17 6 * * 1"
 
 concurrency:
   group: ci-${{ github.ref }}
