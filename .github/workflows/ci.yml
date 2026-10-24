@@ -17,7 +17,7 @@ jobs:
     name: Simulator tests
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ libsdl2-dev libcurl4-openssl-dev
       - run: cmake -S sim -B build/sim -DCMAKE_BUILD_TYPE=Release
       - run: cmake --build build/sim -j"$(nproc)"
@@ -27,7 +27,7 @@ jobs:
     name: Address and undefined-behaviour sanitizers
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: sudo apt-get update && sudo apt-get install -y cmake g++ libsdl2-dev libcurl4-openssl-dev
       - name: Build with sanitizers
         run: |
@@ -48,7 +48,7 @@ jobs:
       run:
         working-directory: helper
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -66,7 +66,7 @@ jobs:
       matrix:
         env: [app, app_diag, app_demo, app_debug]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -86,7 +86,7 @@ jobs:
     name: Docs and tooling
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: python3 tools/ci/check_links.py
       - run: python3 -m unittest discover -s tools/ci -p "test_*.py"
       - run: for f in tools/publish-firmware.sh firmware/app/tools/provision-helper.sh; do bash -n "$f"; done
