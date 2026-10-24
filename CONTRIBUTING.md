@@ -50,6 +50,13 @@ Run the pull request checks yourself before opening one:
 If a check is wrong for your change, say so in the pull request; a maintainer can waive a test requirement with the
 `no-tests-needed` label or a size limit with `large-change`.
 
+## When a build breaks
+
+- On your pull request, a bot comment mentions you with the failed jobs and the command that repeats each one locally. Push a fix and the comment updates.
+- On `main`, an issue is opened and assigned to whoever pushed the commit and to the maintainer; it closes itself when `main` is green again.
+- If the failure looks like a problem with the build environment (a download or the runner) the jobs are retried once; if it persists only the maintainer is told, not you.
+- A weekly run catches breakage from outside (package updates) even when nobody pushed.
+
 ## Reporting bugs and ideas
 
 Use the issue templates. For a board that behaves differently from the one in the README, the "It works (or not) on my
