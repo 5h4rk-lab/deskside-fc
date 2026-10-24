@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Deskside FC: live football on a desk gadget</title>
+<meta name="description" content="Deskside FC is an open-source desk gadget: a 2.8 inch touchscreen that shows live football for your team. ESP32-S3, LVGL and a small serverless helper. Try the demo in your browser.">
+<meta name="theme-color" content="#0A1410">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Deskside FC: live football on a desk gadget">
+<meta property="og:description" content="An open-source 2.8 inch touchscreen that shows your team's live match, news and line-ups. Try the demo.">
+<meta property="og:image" content="img/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Deskside FC live screen and goal celebration rendered by the simulator">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230A1410'/%3E%3Ccircle cx='16' cy='16' r='9' fill='none' stroke='%23F1EFE4' stroke-width='2'/%3E%3Cpath d='M16 10l5 3.6-1.9 6h-6.2l-1.9-6z' fill='%23FFC857'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@600;800;900&family=Hanken+Grotesk:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/device.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs><marker id="ah" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0L10 5L0 10z" fill="#FFC857"/></marker></defs></svg>
+<a class="skip" href="#main">Skip to content</a>
+<header class="top">
+  <div class="wrap bar">
+    <a class="brand disp" href="#top" aria-label="Deskside FC, top of page"><span class="ball" aria-hidden="true"></span>DESKSIDE FC</a>
+    <nav aria-label="Sections">
+      <a href="#screens">Screens</a><a href="#how">How it works</a><a href="#numbers">Numbers</a><a href="#build">Build</a>
+    </nav>
+    <a class="btn btn-sm" data-repo-path="">GitHub</a>
+  </div>
+</header>
+
+<main id="main">
+<section class="hero" id="top">
+  <div class="lights" aria-hidden="true"></div>
+  <div class="wrap hero-grid">
+    <div class="hero-copy">
+      <p class="kicker">Open-source desk gadget</p>
+      <h1 class="disp">Your team's match,<br>on your desk.</h1>
+      <p class="lead-p">A 2.8 inch touchscreen that shows the live score, today's matches, the headlines and the line-ups for your favourite team. No phone needed. It was built as a birthday gift for a friend who works where phones are not allowed.</p>
+      <div class="cta">
+        <a class="btn btn-lg" data-repo-path="">View on GitHub <span aria-hidden="true">&rarr;</span></a>
+        <a class="btn-ghost" href="#screens">See the real screens</a>
+      </div>
+      <p class="small">The repository is private for now; the link works once it is public.</p>
+    </div>
+
+    <div class="stage" aria-labelledby="demo-h">
+      <h2 id="demo-h" class="vh">Interactive demo</h2>
+      <div class="bezel">
+        <div class="device-wrap">
+          <div class="d" id="device">
+            <noscript><img src="img/live.png" width="240" height="320" alt="Live screen rendered by the simulator"></noscript>
+          </div>
+        </div>
+      </div>
+      <div class="controls">
+        <div class="ctl-row">
+          <button type="button" id="goal-btn" class="btn btn-flood">Score a goal</button>
+          <button type="button" id="sound-btn" class="btn-ghost snd" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9v6h4l5 4V5L8 9z"/><path class="w" d="M16 9a4 4 0 010 6M18.5 6.5a8 8 0 010 11"/><path class="x" d="M16 9l5 6M21 9l-5 6"/></svg><span class="lbl">Sound off</span></button>
+        </div>
+        <div class="chips-wrap">
+          <span class="chips-l" id="chips-l">Team colours</span>
+          <div id="chips" class="chips" role="group" aria-labelledby="chips-l"></div>
+        </div>
+        <p class="small">Tap the tabs, tap a match for the line-up. Demo data, drawn shields and invented player names. Sound is off until you turn it on.</p>
+      </div>
+      <p id="live-msg" class="vh" role="status" aria-live="polite"></p>
+    </div>
+  </div>
+</section>
+
+<section id="screens" class="sec">
+  <div class="wrap">
+    <h2 class="disp">Real screenshots</h2>
+    <p class="sec-p">These are rendered from the real UI code in the simulator, the same C++ that runs on the board. The simulator uses demo data and placeholder crests.</p>
+    <ul class="shots">
+      <li><figure><img src="img/live.png" width="240" height="320" loading="lazy" alt="Live screen: score, minute and latest event"><figcaption><b>Live</b> Score split in team colours</figcaption></figure></li>
+      <li><figure><img src="img/matches.png" width="240" height="320" loading="lazy" alt="Matches list with live matches on top"><figcaption><b>Matches</b> Live first, then by day</figcaption></figure></li>
+      <li><figure><img src="img/news.png" width="240" height="320" loading="lazy" alt="News screen with a lead story and headlines"><figcaption><b>News</b> Lead story and headlines</figcaption></figure></li>
+      <li><figure><img src="img/pitch.png" width="240" height="320" loading="lazy" alt="Match detail with both line-ups on a striped pitch"><figcaption><b>Pitch</b> Both starting line-ups</figcaption></figure></li>
+      <li><figure><img src="img/goal.png" width="240" height="320" loading="lazy" alt="Goal celebration screen"><figcaption><b>Goal</b> The celebration frame</figcaption></figure></li>
+      <li><figure><img src="img/settings.png" width="240" height="320" loading="lazy" alt="Settings screen"><figcaption><b>Settings</b> Wi-Fi, team, power</figcaption></figure></li>
+    </ul>
+  </div>
+</section>
+
+<section id="how" class="sec alt">
+  <div class="wrap">
+    <h2 class="disp">How it works</h2>
+    <p class="sec-p">The display never talks to football websites directly. It only talks to a small helper you deploy yourself. The helper fetches public data, trims it, caches it and shrinks pictures to the sizes the screen needs. The ESP32 cannot decode or scale large images well, API quirks stay out of the firmware, and the helper can be fixed without reflashing.</p>
+
+    <figure class="diagram">
+      <svg class="wide" viewBox="0 0 900 300" role="img" aria-labelledby="d1t d1d">
+        <title id="d1t">Data flow</title><desc id="d1d">ESPN and TheSportsDB feed the helper. The helper sends trimmed data to the display over HTTPS with a token header.</desc>
+        
+        <g class="bx"><rect x="20" y="40" width="210" height="90" rx="12"/><rect x="20" y="170" width="210" height="90" rx="12"/><rect x="350" y="75" width="230" height="150" rx="14" class="hl"/><rect x="690" y="75" width="190" height="150" rx="14" class="dv"/></g>
+        <g class="tx"><text x="125" y="78" class="h">ESPN site API</text><text x="125" y="102">fixtures, lineups, news</text>
+        <text x="125" y="208" class="h">TheSportsDB</text><text x="125" y="232">player cutouts</text>
+        <text x="465" y="120" class="h">Helper</text><text x="465" y="148">TypeScript on Vercel</text><text x="465" y="172">trim, cache, resize</text><text x="465" y="196" class="dim">you deploy it</text>
+        <text x="785" y="120" class="h">Display</text><text x="785" y="148">ESP32-S3 + LVGL UI</text><text x="785" y="172">2.8 in touchscreen</text></g>
+        <g class="ar"><path d="M230 85L350 130" marker-end="url(#ah)"/><path d="M230 215L350 170" marker-end="url(#ah)"/><path d="M580 150H690" marker-end="url(#ah)"/></g>
+        <text x="635" y="132" class="lbl2">HTTPS</text><text x="635" y="176" class="lbl2">x-token header</text>
+      </svg>
+      <svg class="narrow" viewBox="0 0 340 540" role="img" aria-label="Data flow: ESPN and TheSportsDB feed the helper, which feeds the display over HTTPS with a token header.">
+        <g class="bx"><rect x="10" y="10" width="150" height="80" rx="12"/><rect x="180" y="10" width="150" height="80" rx="12"/><rect x="40" y="200" width="260" height="130" rx="14" class="hl"/><rect x="60" y="420" width="220" height="110" rx="14" class="dv"/></g>
+        <g class="tx"><text x="85" y="44" class="h">ESPN site API</text><text x="85" y="66">fixtures, news</text>
+        <text x="255" y="44" class="h">TheSportsDB</text><text x="255" y="66">player cutouts</text>
+        <text x="170" y="245" class="h">Helper</text><text x="170" y="270">TypeScript on Vercel</text><text x="170" y="292">trim, cache, resize</text><text x="170" y="314" class="dim">you deploy it</text>
+        <text x="170" y="466" class="h">Display</text><text x="170" y="490">ESP32-S3 + LVGL UI</text></g>
+        <g class="ar"><path d="M85 90L130 200" marker-end="url(#ah)"/><path d="M255 90L210 200" marker-end="url(#ah)"/><path d="M170 330V420" marker-end="url(#ah)"/></g>
+        <text x="182" y="372" class="lbl2 left">HTTPS + x-token header</text>
+      </svg>
+      <figcaption>The device contacts the helper (over HTTPS, checked certificate, shared token) and NTP servers for the clock. Nothing else.</figcaption>
+    </figure>
+
+    <h3 class="disp">On the board</h3>
+    <p class="sec-p">Only one task, the LVGL task, ever touches the UI. Anything that can block (Wi-Fi, TLS, DNS, flash writes, audio) lives in a worker and hands results back through queues.</p>
+    <figure class="diagram">
+      <svg viewBox="0 0 560 640" role="img" aria-labelledby="d2t d2d">
+        <title id="d2t">Firmware tasks</title><desc id="d2d">Core 0 runs the Wi-Fi worker, two HTTP workers, the sound task and the OTA task. They hand results through queues to the LVGL task on core 1. A 15 second task watchdog is fed by the LVGL, Wi-Fi, HTTP and loop tasks.</desc>
+        <g class="core"><rect x="10" y="10" width="540" height="270" rx="14"/><rect x="10" y="320" width="540" height="200" rx="14"/></g>
+        <g class="tx"><text x="30" y="38" class="ch">CORE 0: network and audio</text><text x="195" y="350" class="ch" style="text-anchor:middle">CORE 1: UI</text></g>
+        <g class="bx task">
+          <rect x="30" y="56" width="160" height="80" rx="10"/><rect x="200" y="56" width="160" height="80" rx="10"/><rect x="370" y="56" width="160" height="80" rx="10"/>
+          <rect x="30" y="176" width="160" height="84" rx="10"/><rect x="200" y="176" width="160" height="84" rx="10"/><rect x="370" y="176" width="160" height="84" rx="10"/>
+          <rect x="30" y="364" width="500" height="84" rx="10" class="hl"/><rect x="30" y="460" width="500" height="46" rx="10"/>
+        </g>
+        <g class="tx t2">
+          <text x="110" y="88" class="h">sound task</text><text x="110" y="110">I2S output</text><text x="110" y="126" class="dim">stack in PSRAM</text>
+          <text x="280" y="88" class="h">ota task</text><text x="280" y="110">only while</text><text x="280" y="126" class="dim">installing</text>
+          <text x="450" y="88" class="h">Wi-Fi driver</text><text x="450" y="110">lwIP, event task</text>
+          <text x="110" y="208" class="h">wifi_worker</text><text x="110" y="230">scan, join,</text><text x="110" y="246">auto-join</text>
+          <text x="280" y="208" class="h">http_data</text><text x="280" y="230">JSON requests,</text><text x="280" y="246">off-task parse</text>
+          <text x="450" y="208" class="h">http_images</text><text x="450" y="230">picture</text><text x="450" y="246">downloads</text>
+          <text x="280" y="392" class="h">lvgl task, 16 KB stack</text><text x="280" y="416">UI, store, poller, image decode</text><text x="280" y="436" class="dim">sends play requests to sound</text>
+          <text x="280" y="489">loop task: serial console, battery sampling</text>
+        </g>
+        <g class="ar"><path d="M110 260V364" marker-end="url(#ah)"/><path d="M280 260V364" marker-end="url(#ah)"/><path d="M450 260V364" marker-end="url(#ah)"/></g>
+        <text x="120" y="304" class="lbl2 left">queue</text><text x="290" y="304" class="lbl2 left">done queue</text><text x="460" y="304" class="lbl2 left">done queue</text>
+        <g class="wd"><rect x="10" y="545" width="540" height="76" rx="14"/></g>
+        <g class="tx"><text x="280" y="575" class="h">Task watchdog: 15 s, then panic and reboot</text><text x="280" y="599">fed by lvgl, wifi_worker, http_data, http_images and loop</text></g>
+      </svg>
+      <figcaption>Stack sizes and the 15 s watchdog are from the architecture notes.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section id="features" class="sec">
+  <div class="wrap">
+    <h2 class="disp">What it does</h2>
+    <ul class="grid">
+      <li><h3>Live</h3><p>Your team's match with the background split in both team colours, a big score, the minute and the latest event.</p></li>
+      <li><h3>Matches</h3><p>Live matches pinned on top, then today, tomorrow and yesterday. A dot marks your team.</p></li>
+      <li><h3>News</h3><p>A lead story with a picture, your team's last result and next game, then headline rows.</p></li>
+      <li><h3>Match detail</h3><p>Goals, cards and substitutions, a striped pitch with both starting line-ups, and stats.</p></li>
+      <li><h3>Celebrations</h3><p>When your team scores the screen floods with its colour, rays turn and GOAL! stamps in. A win gets a longer one.</p></li>
+      <li><h3>Sound, no files</h3><p>Synthesized in code: air-horn and crowd for a goal, a fanfare for a win. Only your team makes a sound. Mute-at-night and volume settings.</p></li>
+      <li><h3>Your team</h3><p>Pick from the top five European leagues. The choice recolours the whole interface.</p></li>
+      <li><h3>Wi-Fi on the device</h3><p>Scan, pick a network and type the password on an on-screen keyboard. Several networks are remembered.</p></li>
+      <li><h3>Power</h3><p>Battery icon, charging indicator, low-battery banners, a power key and night dimming on a schedule.</p></li>
+      <li><h3>Reliability</h3><p>Over-the-air updates with rollback, a watchdog, a crash counter that falls back to safe mode, and a serial console.</p></li>
+    </ul>
+  </div>
+</section>
+
+<section id="numbers" class="sec alt">
+  <div class="wrap">
+    <h2 class="disp">Measured on the board</h2>
+    <p class="sec-p">Real numbers from one board on one desk. They are measurements, not benchmarks.</p>
+    <dl class="stats-grid">
+      <div><dt>Boot to first frame</dt><dd class="disp">1426 <span>ms</span></dd><dd class="n">setup() to the panel, diagnostics build</dd></div>
+      <div><dt>Wi-Fi joined</dt><dd class="disp">7.9 <span>s</span></dd><dd class="n">after start, saved network</dd></div>
+      <div><dt>First matches on screen</dt><dd class="disp">9.7 to 13.9 <span>s</span></dd><dd class="n">after start, depends on clock sync</dd></div>
+      <div><dt>Goal celebration</dt><dd class="disp">19.6 to 24.4 <span>fps</span></dd><dd class="n">live build, frames 35 to 50 ms</dd></div>
+      <div><dt>Swipe between tabs</dt><dd class="disp">47 to 62 <span>ms</span></dd><dd class="n">per frame; render bound</dd></div>
+      <div><dt>Internal RAM free, idle</dt><dd class="disp">110.8 <span>KB</span></dd><dd class="n">PSRAM free 7.15 MB</dd></div>
+      <div><dt>Internal RAM, lowest at start</dt><dd class="disp">65.6 <span>KB</span></dd><dd class="n">with two TLS sessions open</dd></div>
+      <div><dt>Watchdog reset</dt><dd class="disp">15.0 <span>s</span></dd><dd class="n">after a deliberate stall of a watched task</dd></div>
+    </dl>
+    <p class="foot">Conditions: one Waveshare ESP32-S3-Touch-LCD-2.8 (V2) on USB power from a PC, battery connected, on a desk; one home Wi-Fi network at about -61 to -73 dBm; the real helper with 62 matches and 96 teams; measured over the serial console. Not measured: battery life, power draw, anything over several days, how the sound actually sounds. Full tables in <a data-repo-path="blob/main/docs/performance.md">docs/performance.md</a>.</p>
+  </div>
+</section>
+
+<section id="build" class="sec">
+  <div class="wrap">
+    <h2 class="disp">Build your own</h2>
+    <div class="build-grid">
+      <div>
+        <h3>Parts used</h3>
+        <ul class="parts">
+          <li><b>Board</b> Waveshare ESP32-S3-Touch-LCD-2.8, V2 (16 MB flash, 8 MB PSRAM, 240x320 display)</li>
+          <li><b>Battery</b> 3.7 V 3000 mAh LiPo with protection circuit. Check the polarity before connecting.</li>
+          <li><b>Speakers</b> Two small speakers on the board's speaker header</li>
+          <li><b>Cable</b> USB-C data cable for power, flashing and the serial console</li>
+          <li><b>Case</b> 3D-printed two-part case (design files not included yet)</li>
+        </ul>
+        <p class="small">Check current prices; none are listed here.</p>
+      </div>
+      <ol class="steps">
+        <li><h3>Try the simulator</h3><p>No hardware, no accounts. Build the same UI code on a PC with CMake and SDL2, and press <kbd>g</kbd> to score.</p></li>
+        <li><h3>Deploy the helper</h3><p>A free Vercel account and Node 22 or newer. Add a <code>HELPER_TOKEN</code> variable and deploy.</p></li>
+        <li><h3>Flash and provision</h3><p>Flash over USB, set the helper URL and token over the serial console, then pick Wi-Fi and your team on the screen.</p></li>
+      </ol>
+    </div>
+    <p class="links"><a class="btn" data-repo-path="blob/main/docs/build-guide.md">Build guide</a> <a class="btn-ghost" data-repo-path="blob/main/docs/hardware.md">Hardware notes</a> <a class="btn-ghost" data-repo-path="">README</a></p>
+  </div>
+</section>
+
+<section id="limits" class="sec alt">
+  <div class="wrap">
+    <h2 class="disp">Honest limits</h2>
+    <p class="sec-p">A hobby-grade project that works on the one board it was built on.</p>
+    <ul class="limits">
+      <li>The ESPN API is unofficial. It can change or disappear; only the helper depends on it.</li>
+      <li>TLS checks the chain, signature and host name, but not certificate dates.</li>
+      <li>The token is stored unencrypted in flash. Anyone with the board and esptool can read it.</li>
+      <li>Charging is inferred from battery voltage, not sensed.</li>
+      <li>Only the V2 board was tested. The V1 touch driver was never run on hardware.</li>
+      <li>Swipes and long lists are render bound: frames take 45 to 70 ms, not 60 fps.</li>
+      <li>Several things are not yet proven on hardware: real power-off, battery accuracy, how the sounds sound, an update over HTTPS, multi-day uptime.</li>
+      <li>Wi-Fi supports WPA2-Personal and open networks only.</li>
+    </ul>
+  </div>
+</section>
+</main>
+
+<footer class="foot-site">
+  <div class="wrap">
+    <div class="foot-top">
+      <a class="btn btn-lg" data-repo-path="">View on GitHub <span aria-hidden="true">&rarr;</span></a>
+      <p>Code released under the MIT licence. Fonts Big Shoulders Display and Hanken Grotesk are under the SIL Open Font License 1.1.</p>
+    </div>
+    <p class="disc">Deskside FC is an unofficial, independent project. It is not affiliated with, endorsed by or sponsored by any football club or league, ESPN, TheSportsDB or Waveshare. Club names and trademarks belong to their owners. No crests or player photos are distributed in the repository or on this site; the demo above uses generic drawn shields and invented names, and the screenshots come from the simulator with placeholder crests. Meant for personal and educational use.</p>
+    <noscript><p class="disc">Repository: https://github.com/5h4rk-lab/deskside-fc</p></noscript>
+  </div>
+</footer>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
