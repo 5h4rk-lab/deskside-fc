@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  simulator:
+    name: Simulator tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ libsdl2-dev libcurl4-openssl-dev
+      - run: cmake -S sim -B build/sim -DCMAKE_BUILD_TYPE=Release
+      - run: cmake --build build/sim -j"$(nproc)"
+      - run: ctest --test-dir build/sim --output-on-failure
+
+  sanitizers:
+    name: Address and undefined-behaviour sanitizers
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: sudo apt-get update && sudo apt-get install -y cmake g++ libsdl2-dev libcurl4-openssl-dev
+      - name: Build with sanitizers
+        run: |
+          cmake -S "$PWD/sim" -B "$PWD/build/asan" -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build build/asan -j"$(nproc)"
+      # LVGL's rounded-corner mask cache looks like a leak under malloc and one UBSan
+      # note comes from LVGL's gradient code (see sim/README.md), so leaks stay off and
+      # the run fails only on real errors in our code.
+      - run: ASAN_OPTIONS=detect_leaks=0 build/asan/sim_tests
+
+  helper:
+    name: Helper (types and tests)
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: helper
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: helper/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+
+  firmware:
+    name: Firmware builds (${{ matrix.env }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        env: [app, app_diag, app_demo, app_debug]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.platformio
+          key: pio-${{ runner.os }}-${{ hashFiles('firmware/app/platformio.ini') }}
+      - run: pip install platformio
+      - run: pio run -e ${{ matrix.env }}
+        working-directory: firmware/app
+      - name: Release build must not contain diagnostics
+        if: matrix.env == 'app'
+        run: |
+          ! strings firmware/app/.pio/build/app/firmware.bin | grep -E "wdt_stall|:diag-|plain http" 
+
+  docs:
+    name: Docs and tooling
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 tools/ci/check_links.py
+      - run: python3 -m unittest discover -s tools/ci -p "test_*.py"
+      - run: for f in tools/publish-firmware.sh firmware/app/tools/provision-helper.sh; do bash -n "$f"; done
