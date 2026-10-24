@@ -169,6 +169,10 @@ Single board, single desk, single network. These are measurements, not benchmark
   - multi-day uptime (the soak test).
 - Wi-Fi supports WPA2-Personal and open networks only. Enterprise and captive-portal networks are out of scope.
 
+## Contributing
+
+Pull requests are welcome. Every one is checked automatically: simulator tests, sanitizers, helper tests, all four firmware builds, a secret scan, and a check that the change has a clear title, a real description, a test next to the code and a sensible size. Read [CONTRIBUTING.md](CONTRIBUTING.md) and run `python3 tools/ci/pr_checks.py origin/main HEAD` before you open one. Security problems: see [SECURITY.md](SECURITY.md).
+
 ## Credits and licence
 
 The code in this repository is released under the [MIT licence](LICENSE). Third-party libraries and fonts keep their own licences; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The fonts Big Shoulders Display and Hanken Grotesk are under the SIL Open Font License 1.1 ([ui/fonts/LICENSE-OFL.txt](ui/fonts/LICENSE-OFL.txt)).

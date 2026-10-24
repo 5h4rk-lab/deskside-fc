@@ -1,0 +1,48 @@
+name: Pull request checks
+
+# Reads only the title, the description and the list of changed files; it never runs code
+# from the pull request, so it is safe for pull requests from forks.
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  meaningful:
+    name: Is the change described, sized and tested?
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out the base branch (trusted checkout) and fetch the PR commits as data
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+      - name: Fetch the pull request head
+        run: git fetch --no-tags origin "+refs/pull/${{ github.event.pull_request.number }}/head:refs/remotes/pr/head"
+      - name: Run the checks (script comes from the base branch)
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: python3 tools/ci/pr_checks.py "${{ github.event.pull_request.base.sha }}" refs/remotes/pr/head
+
+  secrets:
+    name: Secret scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+      - run: git fetch --no-tags origin "+refs/pull/${{ github.event.pull_request.number }}/head:refs/remotes/pr/head"
+      - name: Scan only the commits this pull request adds
+        run: |
+          curl -sSfL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz | tar -xz gitleaks
+          ./gitleaks git --log-opts="${{ github.event.pull_request.base.sha }}..refs/remotes/pr/head" --redact --verbose .

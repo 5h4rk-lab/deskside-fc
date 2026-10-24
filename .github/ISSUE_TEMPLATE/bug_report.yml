@@ -1,0 +1,30 @@
+name: Bug report
+description: Something does not work as described
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened, and what did you expect?
+    validations: {required: true}
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did you see it?
+      options: [Real board, Simulator, Helper, Build or flashing]
+    validations: {required: true}
+  - type: input
+    id: board
+    attributes:
+      label: Board revision and firmware version
+      description: "For example: V2 (CST3530 touch), version from the Settings About line or `:status`."
+  - type: textarea
+    id: logs
+    attributes:
+      label: Serial output or screenshot
+      description: Paste the output of `:status`. It never contains the token, but check before posting that no Wi-Fi name or password slipped in.
+      render: text
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
