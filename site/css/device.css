@@ -1,0 +1,101 @@
+/* The 240x320 demo screen. Colours come from --team, --away, --ink, --kit. */
+.device-wrap{width:calc(240px*var(--s,1));height:calc(320px*var(--s,1));position:relative}
+.d{--team:#EF0107;--away:#034694;--ink:#FF3B3F;--kit:#EF0107;width:240px;height:320px;background:var(--turf);color:var(--chalk);font-family:'Hanken Grotesk',system-ui,sans-serif;position:absolute;left:0;top:0;overflow:hidden;border-radius:10px;transform:scale(var(--s,1));transform-origin:0 0}
+.d button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer;text-align:inherit}
+.d button:focus-visible{outline:2px solid var(--flood);outline-offset:-2px}
+.disp{font-family:'Big Shoulders Display','Oswald','Arial Narrow',Impact,sans-serif}
+.screen{position:absolute;inset:0}
+.status{position:absolute;top:6px;left:10px;right:10px;display:flex;justify-content:space-between;font-size:9px;color:var(--dim);z-index:5;letter-spacing:.02em}
+.status .back{font-size:10px;color:var(--chalk);padding:2px 6px 2px 0}
+
+.tabbar{position:absolute;left:0;right:0;bottom:0;height:46px;background:linear-gradient(transparent,rgba(5,9,7,.96) 40%);display:flex;z-index:6}
+.tabbar button{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;padding-bottom:6px;font-size:9px;color:var(--dim);gap:2px;text-align:center}
+.tabbar button[aria-selected=true]{color:var(--chalk)}
+.tabbar button[aria-selected=true] svg{stroke:var(--ink)}
+.tabbar svg{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* LIVE */
+.live-bg{position:absolute;inset:0;background:linear-gradient(105deg,var(--team) 0 49.5%,transparent 50%),linear-gradient(105deg,transparent 0 50%,var(--away) 50.5%);opacity:.92}
+.live-shade{position:absolute;inset:0;background:radial-gradient(120% 70% at 50% 38%,rgba(10,20,16,0),rgba(10,20,16,.78) 70%),linear-gradient(transparent 55%,var(--turf) 92%)}
+.crest{position:absolute;width:84px;height:84px;filter:drop-shadow(0 6px 10px rgba(0,0,0,.5))}
+.score{position:absolute;top:100px;left:0;right:0;text-align:center;font-weight:900;font-size:96px;line-height:.8;letter-spacing:-.02em;text-shadow:0 4px 18px rgba(0,0,0,.55)}
+.score i{font-style:normal;opacity:.55;font-weight:600;margin:0 2px}
+.min{position:absolute;top:84px;left:50%;transform:translateX(-50%);background:var(--flood);color:#241a00;border-radius:99px;padding:1px 9px 0;font-weight:900;font-size:15px;display:flex;gap:5px;align-items:center;z-index:3}
+.min:before{content:"";width:6px;height:6px;border-radius:50%;background:#b00;animation:pulse 1.2s infinite}
+@keyframes pulse{50%{opacity:.2}}
+.names{position:absolute;top:184px;left:0;right:0;display:flex;justify-content:space-between;padding:0 14px;font-weight:800;font-size:15px;letter-spacing:.02em;text-shadow:0 1px 6px rgba(0,0,0,.6)}
+.event{position:absolute;left:10px;right:10px;bottom:54px;background:rgba(241,239,228,.08);border:1px solid rgba(241,239,228,.14);border-radius:14px;display:flex;align-items:center;gap:10px;padding:6px 10px 6px 6px;backdrop-filter:blur(6px);z-index:2;width:calc(100% - 20px)}
+.event .face{width:40px;height:40px;border-radius:10px;background:var(--team);overflow:hidden;display:block;flex:none;position:relative}
+.event .face svg{position:absolute;left:4px;top:4px;width:32px}
+.event .t{display:block;font-size:10px;color:var(--dim)}.event .n{display:block;font-weight:700;font-size:14px}
+.cutout{display:block}
+
+/* LIST */
+.list{position:absolute;top:26px;left:0;right:0;bottom:46px;overflow:hidden}
+.day{font-weight:800;font-size:13px;padding:8px 12px 3px;color:var(--dim);letter-spacing:.04em}
+.m{display:grid!important;grid-template-columns:1fr 54px 1fr;align-items:center;margin:0 8px 5px;padding:7px 8px;background:var(--panel);border-radius:10px;position:relative;font-weight:700;font-size:12px;width:calc(100% - 16px)}
+.m .h,.m .a{display:flex;align-items:center;gap:6px}.m .a{justify-content:flex-end}
+.m .c{text-align:center;font-family:'Big Shoulders Display','Oswald',Impact,sans-serif;font-weight:800;font-size:17px;line-height:1}
+.m .c small{display:block;font:500 9px 'Hanken Grotesk',sans-serif;color:var(--dim)}
+.m.lv{background:#1a2410;box-shadow:inset 3px 0 0 var(--flood)}
+.m.lv .c,.m.lv .c small{color:var(--flood)}
+.m.fav:after{content:"";position:absolute;right:5px;top:5px;width:5px;height:5px;border-radius:50%;background:var(--ink)}
+
+/* NEWS */
+.lead{position:absolute;top:0;left:0;right:0;height:158px;background:linear-gradient(120deg,color-mix(in srgb,var(--team) 45%,#000),var(--team) 60%,color-mix(in srgb,var(--team) 70%,#fff));overflow:hidden}
+.lead .lead-pl{position:absolute;right:-6px;bottom:0;height:140px;width:auto}
+.lead:after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(10,20,16,.78),transparent 60%),linear-gradient(transparent 50%,var(--turf))}
+.lead .h{position:absolute;left:12px;bottom:10px;width:150px;z-index:2;font-weight:900;font-size:25px;line-height:.95}
+.n2{position:absolute;left:10px;right:10px;display:flex;gap:10px;align-items:center;padding:8px;background:var(--panel);border-radius:12px;font-weight:700;font-size:12px;line-height:1.15}
+.n2 .th{width:40px;height:40px;border-radius:9px;background:linear-gradient(135deg,var(--away),var(--team));flex:none}
+.n2 small{display:block;color:var(--dim);font-weight:500;font-size:9px;margin-top:2px}
+.ft{position:absolute;left:10px;right:10px;top:166px;display:flex;gap:8px}
+.ft div{flex:1;background:var(--panel);border-radius:10px;padding:5px 8px;font-size:10px;color:var(--dim)}
+.ft b{display:block;color:var(--chalk);font:800 15px 'Big Shoulders Display','Oswald',Impact,sans-serif}
+
+/* DETAIL */
+.ph{position:absolute;top:24px;left:10px;right:10px;display:flex;justify-content:space-between;align-items:center}
+.ph .tt{font-weight:900;font-size:22px;line-height:1}
+.chip{font-size:10px;color:var(--dim)}
+.sub{position:absolute;top:46px;left:10px;right:10px;display:flex;gap:14px;font-size:11px;color:var(--dim);font-weight:500}
+.sub button{padding:2px 0 3px;color:var(--dim)}
+.sub button.on{color:var(--chalk);box-shadow:0 2px 0 var(--ink)}
+.pitch{position:absolute;left:8px;right:8px;top:68px;bottom:54px;border-radius:10px;overflow:hidden;background:repeating-linear-gradient(180deg,#1f5a38 0 24px,#1b5233 24px 48px);border:1.5px solid rgba(241,239,228,.7)}
+.pitch:before{content:"";position:absolute;left:0;right:0;top:50%;border-top:1.5px solid rgba(241,239,228,.7)}
+.pitch:after{content:"";position:absolute;left:50%;top:50%;width:54px;height:54px;margin:-27px;border:1.5px solid rgba(241,239,228,.7);border-radius:50%}
+.box{position:absolute;left:25%;right:25%;height:34px;border:1.5px solid rgba(241,239,228,.7)}
+.box.t{top:0;border-top:0}.box.b{bottom:0;border-bottom:0}
+.p{position:absolute;width:24px;height:24px;margin:-12px;border-radius:50%;background:var(--team);border:1.5px solid var(--chalk);display:grid;place-items:center;font:800 12px 'Big Shoulders Display','Oswald',Impact,sans-serif;box-shadow:0 2px 5px rgba(0,0,0,.4)}
+.p.a{background:var(--away)}
+.events{position:absolute;list-style:none;margin:0;padding:0;left:10px;right:10px;top:74px;bottom:54px;overflow:hidden}
+.events li{display:flex;align-items:center;gap:8px;padding:7px 8px;margin-bottom:5px;background:var(--panel);border-radius:10px;font-size:12px;font-weight:700}
+.events li b{width:26px;font-size:16px;color:var(--flood)}
+.events small{display:block;color:var(--dim);font-weight:500;font-size:10px}
+.events .none{display:block;color:var(--dim);font-weight:500;font-size:11px;line-height:1.35}
+.dot{width:8px;height:8px;border-radius:50%;flex:none}.dot.g{background:var(--chalk)}.dot.y{background:#f2c200}
+.stats{position:absolute;left:12px;right:12px;top:76px;bottom:54px;display:flex;flex-direction:column;gap:12px}
+.st{display:grid;grid-template-columns:34px 1fr 34px;align-items:center;font-size:10px;color:var(--dim);text-align:center}
+.st .disp{font-size:19px;font-weight:800;color:var(--chalk)}
+.st i{font-style:normal}.st em{display:block;height:5px;background:var(--away);border-radius:3px;margin-top:3px;overflow:hidden}
+.st u{display:block;height:100%;background:var(--team)}
+
+/* GOAL */
+.goalov{position:absolute;inset:0;z-index:20;background:var(--team);display:none;overflow:hidden}
+.goalov.on{display:block;animation:flood .35s ease-out both,out .4s 3.6s ease-in forwards}
+.goalov .rays{position:absolute;inset:-40%;background:repeating-conic-gradient(from 0deg at 50% 62%,rgba(255,255,255,.14) 0 8deg,transparent 8deg 16deg);animation:spin 6s linear infinite}
+.goalov .conf{position:absolute;inset:0;background:radial-gradient(circle at 18% 22%,#fff 0 3px,transparent 4px),radial-gradient(circle at 80% 14%,var(--flood) 0 4px,transparent 5px),radial-gradient(circle at 66% 34%,#fff 0 2px,transparent 3px),radial-gradient(circle at 10% 60%,var(--flood) 0 3px,transparent 4px),radial-gradient(circle at 90% 55%,#fff 0 3px,transparent 4px),radial-gradient(circle at 30% 8%,var(--flood) 0 2px,transparent 3px);animation:pop .5s .4s both}
+.goalov .big{position:absolute;top:26px;left:0;right:0;text-align:center;font-weight:900;font-size:78px;line-height:.85;transform:rotate(-4deg);text-shadow:0 5px 0 rgba(0,0,0,.25);animation:stamp .7s .3s cubic-bezier(.3,1.6,.5,1) both}
+.goalov .pl{position:absolute;bottom:0;left:50%;width:190px;margin-left:-95px;filter:drop-shadow(0 8px 14px rgba(0,0,0,.45));animation:rise .7s .6s cubic-bezier(.2,1.2,.4,1) both}
+.goalov .pl svg{width:100%;display:block;--kit:color-mix(in srgb,var(--team) 60%,#000)}
+.goalov .who{position:absolute;left:0;right:0;bottom:12px;text-align:center;background:linear-gradient(transparent,rgba(0,0,0,.65));padding-top:34px;font-weight:900;font-size:26px;line-height:1}
+.goalov .who small{display:block;font:500 11px 'Hanken Grotesk',sans-serif;opacity:.9}
+@keyframes flood{from{clip-path:circle(0 at 50% 45%)}to{clip-path:circle(150% at 50% 45%)}}
+@keyframes out{to{opacity:0}}
+@keyframes spin{to{transform:rotate(360deg)}}
+@keyframes pop{from{opacity:0;transform:scale(.7)}to{opacity:1;transform:none}}
+@keyframes stamp{0%{transform:rotate(-4deg) scale(3);opacity:0}60%{transform:rotate(-4deg) scale(.9);opacity:1}100%{transform:rotate(-4deg) scale(1)}}
+@keyframes rise{from{transform:translateY(105%)}to{transform:none}}
+
+@media (prefers-reduced-motion: reduce){
+  .min:before,.goalov.on,.goalov .rays,.goalov .conf,.goalov .big,.goalov .pl{animation:none!important}
+}
